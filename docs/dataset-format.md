@@ -18,6 +18,14 @@ Readers validate the recorded lengths and zero-pad the high-channel end of short
 spectra to the declared per-label maximum. This produces rectangular ML inputs
 without cropping simulator output or buffering the complete dataset in memory.
 
+The manifest embeds three reproducibility sections. `generation` contains the
+complete baseline sample and experimental setup, ordered methods, parameter
+targets, bounds, units, and concentration-sampling rule. `generation_options`
+records sample/batch/shard counts, seed, failure policy, and sampler version.
+`simulator_config` records the concrete backend and its settings; SIMNRA entries
+include worker/apartment/calculation settings plus each reference file's absolute
+path, byte size, and CRC32 checksum.
+
 Writers create an incomplete manifest immediately. Manifest updates use a temporary
 file followed by rename. Only successful finalization marks it complete. Readers
 reject unknown format versions, malformed magic,

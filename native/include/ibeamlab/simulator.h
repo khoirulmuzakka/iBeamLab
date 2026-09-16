@@ -48,6 +48,7 @@ public:
     virtual std::vector<SimulationResult> simulateBatch(
         const std::vector<SimulationInput>& inputs,
         const SimulationOptions& options = {}) = 0;
+    virtual std::string configurationToml() const { return {}; }
     virtual void requestStop() noexcept { stopRequested_.store(true); }
     virtual void resetStop() noexcept { stopRequested_.store(false); }
 
@@ -61,6 +62,7 @@ public:
     std::vector<SimulationResult> simulateBatch(
         const std::vector<SimulationInput>& inputs,
         const SimulationOptions& options = {}) override;
+    std::string configurationToml() const override;
 private:
     std::size_t channels_;
 };

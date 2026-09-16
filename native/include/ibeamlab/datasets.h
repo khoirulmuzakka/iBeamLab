@@ -52,6 +52,9 @@ struct DatasetMetadata {
     std::string createdUtc;
     std::string completedUtc;
     std::string simulator;
+    std::string generationConfigToml;
+    std::string generationOptionsToml;
+    std::string simulatorConfigToml;
     DatasetProvenance provenance;
     std::vector<std::string> parameterNames;
     std::vector<std::string> spectrumLabels;

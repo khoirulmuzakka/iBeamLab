@@ -132,6 +132,11 @@ int main() {
     assert(summary.accepted == 4 && summary.failed == 0);
     datasets::DatasetReader reader(directory);
     assert(reader.metadata().complete && reader.readAll().size() == 4);
+    assert(reader.metadata().generationConfigToml.find("species_concentration") ==
+           std::string::npos);
+    assert(reader.metadata().generationConfigToml.find("beam_energy") != std::string::npos);
+    assert(reader.metadata().generationOptionsToml.find("batch_size") != std::string::npos);
+    assert(reader.metadata().simulatorConfigToml.find("dummy") != std::string::npos);
     std::filesystem::resize_file(directory / reader.metadata().shardFiles[0], 9);
     assert(throws([&] { reader.readAll(); }));
     std::filesystem::remove_all(directory);

@@ -56,5 +56,6 @@ struct GenerationConfig {
 enum class SamplingMethod { Uniform };
 std::vector<std::vector<double>> sampleParameters(const GenerationConfig& config,
     std::size_t count, std::uint64_t seed, SamplingMethod method = SamplingMethod::Uniform);
+std::string generationConfigToToml(const GenerationConfig& config);
 
 } // namespace ibeamlab::generation

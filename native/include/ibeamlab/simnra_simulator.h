@@ -31,6 +31,7 @@ public:
     SimnraSimulator& operator=(const SimnraSimulator&) = delete;
     std::vector<SimulationResult> simulateBatch(const std::vector<SimulationInput>& inputs,
         const SimulationOptions& options = {}) override;
+    std::string configurationToml() const override;
     SimulationInput inspectConfiguration(const SimulationInput& input,
         const std::string& methodLabel);
     void requestStop() noexcept override;

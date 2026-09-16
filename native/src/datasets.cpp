@@ -73,6 +73,17 @@ std::vector<std::string> strings(const toml::array *values) {
     }
     return result;
 }
+void insertToml(toml::table &destination, const char *key, const std::string &source) {
+    if (!source.empty())
+        destination.insert(key, toml::parse(source));
+}
+std::string tableToml(const toml::table *table) {
+    if (!table)
+        return {};
+    std::ostringstream output;
+    output << *table;
+    return output.str();
+}
 } // namespace
 
 DatasetWriter::DatasetWriter(std::filesystem::path directory, DatasetMetadata metadata,
@@ -201,6 +212,9 @@ void DatasetWriter::writeManifest() const {
     root.insert("spectrum_labels", std::move(labels));
     root.insert("spectrum_lengths", std::move(lengths));
     root.insert("shards", std::move(shards));
+    insertToml(root, "generation", metadata_.generationConfigToml);
+    insertToml(root, "generation_options", metadata_.generationOptionsToml);
+    insertToml(root, "simulator_config", metadata_.simulatorConfigToml);
     root.insert("provenance",
                 toml::table{{"ibeamlab_version", metadata_.provenance.ibeamlabVersion},
                             {"build", metadata_.provenance.build},
@@ -242,6 +256,9 @@ DatasetReader::DatasetReader(std::filesystem::path directory) : directory_(std::
     metadata_.createdUtc = root["created_utc"].value_or<std::string>("");
     metadata_.completedUtc = root["completed_utc"].value_or<std::string>("");
     metadata_.simulator = root["simulator"].value_or<std::string>("");
+    metadata_.generationConfigToml = tableToml(root["generation"].as_table());
+    metadata_.generationOptionsToml = tableToml(root["generation_options"].as_table());
+    metadata_.simulatorConfigToml = tableToml(root["simulator_config"].as_table());
     metadata_.parameterNames = strings(root["parameter_names"].as_array());
     metadata_.spectrumLabels = strings(root["spectrum_labels"].as_array());
     if (auto values=root["spectrum_lengths"].as_array()) for(const auto& value:*values) {

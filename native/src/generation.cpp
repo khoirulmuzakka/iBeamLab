@@ -1,8 +1,12 @@
 #include <ibeamlab/generation.h>
+#include <ibeamlab/sample_toml.h>
+
+#include <toml++/toml.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <random>
+#include <sstream>
 #include <stdexcept>
 #include <limits>
 #include <type_traits>
@@ -215,6 +219,60 @@ std::vector<std::vector<double>> sampleParameters(const GenerationConfig& config
         }
     }
     return rows;
+}
+
+std::string generationConfigToToml(const GenerationConfig& config) {
+    config.validate();
+    auto sampleTable = toml::parse(sample::toToml(config.sample));
+    sampleTable.erase("format");
+    sampleTable.erase("format_version");
+    auto setupTable = toml::parse(sample::toToml(config.setup));
+    setupTable.erase("format");
+    setupTable.erase("format_version");
+
+    toml::array methods;
+    for (const auto& method : config.methods)
+        methods.push_back(toml::table{{"label", method.label}, {"iba_method", method.ibaMethod},
+            {"reference_file", method.referenceFile.generic_string()}});
+
+    toml::array parameters;
+    for (const auto& parameter : config.parameters) {
+        toml::table target;
+        std::visit([&](const auto& value) {
+            using T = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<T, LayerThickness>) {
+                target.insert("type", "layer_thickness");
+                target.insert("layer", static_cast<std::int64_t>(value.layer));
+            } else if constexpr (std::is_same_v<T, SpeciesConcentration>) {
+                target.insert("type", "species_concentration");
+                target.insert("layer", static_cast<std::int64_t>(value.layer));
+                target.insert("element", value.element);
+            } else {
+                if constexpr (std::is_same_v<T, BeamEnergy>) target.insert("type", "beam_energy");
+                else if constexpr (std::is_same_v<T, BeamSpread>) target.insert("type", "beam_spread");
+                else if constexpr (std::is_same_v<T, CalibrationLinear>) target.insert("type", "calibration_linear");
+                else if constexpr (std::is_same_v<T, CalibrationOffset>) target.insert("type", "calibration_offset");
+                else if constexpr (std::is_same_v<T, CalibrationQuadratic>) target.insert("type", "calibration_quadratic");
+                else if constexpr (std::is_same_v<T, DetectorResolution>) target.insert("type", "detector_resolution");
+                else target.insert("type", "particles_sr");
+                target.insert("detector", value.detector);
+            }
+        }, parameter.target);
+        toml::table item{{"name", parameter.name}, {"lower_bound", parameter.lowerBound},
+            {"upper_bound", parameter.upperBound}, {"unit", parameter.unit},
+            {"open", !parameter.fixedValue.has_value()}, {"target", std::move(target)}};
+        if (parameter.fixedValue)
+            item.insert("fixed_value", *parameter.fixedValue);
+        parameters.push_back(std::move(item));
+    }
+
+    toml::table root{{"format_version", 1}, {"sample", std::move(sampleTable)},
+        {"setup", std::move(setupTable)}, {"methods", std::move(methods)},
+        {"parameters", std::move(parameters)},
+        {"concentration_sampling", "normalized_uniform_per_layer"}};
+    std::ostringstream output;
+    output << root;
+    return output.str();
 }
 
 } // namespace ibeamlab::generation

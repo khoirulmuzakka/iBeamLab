@@ -19,6 +19,9 @@ void bindDatasets(py::module_ &r) {
         .def_readonly("accepted", &DatasetMetadata::accepted)
         .def_readonly("invalid", &DatasetMetadata::invalid)
         .def_readonly("failed", &DatasetMetadata::failed)
+        .def_readonly("generation_config_toml", &DatasetMetadata::generationConfigToml)
+        .def_readonly("generation_options_toml", &DatasetMetadata::generationOptionsToml)
+        .def_readonly("simulator_config_toml", &DatasetMetadata::simulatorConfigToml)
         .def_readonly("parameter_names", &DatasetMetadata::parameterNames)
         .def_readonly("spectrum_labels", &DatasetMetadata::spectrumLabels)
         .def_readonly("spectrum_lengths", &DatasetMetadata::spectrumLengths);

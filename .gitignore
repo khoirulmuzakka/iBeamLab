@@ -120,3 +120,5 @@ ehthumbs.db
 *.swp
 *.swo
 *~
+examples/datasets*
+xnra/backup.xnra

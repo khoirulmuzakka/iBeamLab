@@ -22,17 +22,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ibeamlab.generation import (
-    CalibrationLinear,
-    CalibrationOffset,
     DataGenerator,
     FailurePolicy,
     GenerationConfig,
     GenerationOptions,
     GenerationProgress,
-    LayerThickness,
     MethodConfig,
     ParameterSpec,
-    ParticlesSr,
     SpeciesConcentration,
 )
 from ibeamlab.sample import Beam, Detector, ExperimentalSetup, Layer, SampleModel, Species
@@ -55,22 +51,34 @@ def layer(thickness: float, composition: list[tuple[str, float]]) -> Layer:
 
 def detector(
     label: str,
+    beam_particle: str,
+    beam_energy: float,
+    beam_spread: float,
     calibration_linear: float,
+    calibration_offset: float,
     calibration_quadratic: float,
     resolution: float,
     particles_sr: float,
+    real_time: float = 0.001,
+    live_time: float = 0.001,
+    info: str = "",
 ) -> Detector:
     beam = Beam()
-    beam.particle = "He"
-    beam.energy = 2950.0
+    beam.particle = beam_particle
+    beam.energy = beam_energy
+    beam.spread = beam_spread
 
     value = Detector()
     value.label = label
     value.beam = beam
     value.calibration_linear = calibration_linear
+    value.calibration_offset = calibration_offset
     value.calibration_quadratic = calibration_quadratic
     value.resolution = resolution
     value.particles_sr = particles_sr
+    value.real_time = real_time
+    value.live_time = live_time
+    value.info = info
     return value
 
 
@@ -100,12 +108,6 @@ def parameter(
     return value
 
 
-def detector_target(target_type: type, label: str) -> object:
-    target = target_type()
-    target.detector = label
-    return target
-
-
 def concentration_target(layer_index: int, element: str) -> SpeciesConcentration:
     target = SpeciesConcentration()
     target.layer = layer_index
@@ -116,93 +118,53 @@ def concentration_target(layer_index: int, element: str) -> SpeciesConcentration
 def build_generation_config() -> GenerationConfig:
     sample = SampleModel()
     sample.layers = [
-        layer(100.0, [("C", 0.5), ("O", 0.5)]),
         layer(
-            300_000.0,
-            [
-                ("C", 0.10),
-                ("O", 0.20),
-                ("Y", 0.02),
-                ("Zr", 0.13),
-                ("Ba", 0.19),
-                ("Ce", 0.04),
-                ("D", 0.32),
-            ],
-        ),
+            5.0e5,
+            [("Li", 0.2), ("Ni", 0.2), ("Mn", 0.2), ("Co", 0.2), ("O", 0.2)],
+        )
     ]
 
     setup = ExperimentalSetup()
     setup.detectors = [
-        detector("RBS", 2.63714, -1.47615e-5, 22.0, 8.40491e10),
-        detector("NRA", 7.55, 0.0, 20.0, 9.08e11),
+        detector(
+            label="RBS",
+            beam_particle="H",
+            beam_energy=2974.0,
+            beam_spread=0.0,
+            calibration_linear=2.63714,
+            calibration_offset=0.0,
+            calibration_quadratic=0.0,
+            resolution=20.0,
+            particles_sr=1.0e12,
+        ),
+        detector(
+            label="NRA",
+            beam_particle="H",
+            beam_energy=2974.0,
+            beam_spread=0.0,
+            calibration_linear=7.55,
+            calibration_offset=0.0,
+            calibration_quadratic=0.0,
+            resolution=20.0,
+            particles_sr=1.0e13,
+        ),
     ]
-
-    thickness = LayerThickness()
-    thickness.layer = 0  # Native indices are zero-based.
 
     config = GenerationConfig()
     config.sample = sample
     config.setup = setup
     config.methods = [
-        method("RBS", ROOT / "xnra" / "Ref_all_rbs_nopu.xnra"),
-        method("NRA", ROOT / "xnra" / "Ref_all_nra_nopu.xnra"),
+        method("RBS", ROOT / "xnra" / "Ref_RBS_LiCOFNaAlSiPSTiMnFeCoNiCuH_nopu.xnra"),
+        method("NRA", ROOT / "xnra" / "Ref_NRA_LiCOFNaAlSiPSTiMnFeCoNiCuH_nopu.xnra"),
     ]
     config.parameters = [
-        parameter("Thickness_1", thickness, 10.0, 2000.0, "1e15 at/cm2"),
-        # Open concentrations in each layer are sampled jointly and normalized
-        # to the fraction remaining after fixed concentrations.
-        parameter("Conc_1_C", concentration_target(0, "C"), 0.0, 1.0, "fraction"),
+        # Thickness is fixed in SampleModel. These five open concentrations are
+        # sampled jointly and normalized so that the layer always sums to one.
+        parameter("Conc_1_Li", concentration_target(0, "Li"), 0.0, 1.0, "fraction"),
+        parameter("Conc_1_Ni", concentration_target(0, "Ni"), 0.0, 1.0, "fraction"),
+        parameter("Conc_1_Mn", concentration_target(0, "Mn"), 0.0, 1.0, "fraction"),
+        parameter("Conc_1_Co", concentration_target(0, "Co"), 0.0, 1.0, "fraction"),
         parameter("Conc_1_O", concentration_target(0, "O"), 0.0, 1.0, "fraction"),
-        parameter("Conc_2_C", concentration_target(1, "C"), 0.0, 1.0, "fraction"),
-        parameter("Conc_2_O", concentration_target(1, "O"), 0.0, 1.0, "fraction"),
-        parameter("Conc_2_D", concentration_target(1, "D"), 0.0, 1.0, "fraction"),
-        parameter(
-            "Conc_2_Y", concentration_target(1, "Y"), 0.0, 1.0, "fraction", 0.02
-        ),
-        parameter(
-            "Conc_2_Zr", concentration_target(1, "Zr"), 0.0, 1.0, "fraction", 0.13
-        ),
-        parameter(
-            "Conc_2_Ba", concentration_target(1, "Ba"), 0.0, 1.0, "fraction", 0.19
-        ),
-        parameter(
-            "Conc_2_Ce", concentration_target(1, "Ce"), 0.0, 1.0, "fraction", 0.04
-        ),
-        parameter(
-            "Calib_Linear_RBS",
-            detector_target(CalibrationLinear, "RBS"),
-            2.50528,
-            2.769,
-            "keV/channel",
-        ),
-        parameter(
-            "Calib_Linear_NRA",
-            detector_target(CalibrationLinear, "NRA"),
-            7.1725,
-            7.9275,
-            "keV/channel",
-        ),
-        parameter(
-            "Calib_Offset_RBS",
-            detector_target(CalibrationOffset, "RBS"),
-            -20.0,
-            20.0,
-            "keV",
-        ),
-        parameter(
-            "ParticlesSr_RBS",
-            detector_target(ParticlesSr, "RBS"),
-            1.0e9,
-            8.40491e10,
-            "particles/sr",
-        ),
-        parameter(
-            "ParticlesSr_NRA",
-            detector_target(ParticlesSr, "NRA"),
-            1.0e9,
-            9.08e11,
-            "particles/sr",
-        ),
     ]
     config.validate()
     return config
@@ -228,18 +190,18 @@ def main() -> None:
     config = build_generation_config()
 
     options = GenerationOptions()
-    options.samples = 100
+    options.samples = 1000
     # Progress is reported after each native batch. Match the batch size to the
     # SIMNRA worker count so all workers stay busy and tqdm advances every wave.
     options.batch_size = SIMNRA_WORKERS
-    options.shard_count = 10
+    options.shard_count = 1
     options.seed = 1
     # A SIMNRA/COM failure is usually systemic, so stop on the first failed
     # sample instead of repeating the same error for the entire dataset.
     options.failure_policy = FailurePolicy.STOP
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    output = ROOT / "examples" / "datasets" / f"bzcy_rbs_nra_1000_{run_id}"
+    output = ROOT / "examples" / "datasets" / f"linimncoo_rbs_nra_1000_{run_id}"
 
     # The context manager closes all SIMNRA workers and releases their COM
     # interfaces before propagating any Python or native exception.

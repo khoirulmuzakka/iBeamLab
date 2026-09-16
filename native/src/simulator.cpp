@@ -1,6 +1,9 @@
 #include <ibeamlab/simulator.h>
 
+#include <toml++/toml.hpp>
+
 #include <cmath>
+#include <sstream>
 #include <stdexcept>
 
 namespace ibeamlab::simulator {
@@ -36,6 +39,12 @@ std::vector<SimulationResult> DummySimulator::simulateBatch(
         output.push_back(std::move(result));
     }
     return output;
+}
+std::string DummySimulator::configurationToml() const {
+    std::ostringstream output;
+    output << toml::table{{"type", "dummy"},
+        {"channels", static_cast<std::int64_t>(channels_)}};
+    return output.str();
 }
 
 } // namespace ibeamlab::simulator

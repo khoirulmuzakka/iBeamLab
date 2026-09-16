@@ -1,5 +1,7 @@
 #include <ibeamlab/data_generator.h>
 
+#include <toml++/toml.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
@@ -7,6 +9,21 @@
 #include <stdexcept>
 
 namespace ibeamlab::generation {
+namespace {
+std::string optionsToml(const GenerationOptions &options) {
+    const char *failurePolicy = options.failurePolicy == FailurePolicy::Stop ? "stop"
+        : options.failurePolicy == FailurePolicy::Record ? "record" : "discard";
+    toml::table table{{"samples", static_cast<std::int64_t>(options.samples)},
+        {"batch_size", static_cast<std::int64_t>(options.batchSize)},
+        {"shard_count", static_cast<std::int64_t>(options.shardCount)},
+        {"seed", static_cast<std::int64_t>(options.seed)},
+        {"failure_policy", failurePolicy}, {"sampling_method", "normalized_uniform_per_layer"},
+        {"sampling_version", 1}};
+    std::ostringstream output;
+    output << table;
+    return output.str();
+}
+} // namespace
 
 DataGenerator::DataGenerator(GenerationConfig config,
                              std::shared_ptr<simulator::ISimulator> simulator)
@@ -31,6 +48,9 @@ GenerationSummary DataGenerator::generate(const std::filesystem::path &output,
     metadata.requested = options.samples;
     metadata.seed = options.seed;
     metadata.simulator = "ibeamlab";
+    metadata.generationConfigToml = generationConfigToToml(config_);
+    metadata.generationOptionsToml = optionsToml(options);
+    metadata.simulatorConfigToml = simulator_->configurationToml();
     metadata.parameterNames = config_.openParameterNames();
     metadata.provenance.ibeamlabVersion = IBEAMLAB_VERSION;
     metadata.provenance.build = IBEAMLAB_BUILD_TYPE;

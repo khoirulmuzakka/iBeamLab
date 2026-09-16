@@ -1,5 +1,7 @@
 #include <ibeamlab/simnra_simulator.h>
 
+#include <toml++/toml.hpp>
+
 #ifdef IBEAMLAB_HAS_SIMNRA
 #include "simnra.h"
 #include <windows.h>
@@ -13,8 +15,10 @@
 #include <deque>
 #include <functional>
 #include <future>
+#include <fstream>
 #include <mutex>
 #include <stdexcept>
+#include <sstream>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -500,6 +504,38 @@ struct SimnraSimulator::Impl {
 SimnraSimulator::SimnraSimulator(SimnraSimulatorConfig config)
     : impl_(std::make_unique<Impl>(std::move(config))) {}
 SimnraSimulator::~SimnraSimulator() = default;
+std::string SimnraSimulator::configurationToml() const {
+    toml::array methods;
+    for (const auto &method : impl_->config.methods) {
+        const auto path = std::filesystem::absolute(method.referenceFile);
+        std::ifstream input(path, std::ios::binary);
+        if (!input)
+            throw std::runtime_error("cannot checksum SIMNRA reference file: " + path.string());
+        std::uint32_t crc = 0xFFFFFFFFU;
+        char buffer[64 * 1024];
+        while (input) {
+            input.read(buffer, sizeof(buffer));
+            for (std::streamsize i = 0; i < input.gcount(); ++i) {
+                crc ^= static_cast<unsigned char>(buffer[i]);
+                for (int bit = 0; bit < 8; ++bit)
+                    crc = (crc >> 1U) ^ (0xEDB88320U & (0U - (crc & 1U)));
+            }
+        }
+        crc = ~crc;
+        methods.push_back(toml::table{{"label", method.label},
+            {"reference_file", path.generic_string()},
+            {"reference_size", static_cast<std::int64_t>(std::filesystem::file_size(path))},
+            {"reference_crc32", static_cast<std::int64_t>(crc)}});
+    }
+    toml::table root{{"type", "simnra"},
+        {"workers", static_cast<std::int64_t>(impl_->config.workers)},
+        {"multithreaded_apartment", impl_->config.multithreadedApartment},
+        {"thread_priority", impl_->config.threadPriority},
+        {"fast_calculation", impl_->config.fastCalculation}, {"methods", std::move(methods)}};
+    std::ostringstream output;
+    output << root;
+    return output.str();
+}
 std::vector<SimulationResult>
 SimnraSimulator::simulateBatch(const std::vector<SimulationInput> &inputs,
                                const SimulationOptions &options) {
