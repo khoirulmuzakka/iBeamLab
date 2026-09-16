@@ -14,6 +14,8 @@ SIMNRA::SIMNRA(bool mta, int threadPriorityIndex) {
         std::wcout << "Warning : COM already initialized with a different threading model\n";
     } else if (FAILED(hr)) {
         throw std::runtime_error("CoInitializeEx failed");
+    } else {
+        m_comInitialized = true;
     }
     
     // Map threadPriorityIndex to Windows priorities
@@ -67,7 +69,10 @@ SIMNRA::SIMNRA(bool mta, int threadPriorityIndex) {
         if (m_PIGE) m_PIGE->Release();
         if (m_CrossSec) m_CrossSec->Release();
 
-        CoUninitialize();
+        if (m_comInitialized) {
+            CoUninitialize();
+            m_comInitialized = false;
+        }
         throw;
     }
 }
@@ -85,7 +90,8 @@ SIMNRA::~SIMNRA() {
     if (m_PIGE) m_PIGE->Release();
     if (m_CrossSec) m_CrossSec->Release();
 
-    CoUninitialize(); // Uninitialize COM for this thread
+    if (m_comInitialized)
+        CoUninitialize(); // Balance this instance's successful CoInitializeEx call.
 }
 
 void SIMNRA::pumpMessages() {
@@ -342,6 +348,14 @@ int SIMNRA::getNumberOfElements(int layerIndex) { return get<int>(m_Target, L"Nu
 std::wstring SIMNRA::getElementName(int layerIndex, int elementIndex) { return get<std::wstring>(m_Target, L"ElementName", { CreateVariantFrom<int>(layerIndex), CreateVariantFrom<int>(elementIndex) }); }
 int SIMNRA::getElementZ(int layerIndex, int elementIndex) { return get<int>(m_Target, L"ElementZ",  { CreateVariantFrom<int>(layerIndex), CreateVariantFrom<int>(elementIndex) }); }
 int SIMNRA::getNumberOfIsotopes(int layerIndex, int elementIndex){return get<int>(m_Target, L"NumberOfIsotopes",  { CreateVariantFrom<int>(layerIndex), CreateVariantFrom<int>(elementIndex) }); }
+double SIMNRA::getIsotopeMass(int layerIndex, int elementIndex, int isotopeIndex) {
+    return get<double>(m_Target, L"IsotopeMass", {CreateVariantFrom<int>(layerIndex),
+        CreateVariantFrom<int>(elementIndex), CreateVariantFrom<int>(isotopeIndex)});
+}
+double SIMNRA::getIsotopeConcentration(int layerIndex, int elementIndex, int isotopeIndex) {
+    return get<double>(m_Target, L"IsotopeConcentration", {CreateVariantFrom<int>(layerIndex),
+        CreateVariantFrom<int>(elementIndex), CreateVariantFrom<int>(isotopeIndex)});
+}
 double SIMNRA::getElementConcentration(int layerIndex, int elementIndex) { return get<double>(m_Target, L"ElementConcentration", { CreateVariantFrom<int>(layerIndex), CreateVariantFrom<int>(elementIndex) }); }
 std::vector<double> SIMNRA::getElementConcentrationArray(int layerIndex) {
     VARIANT result = GetPropertyValue(m_Target, L"ElementConcentrationArray", { CreateVariantFrom<int>(layerIndex) });

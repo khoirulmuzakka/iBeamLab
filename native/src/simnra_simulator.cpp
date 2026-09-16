@@ -6,6 +6,9 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
+#include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -14,11 +17,14 @@
 #include <stdexcept>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 
 namespace ibeamlab::simulator {
 
 #ifdef IBEAMLAB_HAS_SIMNRA
 namespace {
+std::atomic_uint64_t temporaryDirectoryCounter{};
+
 std::wstring wide(const std::filesystem::path &path) { return path.wstring(); }
 std::wstring wide(const std::string &text) {
     if (text.empty())
@@ -39,8 +45,16 @@ const sample::Detector &detector(const SimulationInput &input, const std::string
         throw std::invalid_argument("missing detector setup: " + label);
     return *it;
 }
+sample::Detector &detector(SimulationInput &input, const std::string &label) {
+    return const_cast<sample::Detector &>(detector(std::as_const(input), label));
+}
 void configureTarget(SIMNRA &sim, const sample::SampleModel &sample) {
-    sim.setNumberOfLayers(0);
+    // NumberOfLayers is read-only in current SIMNRA COM versions. Rebuild the
+    // target through the supported collection methods instead of assigning it.
+    while (sim.getNumberOfLayers() > 0) {
+        if (!sim.deleteLayer(1))
+            throw std::runtime_error("SIMNRA failed to delete an existing target layer");
+    }
     for (std::size_t layerIndex = 0; layerIndex < sample.layers.size(); ++layerIndex) {
         const auto &layer = sample.layers[layerIndex];
         std::vector<std::wstring> names;
@@ -87,6 +101,40 @@ std::string targetTopology(const sample::SampleModel &sample) {
     }
     return result;
 }
+bool sameTarget(const sample::SampleModel &left, const sample::SampleModel &right) {
+    if (left.layers.size() != right.layers.size())
+        return false;
+    for (std::size_t layerIndex = 0; layerIndex < left.layers.size(); ++layerIndex) {
+        const auto &a = left.layers[layerIndex];
+        const auto &b = right.layers[layerIndex];
+        if (a.thickness != b.thickness || a.roughness != b.roughness ||
+            a.porosityFraction != b.porosityFraction || a.poreDiameter != b.poreDiameter ||
+            a.species.size() != b.species.size())
+            return false;
+        for (std::size_t speciesIndex = 0; speciesIndex < a.species.size(); ++speciesIndex) {
+            const auto &as = a.species[speciesIndex];
+            const auto &bs = b.species[speciesIndex];
+            if (as.element != bs.element || as.concentration != bs.concentration ||
+                as.isotopes.size() != bs.isotopes.size())
+                return false;
+            for (std::size_t isotopeIndex = 0; isotopeIndex < as.isotopes.size(); ++isotopeIndex) {
+                const auto &ai = as.isotopes[isotopeIndex];
+                const auto &bi = bs.isotopes[isotopeIndex];
+                if (ai.massNumber != bi.massNumber || ai.exactMass != bi.exactMass ||
+                    ai.fraction != bi.fraction)
+                    return false;
+            }
+        }
+    }
+    return true;
+}
+bool sameSetup(const sample::Detector &a, const sample::Detector &b) {
+    return a.label == b.label && a.beam.energy == b.beam.energy &&
+           a.beam.spread == b.beam.spread && a.calibrationLinear == b.calibrationLinear &&
+           a.particlesSr == b.particlesSr && a.calibrationOffset == b.calibrationOffset &&
+           a.calibrationQuadratic == b.calibrationQuadratic && a.resolution == b.resolution &&
+           a.realTime == b.realTime && a.liveTime == b.liveTime;
+}
 void updateTarget(SIMNRA &sim, const sample::SampleModel &sample) {
     for (std::size_t layerIndex = 0; layerIndex < sample.layers.size(); ++layerIndex) {
         const auto &layer = sample.layers[layerIndex];
@@ -130,6 +178,62 @@ void configureSetup(SIMNRA &sim, const sample::Detector &setup) {
     if (setup.liveTime > 0)
         sim.setLiveTime(setup.liveTime);
 }
+
+sample::SampleModel readTarget(SIMNRA &sim) {
+    sample::SampleModel result;
+    const int layerCount = sim.getNumberOfLayers();
+    result.layers.reserve(static_cast<std::size_t>(layerCount));
+    for (int layerIndex = 1; layerIndex <= layerCount; ++layerIndex) {
+        sample::Layer layer;
+        layer.thickness = sim.getLayerThickness(layerIndex);
+        if (sim.getHasLayerRoughness(layerIndex))
+            layer.roughness = sim.getLayerRoughness(layerIndex);
+        if (sim.getHasLayerPorosity(layerIndex)) {
+            layer.porosityFraction = sim.getPorosityFraction(layerIndex);
+            layer.poreDiameter = sim.getPoreDiameter(layerIndex);
+        }
+        const int elementCount = sim.getNumberOfElements(layerIndex);
+        layer.species.reserve(static_cast<std::size_t>(elementCount));
+        for (int elementIndex = 1; elementIndex <= elementCount; ++elementIndex) {
+            sample::Species species;
+            species.element = w2s(sim.getElementName(layerIndex, elementIndex));
+            while (!species.element.empty() &&
+                   std::isspace(static_cast<unsigned char>(species.element.back())))
+                species.element.pop_back();
+            species.concentration = sim.getElementConcentration(layerIndex, elementIndex);
+            const int isotopeCount = sim.getNumberOfIsotopes(layerIndex, elementIndex);
+            species.isotopes.reserve(static_cast<std::size_t>(isotopeCount));
+            for (int isotopeIndex = 1; isotopeIndex <= isotopeCount; ++isotopeIndex) {
+                sample::Isotope isotope;
+                isotope.exactMass = sim.getIsotopeMass(layerIndex, elementIndex, isotopeIndex);
+                isotope.massNumber = static_cast<std::int32_t>(std::lround(isotope.exactMass));
+                isotope.fraction =
+                    sim.getIsotopeConcentration(layerIndex, elementIndex, isotopeIndex);
+                species.isotopes.push_back(isotope);
+            }
+            layer.species.push_back(std::move(species));
+        }
+        result.layers.push_back(std::move(layer));
+    }
+    return result;
+}
+
+sample::Detector readSetup(SIMNRA &sim, const sample::Detector &requested) {
+    sample::Detector result;
+    result.label = requested.label;
+    result.beam.particle = requested.beam.particle;
+    result.beam.energy = sim.getBeamEnergy();
+    result.beam.spread = sim.getBeamSpread();
+    result.calibrationLinear = sim.getCalibrationLinear();
+    result.particlesSr = sim.getParticlesSr();
+    result.calibrationOffset = sim.getCalibrationOffset();
+    result.calibrationQuadratic = sim.getCalibrationQuadratic();
+    result.resolution = sim.getDetectorResolution();
+    result.realTime = sim.getRealTime();
+    result.liveTime = sim.getLiveTime();
+    result.info = requested.info;
+    return result;
+}
 } // namespace
 #endif
 
@@ -139,7 +243,7 @@ struct SimnraSimulator::Impl {
             throw std::invalid_argument("SIMNRA methods and workers cannot be empty");
 #ifdef IBEAMLAB_HAS_SIMNRA
         for (std::size_t i = 0; i < config.workers; ++i)
-            workers.push_back(std::make_unique<Worker>(*this));
+            workers.push_back(std::make_unique<Worker>(*this, i));
 #else
         throw std::runtime_error("iBeamLab was built without SIMNRA support");
 #endif
@@ -149,12 +253,31 @@ struct SimnraSimulator::Impl {
     std::atomic_bool stop{false};
 #ifdef IBEAMLAB_HAS_SIMNRA
     struct Worker {
-        explicit Worker(Impl &owner) : owner(owner), thread([this] { run(); }) {}
+        explicit Worker(Impl &owner, std::size_t workerIndex)
+            : owner(owner), workerIndex(workerIndex), thread([this] { run(); }) {}
         ~Worker() { shutdown(); }
-        std::future<SimulationResult> submit(std::size_t index, const SimulationInput &input,
+        std::future<SimulationResult> submit(std::size_t sampleIndex, const SimulationInput &input,
                                              const SimulationOptions &options) {
             auto task = std::make_shared<std::packaged_task<SimulationResult()>>(
-                [this, index, &input, options] { return calculate(index, input, options); });
+                [this, sampleIndex, &input, options] {
+                    return calculate(sampleIndex, input, options);
+                });
+            auto future = task->get_future();
+            {
+                std::lock_guard lock(mutex);
+                if (closing)
+                    throw std::logic_error("SIMNRA worker is closed");
+                queue.emplace_back([task] { (*task)(); });
+            }
+            condition.notify_one();
+            return future;
+        }
+        std::future<SimulationInput> submitInspection(const SimulationInput &input,
+                                                       std::string methodLabel) {
+            auto task = std::make_shared<std::packaged_task<SimulationInput()>>(
+                [this, &input, methodLabel = std::move(methodLabel)] {
+                    return inspect(input, methodLabel);
+                });
             auto future = task->get_future();
             {
                 std::lock_guard lock(mutex);
@@ -174,7 +297,100 @@ struct SimnraSimulator::Impl {
             if (thread.joinable())
                 thread.join();
         }
-        SimulationResult calculate(std::size_t index, const SimulationInput &input,
+        void ensureInstances() {
+            if (!instances.empty())
+                return;
+            if (referenceCopies.empty()) {
+                const auto sequence = temporaryDirectoryCounter.fetch_add(1);
+                workingDirectory = std::filesystem::temp_directory_path() /
+                    ("ibeamlab-simnra-" + std::to_string(GetCurrentProcessId()) + "-" +
+                     std::to_string(workerIndex) + "-" + std::to_string(sequence));
+                std::filesystem::create_directories(workingDirectory);
+                try {
+                    for (std::size_t methodIndex = 0; methodIndex < owner.config.methods.size();
+                         ++methodIndex) {
+                        const auto &source = owner.config.methods[methodIndex].referenceFile;
+                        if (!std::filesystem::is_regular_file(source))
+                            throw std::runtime_error("SIMNRA reference file does not exist: " +
+                                                     source.string());
+                        const auto destination = workingDirectory /
+                            (std::to_wstring(methodIndex) + L"_" + source.filename().wstring());
+                        std::filesystem::copy_file(source, destination,
+                                                   std::filesystem::copy_options::overwrite_existing);
+                        referenceCopies.push_back(destination);
+                    }
+                } catch (...) {
+                    std::error_code ignored;
+                    std::filesystem::remove_all(workingDirectory, ignored);
+                    workingDirectory.clear();
+                    referenceCopies.clear();
+                    throw;
+                }
+            }
+            try {
+                for (std::size_t methodIndex = 0; methodIndex < owner.config.methods.size();
+                     ++methodIndex) {
+                    auto sim = std::make_unique<SIMNRA>(owner.config.multithreadedApartment,
+                                                        owner.config.threadPriority);
+                    const auto path = wide(referenceCopies[methodIndex]);
+                    sim->open(path.c_str(), -1);
+                    instances.push_back(std::move(sim));
+                }
+            } catch (...) {
+                discardInstances();
+                throw;
+            }
+            cachedTopologies.resize(instances.size());
+            cachedTargets.resize(instances.size());
+            cachedSetups.resize(instances.size());
+        }
+        void discardInstances() {
+            instances.clear();
+            cachedTopologies.clear();
+            cachedTargets.clear();
+            cachedSetups.clear();
+        }
+        SIMNRA &applyConfiguration(std::size_t methodIndex, const SimulationInput &input) {
+            auto &sim = *instances.at(methodIndex);
+            const auto topology = targetTopology(input.sample);
+            if (!cachedTargets[methodIndex] ||
+                !sameTarget(*cachedTargets[methodIndex], input.sample)) {
+                if (cachedTopologies[methodIndex] == topology)
+                    updateTarget(sim, input.sample);
+                else
+                    configureTarget(sim, input.sample);
+                cachedTopologies[methodIndex] = topology;
+                cachedTargets[methodIndex] = input.sample;
+            }
+
+            const auto &requestedSetup =
+                detector(input, owner.config.methods[methodIndex].label);
+            if (!cachedSetups[methodIndex] ||
+                !sameSetup(*cachedSetups[methodIndex], requestedSetup)) {
+                configureSetup(sim, requestedSetup);
+                cachedSetups[methodIndex] = requestedSetup;
+            }
+            return sim;
+        }
+        SimulationInput inspect(const SimulationInput &input, const std::string &methodLabel) {
+            input.sample.validate();
+            input.setup.validate();
+            ensureInstances();
+            const auto method = std::find_if(owner.config.methods.begin(), owner.config.methods.end(),
+                [&](const auto &value) { return value.label == methodLabel; });
+            if (method == owner.config.methods.end())
+                throw std::invalid_argument("unknown SIMNRA method: " + methodLabel);
+            const auto methodIndex = static_cast<std::size_t>(method - owner.config.methods.begin());
+            auto &sim = applyConfiguration(methodIndex, input);
+            const auto &requestedSetup = detector(input, methodLabel);
+
+            SimulationInput result = input;
+            result.sample = readTarget(sim);
+            auto &resultSetup = detector(result, methodLabel);
+            resultSetup = readSetup(sim, requestedSetup);
+            return result;
+        }
+        SimulationResult calculate(std::size_t sampleIndex, const SimulationInput &input,
                                    const SimulationOptions &options) {
             SimulationResult result;
             if (owner.stop.load())
@@ -183,27 +399,12 @@ struct SimnraSimulator::Impl {
             try {
                 input.sample.validate();
                 input.setup.validate();
-                if (instances.empty()) {
-                    for (const auto &method : owner.config.methods) {
-                        currentMethod = method.label;
-                        auto sim = std::make_unique<SIMNRA>(owner.config.multithreadedApartment,
-                                                            owner.config.threadPriority);
-                        const auto path = wide(method.referenceFile);
-                        sim->open(path.c_str(), -1);
-                        instances.push_back(std::move(sim));
-                    }
-                }
-                const auto topology = targetTopology(input.sample);
+                ensureInstances();
                 for (std::size_t m = 0; m < owner.config.methods.size(); ++m) {
                     if (owner.stop.load())
                         break;
                     currentMethod = owner.config.methods[m].label;
-                    auto &sim = *instances[m];
-                    if (topology == cachedTopology)
-                        updateTarget(sim, input.sample);
-                    else
-                        configureTarget(sim, input.sample);
-                    configureSetup(sim, detector(input, currentMethod));
+                    auto &sim = applyConfiguration(m, input);
                     sim.setCalc_ElementSpectra(options.captureElementalSpectra);
                     const bool ok = owner.config.fastCalculation ? sim.calculateSpectrumFast()
                                                                  : sim.calculateSpectrum();
@@ -236,12 +437,10 @@ struct SimnraSimulator::Impl {
                             }
                     }
                 }
-                cachedTopology = topology;
             } catch (const std::exception &error) {
                 result.failure =
-                    SimulationFailure{index, currentMethod, "SimnraError", error.what()};
-                instances.clear();
-                cachedTopology.clear();
+                    SimulationFailure{sampleIndex, currentMethod, "SimnraError", error.what()};
+                discardInstances();
             }
             return result;
         }
@@ -258,16 +457,34 @@ struct SimnraSimulator::Impl {
                 }
                 task();
             }
-            instances.clear();
+            discardInstances();
+            // SIMNRA is an out-of-process COM server and may release its file
+            // handle shortly after the final IDispatch release.
+            for (int attempt = 0; attempt < 100 && !workingDirectory.empty(); ++attempt) {
+                std::error_code ignored;
+                std::filesystem::remove_all(workingDirectory, ignored);
+                if (!std::filesystem::exists(workingDirectory, ignored))
+                    break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            referenceCopies.clear();
+            workingDirectory.clear();
         }
         Impl &owner;
-        std::thread thread;
+        std::size_t workerIndex;
         std::mutex mutex;
         std::condition_variable condition;
         std::deque<std::function<void()>> queue;
         bool closing = false;
+        std::filesystem::path workingDirectory;
+        std::vector<std::filesystem::path> referenceCopies;
         std::vector<std::unique_ptr<SIMNRA>> instances;
-        std::string cachedTopology;
+        std::vector<std::string> cachedTopologies;
+        std::vector<std::optional<sample::SampleModel>> cachedTargets;
+        std::vector<std::optional<sample::Detector>> cachedSetups;
+        // Keep this last: C++ initializes members in declaration order, so the
+        // queue and synchronization state must exist before run() can start.
+        std::thread thread;
     };
     std::vector<std::unique_ptr<Worker>> workers;
 #endif
@@ -302,6 +519,18 @@ SimnraSimulator::simulateBatch(const std::vector<SimulationInput> &inputs,
     }
 #endif
     return results;
+}
+SimulationInput SimnraSimulator::inspectConfiguration(const SimulationInput &input,
+                                                       const std::string &methodLabel) {
+#ifdef IBEAMLAB_HAS_SIMNRA
+    if (impl_->closed.load())
+        throw std::logic_error("SimnraSimulator is closed");
+    return impl_->workers.front()->submitInspection(input, methodLabel).get();
+#else
+    (void)input;
+    (void)methodLabel;
+    throw std::runtime_error("iBeamLab was built without SIMNRA support");
+#endif
 }
 void SimnraSimulator::requestStop() noexcept {
     ISimulator::requestStop();

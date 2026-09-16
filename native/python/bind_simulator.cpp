@@ -66,7 +66,16 @@ void bindSimulator(py::module_ &root) {
         .def_readwrite("fast_calculation", &SimnraSimulatorConfig::fastCalculation);
     py::class_<SimnraSimulator, ISimulator, std::shared_ptr<SimnraSimulator>>(m, "SimnraSimulator")
         .def(py::init<SimnraSimulatorConfig>())
+        .def("__enter__", [](SimnraSimulator &self) -> SimnraSimulator & { return self; },
+             py::return_value_policy::reference_internal)
+        .def("__exit__", [](SimnraSimulator &self, py::object, py::object, py::object) {
+            self.close();
+            return false;
+        })
         .def("simulate_batch", &SimnraSimulator::simulateBatch,
+             py::call_guard<py::gil_scoped_release>())
+        .def("inspect_configuration", &SimnraSimulator::inspectConfiguration,
+             py::arg("input"), py::arg("method_label"),
              py::call_guard<py::gil_scoped_release>())
         .def("request_stop", &SimnraSimulator::requestStop)
         .def("reset_stop", &SimnraSimulator::resetStop)

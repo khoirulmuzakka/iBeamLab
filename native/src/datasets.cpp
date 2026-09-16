@@ -2,6 +2,7 @@
 
 #include <toml++/toml.hpp>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <iomanip>
@@ -84,6 +85,10 @@ DatasetWriter::DatasetWriter(std::filesystem::path directory, DatasetMetadata me
     std::filesystem::create_directories(directory_);
     metadata_.createdUtc = nowUtc();
     metadata_.complete = false;
+    if (metadata_.spectrumLengths.empty())
+        metadata_.spectrumLengths.assign(metadata_.spectrumLabels.size(), 0);
+    else if (metadata_.spectrumLengths.size() != metadata_.spectrumLabels.size())
+        throw std::invalid_argument("dataset spectrum lengths and labels differ in size");
     for (std::size_t i = 0; i < shardCount; ++i) {
         std::ostringstream name;
         name << "part-" << std::setw(6) << std::setfill('0') << i << ".ibd";
@@ -111,13 +116,12 @@ void DatasetWriter::append(const DatasetRecord &record) {
         throw std::invalid_argument("dataset parameter count does not match metadata");
     if (record.result.spectra.size() != metadata_.spectrumLabels.size())
         throw std::invalid_argument("dataset spectrum count does not match metadata");
-    if (metadata_.spectrumLengths.empty())
-        for (const auto &spectrum : record.result.spectra)
-            metadata_.spectrumLengths.push_back(spectrum.counts.size());
-    for (std::size_t index = 0; index < record.result.spectra.size(); ++index)
-        if (record.result.spectra[index].label != metadata_.spectrumLabels[index] ||
-            record.result.spectra[index].counts.size() != metadata_.spectrumLengths[index])
-            throw std::invalid_argument("dataset spectrum shape or ordering differs from metadata");
+    for (std::size_t index = 0; index < record.result.spectra.size(); ++index) {
+        if (record.result.spectra[index].label != metadata_.spectrumLabels[index])
+            throw std::invalid_argument("dataset spectrum ordering differs from metadata");
+        metadata_.spectrumLengths[index] = std::max<std::uint64_t>(
+            metadata_.spectrumLengths[index], record.result.spectra[index].counts.size());
+    }
     auto &out = shards_[nextShard_++ % shards_.size()];
     writeValue(out, record.sampleIndex);
     writeString(out, record.sampleId);
@@ -244,6 +248,8 @@ DatasetReader::DatasetReader(std::filesystem::path directory) : directory_(std::
         auto length=value.value<std::uint64_t>(); if(!length) throw std::runtime_error("invalid spectrum length in dataset manifest"); metadata_.spectrumLengths.push_back(*length);
     }
     metadata_.shardFiles = strings(root["shards"].as_array());
+    if (metadata_.spectrumLengths.size() != metadata_.spectrumLabels.size())
+        throw std::runtime_error("dataset spectrum lengths and labels differ in size");
     if (auto p = root["provenance"].as_table()) {
         metadata_.provenance.ibeamlabVersion = (*p)["ibeamlab_version"].value_or<std::string>("");
         metadata_.provenance.build = (*p)["build"].value_or<std::string>("");
@@ -272,17 +278,25 @@ std::vector<DatasetRecord> DatasetReader::readAll() const {
             const auto spectra = readValue<std::uint32_t>(in);
             if (spectra > 10000)
                 throw std::runtime_error("too many spectra");
+            if (spectra != metadata_.spectrumLabels.size())
+                throw std::runtime_error("dataset spectrum count differs from metadata");
             for (std::uint32_t i = 0; i < spectra; ++i) {
                 simulator::Spectrum spectrum;
                 spectrum.label = readString(in);
+                if (spectrum.label != metadata_.spectrumLabels[i])
+                    throw std::runtime_error("dataset spectrum ordering differs from metadata");
                 const auto count = readValue<std::uint64_t>(in);
                 if (count > 100000000)
                     throw std::runtime_error("spectrum exceeds safety limit");
+                if (count > metadata_.spectrumLengths[i])
+                    throw std::runtime_error("dataset spectrum exceeds declared maximum length");
                 spectrum.counts.resize(static_cast<std::size_t>(count));
                 in.read(reinterpret_cast<char *>(spectrum.counts.data()),
                         static_cast<std::streamsize>(count * sizeof(float)));
                 if (!in)
                     throw std::runtime_error("truncated spectrum");
+                spectrum.counts.resize(
+                    static_cast<std::size_t>(metadata_.spectrumLengths[i]), 0.0F);
                 record.result.spectra.push_back(std::move(spectrum));
             }
             records.push_back(std::move(record));

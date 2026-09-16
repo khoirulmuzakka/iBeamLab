@@ -1,6 +1,24 @@
-"""Native simulator API, including DummySimulator and SimnraSimulator."""
+"""Native simulation backends and their input/result types.
 
-from ._ibeamlab_cpp import simulator as _native
+``SimnraSimulator`` owns persistent SIMNRA COM workers. Pass an instance to
+``ibeamlab.generation.DataGenerator`` to generate a SIMNRA-backed dataset.
+"""
 
-__all__ = [name for name in dir(_native) if not name.startswith("_")]
-globals().update({name: getattr(_native, name) for name in __all__})
+from ._ibeamlab_cpp.simulator import (
+    DummySimulator,
+    ISimulator,
+    SimnraMethod,
+    SimnraSimulator,
+    SimnraSimulatorConfig,
+    SimulationFailure,
+    SimulationInput,
+    SimulationOptions,
+    SimulationResult,
+    Spectrum,
+)
+
+__all__ = [
+    "DummySimulator", "ISimulator", "SimnraMethod", "SimnraSimulator",
+    "SimnraSimulatorConfig", "SimulationFailure", "SimulationInput",
+    "SimulationOptions", "SimulationResult", "Spectrum",
+]

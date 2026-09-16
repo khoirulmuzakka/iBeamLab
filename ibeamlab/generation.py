@@ -1,6 +1,29 @@
-"""Native deterministic data-generation API."""
+"""Configuration and execution of deterministic native dataset generation."""
 
-from ._ibeamlab_cpp import generation as _native
+from ._ibeamlab_cpp.generation import (
+    BeamEnergy,
+    BeamSpread,
+    CalibrationLinear,
+    CalibrationOffset,
+    CalibrationQuadratic,
+    DataGenerator,
+    DetectorResolution,
+    FailurePolicy,
+    GenerationConfig,
+    GenerationOptions,
+    GenerationProgress,
+    GenerationSummary,
+    LayerThickness,
+    MethodConfig,
+    ParameterSpec,
+    ParticlesSr,
+    SpeciesConcentration,
+)
 
-__all__ = [name for name in dir(_native) if not name.startswith("_")]
-globals().update({name: getattr(_native, name) for name in __all__})
+__all__ = [
+    "BeamEnergy", "BeamSpread", "CalibrationLinear", "CalibrationOffset",
+    "CalibrationQuadratic", "DataGenerator", "DetectorResolution",
+    "FailurePolicy", "GenerationConfig", "GenerationOptions",
+    "GenerationProgress", "GenerationSummary", "LayerThickness",
+    "MethodConfig", "ParameterSpec", "ParticlesSr", "SpeciesConcentration",
+]

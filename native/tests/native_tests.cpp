@@ -61,6 +61,54 @@ int main() {
     config.validate();
     const auto generated = config.materialize({105});
     assert(generated.setup.detectors[0].beam.energy == 105);
+
+    sample::SampleModel mixture{{sample::Layer{1.0, 0, 0, 0,
+        {sample::Species{"C", 0.4, {}}, sample::Species{"O", 0.4, {}},
+         sample::Species{"Zr", 0.2, {}}}}}};
+    generation::GenerationConfig mixtureConfig{
+        mixture,
+        setup,
+        {generation::MethodConfig{"RBS", "RBS", "reference.xnra"}},
+        {
+            generation::ParameterSpec{"C", generation::SpeciesConcentration{0, "C"}, 0, 0.8,
+                                      std::nullopt, "fraction"},
+            generation::ParameterSpec{"Zr", generation::SpeciesConcentration{0, "Zr"}, 0, 1,
+                                      0.2, "fraction"},
+            generation::ParameterSpec{"O", generation::SpeciesConcentration{0, "O"}, 0, 0.8,
+                                      std::nullopt, "fraction"},
+        }};
+    const auto concentrationRows = generation::sampleParameters(mixtureConfig, 32, 7);
+    for (const auto& row : concentrationRows) {
+        const auto normalized = mixtureConfig.materialize(row);
+        const auto& species = normalized.sample.layers[0].species;
+        assert(std::abs(species[0].concentration + species[1].concentration - 0.8) < 1e-9);
+        assert(std::abs(species[2].concentration - 0.2) < 1e-12);
+    }
+    assert(std::abs(concentrationRows[0][0] - concentrationRows[1][0]) > 1e-9);
+
+    const auto variableDirectory =
+        std::filesystem::temp_directory_path() / "ibeamlab-variable-spectrum-test";
+    std::filesystem::remove_all(variableDirectory);
+    datasets::DatasetMetadata variableMetadata;
+    variableMetadata.requested = 2;
+    variableMetadata.spectrumLabels = {"RBS"};
+    {
+        datasets::DatasetWriter writer(variableDirectory, variableMetadata);
+        writer.append({0, "short", {}, {{{"RBS", {1.0F, 2.0F}}}, {}, std::nullopt}});
+        writer.append(
+            {1, "long", {}, {{{"RBS", {3.0F, 4.0F, 5.0F, 6.0F}}}, {}, std::nullopt}});
+        writer.finalize();
+    }
+    datasets::DatasetReader variableReader(variableDirectory);
+    assert(variableReader.metadata().spectrumLengths == std::vector<std::uint64_t>{4});
+    const auto paddedRecords = variableReader.readAll();
+    assert(paddedRecords.size() == 2);
+    assert(paddedRecords[0].result.spectra[0].counts ==
+           std::vector<float>({1.0F, 2.0F, 0.0F, 0.0F}));
+    assert(paddedRecords[1].result.spectra[0].counts ==
+           std::vector<float>({3.0F, 4.0F, 5.0F, 6.0F}));
+    std::filesystem::remove_all(variableDirectory);
+
     const auto directory = std::filesystem::temp_directory_path() / "ibeamlab-native-test-dataset";
     std::filesystem::remove_all(directory);
     const auto package =

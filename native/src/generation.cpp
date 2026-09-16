@@ -34,6 +34,67 @@ std::string targetKey(const ParameterTarget& target) {
         else return "detector.particles_sr." + value.detector;
     }, target);
 }
+
+struct OpenConcentration {
+    std::size_t column;
+    const ParameterSpec* parameter;
+};
+
+void normalizeConcentrations(std::vector<double>& row,
+    const std::vector<OpenConcentration>& parameters, double total) {
+    constexpr double tolerance = 1e-12;
+    double minimumSum = 0.0;
+    double maximumSum = 0.0;
+    for (const auto& item : parameters) {
+        minimumSum += item.parameter->lowerBound;
+        maximumSum += item.parameter->upperBound;
+    }
+    if (total < minimumSum - tolerance || total > maximumSum + tolerance)
+        throw std::invalid_argument("concentration bounds cannot sum to the remaining layer fraction");
+
+    std::vector<double> normalized(parameters.size());
+    std::vector<double> weights(parameters.size());
+    double remaining = total - minimumSum;
+    for (std::size_t i = 0; i < parameters.size(); ++i) {
+        const auto& parameter = *parameters[i].parameter;
+        normalized[i] = parameter.lowerBound;
+        weights[i] = std::max(0.0, row[parameters[i].column] - parameter.lowerBound);
+    }
+
+    while (remaining > tolerance) {
+        double weightSum = 0.0;
+        std::size_t active = 0;
+        for (std::size_t i = 0; i < parameters.size(); ++i) {
+            if (normalized[i] < parameters[i].parameter->upperBound - tolerance) {
+                weightSum += weights[i];
+                ++active;
+            }
+        }
+        if (active == 0)
+            throw std::invalid_argument("concentration upper bounds leave an unallocated fraction");
+
+        const double amount = remaining;
+        double allocated = 0.0;
+        for (std::size_t i = 0; i < parameters.size(); ++i) {
+            const double capacity = parameters[i].parameter->upperBound - normalized[i];
+            if (capacity <= tolerance)
+                continue;
+            const double share = weightSum > tolerance
+                ? amount * weights[i] / weightSum
+                : amount / static_cast<double>(active);
+            const double addition = std::min(capacity, share);
+            normalized[i] += addition;
+            allocated += addition;
+        }
+        if (allocated <= tolerance)
+            throw std::invalid_argument("failed to normalize layer concentrations");
+        remaining -= allocated;
+    }
+
+    for (std::size_t i = 0; i < parameters.size(); ++i)
+        row[parameters[i].column] = normalized[i];
+}
+
 void apply(simulator::SimulationInput& input, const ParameterTarget& target, double value) {
     std::visit([&](const auto& item) {
         using T = std::decay_t<decltype(item)>;
@@ -89,7 +150,12 @@ std::vector<double> GenerationConfig::fixedParameterValues() const {
 simulator::SimulationInput GenerationConfig::materialize(const std::vector<double>& values) const {
     simulator::SimulationInput result{sample, setup}; std::size_t open = 0;
     for (const auto& parameter : parameters) {
-        const double value = parameter.fixedValue.value_or(open < values.size() ? values[open++] : std::numeric_limits<double>::quiet_NaN());
+        double value = std::numeric_limits<double>::quiet_NaN();
+        if (parameter.fixedValue) {
+            value = *parameter.fixedValue;
+        } else if (open < values.size()) {
+            value = values[open++];
+        }
         if (!std::isfinite(value) || value < parameter.lowerBound || value > parameter.upperBound) throw std::invalid_argument("parameter outside bounds: " + parameter.name);
         apply(result, parameter.target, value);
     }
@@ -98,11 +164,55 @@ simulator::SimulationInput GenerationConfig::materialize(const std::vector<doubl
 }
 std::vector<std::vector<double>> sampleParameters(const GenerationConfig& config, std::size_t count,
     std::uint64_t seed, SamplingMethod method) {
-    config.validate(); if (method != SamplingMethod::Uniform) throw std::invalid_argument("unsupported sampling method");
-    std::mt19937_64 random(seed); std::vector<std::vector<double>> rows(count);
-    for (auto& row : rows) for (const auto& parameter : config.parameters) if (!parameter.fixedValue) {
-        std::uniform_real_distribution<double> distribution(parameter.lowerBound, parameter.upperBound);
-        row.push_back(distribution(random));
+    config.validate();
+    if (method != SamplingMethod::Uniform)
+        throw std::invalid_argument("unsupported sampling method");
+
+    std::vector<std::vector<OpenConcentration>> concentrationGroups(config.sample.layers.size());
+    std::size_t column = 0;
+    for (const auto& parameter : config.parameters) {
+        if (parameter.fixedValue)
+            continue;
+        if (const auto* target = std::get_if<SpeciesConcentration>(&parameter.target))
+            concentrationGroups.at(target->layer).push_back({column, &parameter});
+        ++column;
+    }
+
+    std::mt19937_64 random(seed);
+    std::vector<std::vector<double>> rows(count);
+    for (auto& row : rows) {
+        for (const auto& parameter : config.parameters) {
+            if (parameter.fixedValue)
+                continue;
+            std::uniform_real_distribution<double> distribution(parameter.lowerBound,
+                                                                  parameter.upperBound);
+            row.push_back(distribution(random));
+        }
+
+        for (std::size_t layer = 0; layer < concentrationGroups.size(); ++layer) {
+            const auto& open = concentrationGroups[layer];
+            if (open.empty())
+                continue;
+            double fixedSum = 0.0;
+            for (const auto& species : config.sample.layers[layer].species) {
+                const ParameterSpec* concentrationParameter = nullptr;
+                for (const auto& parameter : config.parameters) {
+                    const auto* target = std::get_if<SpeciesConcentration>(&parameter.target);
+                    if (target && target->layer == layer && target->element == species.element) {
+                        concentrationParameter = &parameter;
+                        break;
+                    }
+                }
+                if (!concentrationParameter)
+                    fixedSum += species.concentration;
+                else if (concentrationParameter->fixedValue)
+                    fixedSum += *concentrationParameter->fixedValue;
+            }
+            const double remaining = 1.0 - fixedSum;
+            if (remaining < -1e-12)
+                throw std::invalid_argument("fixed layer concentrations exceed one");
+            normalizeConcentrations(row, open, std::max(0.0, remaining));
+        }
     }
     return rows;
 }

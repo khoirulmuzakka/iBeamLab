@@ -18,7 +18,7 @@ struct SimnraMethod {
 struct SimnraSimulatorConfig {
     std::vector<SimnraMethod> methods;
     std::size_t workers{1};
-    bool multithreadedApartment{false};
+    bool multithreadedApartment{true};
     int threadPriority{0};
     bool fastCalculation{false};
 };
@@ -31,6 +31,8 @@ public:
     SimnraSimulator& operator=(const SimnraSimulator&) = delete;
     std::vector<SimulationResult> simulateBatch(const std::vector<SimulationInput>& inputs,
         const SimulationOptions& options = {}) override;
+    SimulationInput inspectConfiguration(const SimulationInput& input,
+        const std::string& methodLabel);
     void requestStop() noexcept override;
     void resetStop() noexcept override;
     void close() noexcept;

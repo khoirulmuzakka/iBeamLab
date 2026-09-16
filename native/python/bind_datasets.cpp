@@ -6,6 +6,12 @@ namespace py = pybind11;
 using namespace ibeamlab::datasets;
 void bindDatasets(py::module_ &r) {
     auto m = r.def_submodule("datasets");
+    py::class_<FailureRecord>(m, "FailureRecord")
+        .def_readonly("sample_index", &FailureRecord::sampleIndex)
+        .def_readonly("sample_id", &FailureRecord::sampleId)
+        .def_readonly("method_label", &FailureRecord::methodLabel)
+        .def_readonly("type", &FailureRecord::type)
+        .def_readonly("message", &FailureRecord::message);
     py::class_<DatasetMetadata>(m, "DatasetMetadata")
         .def_readonly("format_version", &DatasetMetadata::formatVersion)
         .def_readonly("complete", &DatasetMetadata::complete)

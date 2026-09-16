@@ -129,6 +129,12 @@ if(IBEAMLAB_BUILD_TESTS)
         target_link_libraries(ibeamlab-simnra-integration PRIVATE ibeamlab)
         add_test(NAME ibeamlab-simnra-integration COMMAND ibeamlab-simnra-integration
             "$ENV{IBEAMLAB_SIMNRA_REFERENCE}")
+        if(IBEAMLAB_BUILD_PYTHON)
+            add_test(NAME ibeamlab-simnra-python-integration
+                COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/simnra_python_integration.py"
+                    "$ENV{IBEAMLAB_SIMNRA_REFERENCE}")
+        endif()
     endif()
     if(IBEAMLAB_BUILD_PYTHON)
         add_test(NAME ibeamlab-python-smoke

@@ -1,21 +1,16 @@
-"""Python interface to the native iBeamLab libraries."""
+"""Python interface to the native iBeamLab simulation and ML pipeline."""
 
 try:
     from . import _ibeamlab_cpp as native
 except ImportError as error:
     raise ImportError(
-        "The native iBeamLab extension is not built. Run `compile.bat Release` first."
+        "The native iBeamLab extension is not built. Run `compile.bat --release` first."
     ) from error
 
-sample = native.sample
-simulator = native.simulator
-generation = native.generation
-datasets = native.datasets
-preprocessing = native.preprocessing
-model = native.model
-inference = native.inference
+# Import the readable Python facades instead of publishing pybind11 submodules.
+from . import datasets, generation, inference, model, preprocessing, sample, simulator
 
 __all__ = [
-    "native", "sample", "simulator", "generation", "datasets",
-    "preprocessing", "model", "inference",
+    "datasets", "generation", "inference", "model", "native",
+    "preprocessing", "sample", "simulator",
 ]

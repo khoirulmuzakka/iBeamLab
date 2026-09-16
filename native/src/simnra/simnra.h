@@ -13,16 +13,17 @@
  */
 class SIMNRA {
 private:
-    IDispatch* m_App;          ///< Pointer to the SIMNRA application COM interface
-    IDispatch* m_Setup;        ///< Pointer to the setup COM interface
-    IDispatch* m_Target;       ///< Pointer to the target COM interface
-    IDispatch* m_Calc;         ///< Pointer to the calculation COM interface
-    IDispatch* m_Fit;          ///< Pointer to the fitting COM interface
-    IDispatch* m_Projectile;   ///< Pointer to the projectile COM interface
-    IDispatch* m_Spectrum;     ///< Pointer to the spectrum COM interface
-    IDispatch* m_Stopping;     ///< Pointer to the stopping power COM interface
-    IDispatch* m_PIGE;         ///< Pointer to the PIGE (Particle-Induced Gamma-ray Emission) COM interface
-    IDispatch* m_CrossSec;     ///< Pointer to the cross-section COM interface
+    IDispatch* m_App{};          ///< Pointer to the SIMNRA application COM interface
+    IDispatch* m_Setup{};        ///< Pointer to the setup COM interface
+    IDispatch* m_Target{};       ///< Pointer to the target COM interface
+    IDispatch* m_Calc{};         ///< Pointer to the calculation COM interface
+    IDispatch* m_Fit{};          ///< Pointer to the fitting COM interface
+    IDispatch* m_Projectile{};   ///< Pointer to the projectile COM interface
+    IDispatch* m_Spectrum{};     ///< Pointer to the spectrum COM interface
+    IDispatch* m_Stopping{};     ///< Pointer to the stopping power COM interface
+    IDispatch* m_PIGE{};         ///< Pointer to the PIGE (Particle-Induced Gamma-ray Emission) COM interface
+    IDispatch* m_CrossSec{};     ///< Pointer to the cross-section COM interface
+    bool m_comInitialized{};     ///< This instance owns a successful CoInitializeEx call.
     std::vector<double> m_lastSpectrum; ///< Cached spectrum buffer reused across queries
 
 private : 
@@ -288,6 +289,9 @@ public:
      * @return The number of isotopes.
      */
     int getNumberOfIsotopes(int layerIndex, int elementIndex);
+
+    double getIsotopeMass(int layerIndex, int elementIndex, int isotopeIndex);
+    double getIsotopeConcentration(int layerIndex, int elementIndex, int isotopeIndex);
 
     /**
      * @brief Checks if a layer has roughness.

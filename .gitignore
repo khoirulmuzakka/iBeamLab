@@ -76,6 +76,7 @@ env/
 !.env.example
 
 # Generated datasets and exported models
+/examples/datasets/
 *.ibd
 dataset.toml
 failures.ibd
