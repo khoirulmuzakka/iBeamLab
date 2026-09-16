@@ -1,0 +1,28 @@
+format = "ibeamlab.onnx-package"
+format_version = 1
+created_utc = "2026-09-15T00:00:00Z"
+methods = ["RBS"]
+spectrum_lengths = [2]
+input_features = ["RBS:0", "RBS:1"]
+output_features = ["value"]
+output_units = ["arb"]
+
+[model]
+class_name = "Linear"
+task = "regression"
+onnx_file = "model.onnx"
+opset_version = 18
+input_name = "inputs"
+output_name = "outputs"
+input_dimension = 2
+output_dimension = 1
+size = 1755
+crc32 = "03b53033"
+
+[preprocessing.input]
+type = "identity"
+input_dimension = 2
+
+[preprocessing.output]
+type = "identity"
+input_dimension = 1

@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.24)
+project(ibeamlab_consumer LANGUAGES CXX)
+find_package(ibeamlab CONFIG REQUIRED)
+add_executable(ibeamlab_consumer main.cpp)
+target_link_libraries(ibeamlab_consumer PRIVATE ibeamlab)
