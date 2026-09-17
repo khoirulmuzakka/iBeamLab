@@ -50,6 +50,11 @@ file before configuring to enable the optional installed-SIMNRA integration test
 Python bindings are disabled by default for C++ consumers. `compile.bat` enables
 them explicitly for the local Python training environment.
 
+Sampling and training policy live in Python. Python supplies a complete matrix
+of open-parameter values to the native `DataGenerator`; C++ validates and
+materializes those rows, executes the simulator, and writes the dataset. See
+`examples/generate.py` and `examples/generate_multilayer.py`.
+
 `ibeamlab-generate-dummy OUTPUT [SAMPLES]` produces a deterministic headless test
 dataset without Python or SIMNRA.
 

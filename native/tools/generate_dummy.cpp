@@ -11,7 +11,9 @@ int main(int argc,char** argv){
         generation::GenerationConfig config{sample,setup,{{"RBS","RBS","dummy"}},{{"energy",generation::BeamEnergy{"RBS"},1000,3000,std::nullopt,"keV"}}};
         auto simulator=std::make_shared<simulator::DummySimulator>(1024);
         generation::DataGenerator generator(std::move(config),std::move(simulator));
-        const auto summary=generator.generate(argv[1],{.samples=count,.batchSize=64,.shardCount=1,.seed=42,.failurePolicy=generation::FailurePolicy::Stop},[](const auto& p){std::cout<<'\r'<<p.attempted<<'/'<<p.total<<std::flush;});
+        std::vector<std::vector<double>> rows(count);
+        for(std::size_t i=0;i<count;++i) rows[i]={1000.0+2000.0*(static_cast<double>(i)+0.5)/static_cast<double>(count)};
+        const auto summary=generator.generate(argv[1],rows,{.batchSize=64,.shardCount=1,.seed=42,.sampler="dummy-grid",.samplerVersion=1,.samplingConfigToml="strategy = \"grid\"\n",.failurePolicy=generation::FailurePolicy::Stop},[](const auto& p){std::cout<<'\r'<<p.attempted<<'/'<<p.total<<std::flush;});
         std::cout<<"\naccepted "<<summary.accepted<<" samples\n";return 0;
     }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
 }

@@ -5,7 +5,8 @@ PYBIND11_MODULE(_ibeamlab_cpp, m) {
     bindSimulator(m);
     bindGeneration(m);
     bindDatasets(m);
-    bindPreprocessing(m);
+    bindSpectrumProcessing(m);
+    bindTransforms(m);
     bindModel(m);
     bindInference(m);
 }

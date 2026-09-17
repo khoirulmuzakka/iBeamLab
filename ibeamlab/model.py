@@ -1,5 +1,16 @@
 """Reader and metadata types for packaged ONNX models."""
 
-from ._ibeamlab_cpp.model import ModelMetadata, ModelPackage
+from ._ibeamlab_cpp.model import (
+    ForwardModelMetadata,
+    InverseModelMetadata,
+    ModelMetadata,
+    ModelPackage,
+    ModelType,
+    SpectrumSpec,
+    TransformSpec,
+)
 
-__all__ = ["ModelMetadata", "ModelPackage"]
+__all__ = [
+    "ForwardModelMetadata", "InverseModelMetadata", "ModelMetadata",
+    "ModelPackage", "ModelType", "SpectrumSpec", "TransformSpec",
+]

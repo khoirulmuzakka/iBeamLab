@@ -31,6 +31,7 @@ from ibeamlab.generation import (
     ParameterSpec,
     SpeciesConcentration,
 )
+from ibeamlab.sampling import sample_uniform_parameters, sampling_config_toml
 from ibeamlab.sample import Beam, Detector, ExperimentalSetup, Layer, SampleModel, Species
 from ibeamlab.simulator import SimnraMethod, SimnraSimulator, SimnraSimulatorConfig
 
@@ -190,24 +191,33 @@ def main() -> None:
     config = build_generation_config()
 
     options = GenerationOptions()
-    options.samples = 1000
+    sample_count = 1000
     # Progress is reported after each native batch. Match the batch size to the
     # SIMNRA worker count so all workers stay busy and tqdm advances every wave.
     options.batch_size = SIMNRA_WORKERS
     options.shard_count = 1
     options.seed = 1
+    options.sampler = "python-uniform-normalized-concentrations"
+    options.sampler_version = 1
+    options.sampling_config_toml = sampling_config_toml(
+        strategy=options.sampler,
+        seed=options.seed,
+        sample_count=sample_count,
+        concentration_normalization=True,
+    )
     # A SIMNRA/COM failure is usually systemic, so stop on the first failed
     # sample instead of repeating the same error for the entire dataset.
     options.failure_policy = FailurePolicy.STOP
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     output = ROOT / "examples" / "datasets" / f"linimncoo_rbs_nra_1000_{run_id}"
+    parameter_rows = sample_uniform_parameters(config, sample_count, options.seed)
 
     # The context manager closes all SIMNRA workers and releases their COM
     # interfaces before propagating any Python or native exception.
     with build_simulator(config) as simulator:
         generator = DataGenerator(config, simulator)
-        with tqdm(total=options.samples, unit="sample", desc="SIMNRA") as progress_bar:
+        with tqdm(total=sample_count, unit="sample", desc="SIMNRA") as progress_bar:
             def show_progress(progress: GenerationProgress) -> None:
                 progress_bar.update(progress.attempted - progress_bar.n)
                 progress_bar.set_postfix(
@@ -216,7 +226,7 @@ def main() -> None:
                     failed=progress.failed,
                 )
 
-            summary = generator.generate(output, options, show_progress)
+            summary = generator.generate(output, parameter_rows.tolist(), options, show_progress)
 
     print(
         f"Finished: {summary.accepted} accepted, {summary.invalid} invalid, "

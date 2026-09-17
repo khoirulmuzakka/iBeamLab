@@ -1,5 +1,4 @@
 #include "bindings.h"
-#include <ibeamlab/preprocessing.h>
 #include <ibeamlab/transforms.h>
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
@@ -50,16 +49,8 @@ template <class T> void common(py::class_<T, Transform, std::shared_ptr<T>> &c) 
 }
 } // namespace
 
-void bindPreprocessing(py::module_ &root) {
-    auto m = root.def_submodule("preprocessing");
-    m.def("rebin", &rebin, py::call_guard<py::gil_scoped_release>());
-    m.def("pileup", &pileup, py::arg("spectrum"), py::arg("real_time"), py::arg("live_time"),
-          py::arg("fudge_factor"), py::arg("clip_negative") = true,
-          py::call_guard<py::gil_scoped_release>());
-    m.def("crop_or_pad", &cropOrPad, py::arg("spectrum"), py::arg("size"), py::arg("padding") = 0.0,
-          py::call_guard<py::gil_scoped_release>());
-    m.def("concatenate", &concatenate, py::call_guard<py::gil_scoped_release>());
-    m.def("clip", &clip, py::call_guard<py::gil_scoped_release>());
+void bindTransforms(py::module_ &root) {
+    auto m = root.def_submodule("transforms");
     py::class_<Transform, std::shared_ptr<Transform>>(m, "Transform");
     py::class_<IdentityTransform, Transform, std::shared_ptr<IdentityTransform>> identity(
         m, "IdentityTransform");

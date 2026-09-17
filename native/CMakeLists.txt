@@ -2,15 +2,18 @@ set(IBEAMLAB_SOURCES
     src/sample.cpp
     src/sample_toml.cpp
     src/simulator.cpp
+    src/parameter.cpp
     src/simnra_simulator.cpp
     src/generation.cpp
     src/data_generator.cpp
     src/datasets.cpp
-    src/preprocessing.cpp
+    src/spectrum_processing.cpp
     src/transforms.cpp
     src/fftconv.cpp
     src/model_package.cpp
-    src/inference.cpp
+    src/onnx_model.cpp
+    src/forward_model.cpp
+    src/inverse_model.cpp
     ${IBEAMLAB_MINIZ_SOURCES})
 
 if(IBEAMLAB_ENABLE_SIMNRA AND WIN32)
@@ -72,6 +75,8 @@ install(TARGETS ibeamlab-generate-dummy RUNTIME DESTINATION ${CMAKE_INSTALL_BIND
 if(IBEAMLAB_BUILD_EXAMPLES)
     add_executable(ibeamlab-read-dataset examples/read_dataset.cpp)
     target_link_libraries(ibeamlab-read-dataset PRIVATE ibeamlab)
+    add_executable(ibeamlab-forward examples/forward_inference.cpp)
+    target_link_libraries(ibeamlab-forward PRIVATE ibeamlab)
 endif()
 
 if(IBEAMLAB_BUILD_BENCHMARKS)
@@ -89,7 +94,8 @@ if(IBEAMLAB_BUILD_PYTHON)
     pybind11_add_module(_ibeamlab_cpp
         python/module.cpp python/bind_sample.cpp python/bind_simulator.cpp
         python/bind_generation.cpp python/bind_datasets.cpp
-        python/bind_preprocessing.cpp python/bind_model_inference.cpp)
+        python/bind_spectrum_processing.cpp python/bind_transforms.cpp
+        python/bind_model_inference.cpp)
     target_link_libraries(_ibeamlab_cpp PRIVATE ibeamlab)
     set_target_properties(_ibeamlab_cpp PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/ibeamlab/$<0:>"
@@ -139,5 +145,7 @@ if(IBEAMLAB_BUILD_TESTS)
     if(IBEAMLAB_BUILD_PYTHON)
         add_test(NAME ibeamlab-python-smoke
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/python_smoke.py")
+        add_test(NAME ibeamlab-python-sampling
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/python_sampling.py")
     endif()
 endif()

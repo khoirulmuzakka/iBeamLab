@@ -1,8 +1,46 @@
-# iBeamLab native C++ implementation status
+# iBeamLab implementation responsibilities and status
 
-The native foundation is implemented. Python model definitions, PyTorch training,
-Python package export, AutoNRA integration, and GUI work remain intentionally
-postponed.
+This checklist is the project boundary. Python owns experiment design and
+training. C++ owns the stable simulator, storage, package, and deployment
+runtime shared with AutoNRA.
+
+## Responsibility boundary
+
+### Python
+
+- [x] Construct fixed and open parameter configurations.
+- [x] Sample open parameter matrices in Python.
+- [x] Normalize sampled concentrations independently per layer.
+- [x] Pass complete parameter matrices to the native generator.
+- [x] Record Python sampler name, version, seed, and TOML configuration in the
+  native dataset manifest.
+- [x] Add the variable-layer example: one dataset per layer count, controlled
+  entirely by Python.
+- [x] Keep its thickness and concentration sampling policies transparent in
+  Python.
+- [ ] Add Python dataset collection/loading utilities, parameter padding, and
+  layer masks.
+- [ ] Add train/validation/test splitting and optional augmentation/noise.
+- [ ] Add PyTorch models, losses, training, evaluation, and ONNX export.
+- [ ] Build model metadata from the training configuration and call the native
+  model-package writer.
+
+### C++
+
+- [x] Provide the backend-neutral simulator abstraction.
+- [x] Implement SIMNRA COM lifecycle, reference-file isolation, reusable
+  thread-owned workers, parallel simulation, cancellation, and failures.
+- [x] Validate and materialize Python-supplied parameter rows.
+- [x] Read and write datasets, spectra, failures, metadata, and provenance.
+- [x] Apply packaged production preprocessing consistently.
+- [x] Read and validate directory and ZIP model packages.
+- [x] Run explicit inverse inference (spectra to sample parameters) and forward
+  inference (sample/setup to labeled spectra).
+- [x] Write/dump directory and ZIP model packages from model bytes and metadata.
+- [x] Expose the native model-package writer to Python.
+
+Sampling distributions, variable-layer policies, dataset splitting, model
+definitions, and training must not be added to the native library.
 
 ## Completed
 
@@ -26,7 +64,7 @@ postponed.
   error conversion.
 - [x] Fixed/open generation parameters for layer, concentration, beam, detector,
   calibration, resolution, and particles-per-steradian values.
-- [x] Deterministic versioned uniform sampling and validated materialization.
+- [x] Validated parameter materialization; sampling policy is supplied by Python.
 - [x] Streaming sharded dataset writer/reader with bounded record sizes, sample
   IDs, parameters, labeled spectra, failures, invalid counters, transactional
   TOML manifest updates, incomplete-state detection, provenance, and corruption
@@ -64,7 +102,6 @@ postponed.
 
 - Python model definitions and PyTorch training loops.
 - Hyperparameter optimization.
-- Python ONNX/TOML package writer.
 - AutoNRA adapters or build integration.
 - GUI and distributed generation.
 - GPU execution-provider tuning.

@@ -1,4 +1,4 @@
-#include <ibeamlab/preprocessing.h>
+#include <ibeamlab/spectrum_processing.h>
 
 #include "fftconv.h"
 
@@ -7,7 +7,7 @@
 #include <numeric>
 #include <stdexcept>
 
-namespace ibeamlab::preprocessing {
+namespace ibeamlab::spectrum {
 
 std::vector<double> cropOrPad(const std::vector<double>& spectrum,
                               std::size_t size, double padding) {
@@ -105,4 +105,4 @@ std::vector<double> energyToChannelAndPileup(
     return pileup(channelSpectrum, realTime, liveTime, fudgeFactor, clipNegative);
 }
 
-} // namespace ibeamlab::preprocessing
+} // namespace ibeamlab::spectrum

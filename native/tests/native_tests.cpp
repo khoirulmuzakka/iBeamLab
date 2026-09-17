@@ -1,7 +1,9 @@
 #include <ibeamlab/datasets.h>
 #include <ibeamlab/data_generator.h>
 #include <ibeamlab/inference.h>
-#include <ibeamlab/preprocessing.h>
+#include <ibeamlab/forward_model.h>
+#include <ibeamlab/inverse_model.h>
+#include <ibeamlab/spectrum_processing.h>
 #include <ibeamlab/transforms.h>
 #include <ibeamlab/sample_toml.h>
 #include <ibeamlab/sample.h>
@@ -25,7 +27,7 @@ template <class F> bool throws(F &&function) {
 
 int main() {
     using namespace ibeamlab;
-    const auto rebinned = preprocessing::rebin({0, 1, 2}, {0, 2}, {2, 4});
+    const auto rebinned = spectrum::rebin({0, 1, 2}, {0, 2}, {2, 4});
     assert(rebinned.size() == 1 && std::abs(rebinned[0] - 6.0) < 1e-12);
     preprocessing::StandardScaler scaler({1, 2}, {2, 4});
     const auto scaled = scaler.apply({{3, 6}});
@@ -35,10 +37,10 @@ int main() {
     const auto logged = logarithm.apply({{0, 3}});
     assert(std::abs(logarithm.inverse(logged)[0][1] - 3) < 1e-5);
     assert(throws([&] { logarithm.apply({{-2, 0}}); }));
-    assert(preprocessing::cropOrPad({1, 2, 3}, 2) == std::vector<double>({1, 2}));
-    assert(preprocessing::cropOrPad({1}, 3, -1) == std::vector<double>({1, -1, -1}));
-    assert(preprocessing::concatenate({{1, 2}, {3}}) == std::vector<double>({1, 2, 3}));
-    assert(throws([] { preprocessing::rebin({0, 1, 1}, {0, 1}, {1, 2}); }));
+    assert(spectrum::cropOrPad({1, 2, 3}, 2) == std::vector<double>({1, 2}));
+    assert(spectrum::cropOrPad({1}, 3, -1) == std::vector<double>({1, -1, -1}));
+    assert(spectrum::concatenate({{1, 2}, {3}}) == std::vector<double>({1, 2, 3}));
+    assert(throws([] { spectrum::rebin({0, 1, 1}, {0, 1}, {1, 2}); }));
 
     sample::SampleModel model{{sample::Layer{1.0, 0, 0, 0, {sample::Species{"Si", 1.0, {}}}}}};
     sample::ExperimentalSetup setup{
@@ -77,14 +79,10 @@ int main() {
             generation::ParameterSpec{"O", generation::SpeciesConcentration{0, "O"}, 0, 0.8,
                                       std::nullopt, "fraction"},
         }};
-    const auto concentrationRows = generation::sampleParameters(mixtureConfig, 32, 7);
-    for (const auto& row : concentrationRows) {
-        const auto normalized = mixtureConfig.materialize(row);
-        const auto& species = normalized.sample.layers[0].species;
-        assert(std::abs(species[0].concentration + species[1].concentration - 0.8) < 1e-9);
-        assert(std::abs(species[2].concentration - 0.2) < 1e-12);
-    }
-    assert(std::abs(concentrationRows[0][0] - concentrationRows[1][0]) > 1e-9);
+    const auto normalized = mixtureConfig.materialize({0.3, 0.5});
+    assert(std::abs(normalized.sample.layers[0].species[0].concentration - 0.3) < 1e-12);
+    assert(std::abs(normalized.sample.layers[0].species[1].concentration - 0.5) < 1e-12);
+    assert(std::abs(normalized.sample.layers[0].species[2].concentration - 0.2) < 1e-12);
 
     const auto variableDirectory =
         std::filesystem::temp_directory_path() / "ibeamlab-variable-spectrum-test";
@@ -111,24 +109,79 @@ int main() {
 
     const auto directory = std::filesystem::temp_directory_path() / "ibeamlab-native-test-dataset";
     std::filesystem::remove_all(directory);
-    const auto package =
-        model::ModelPackage::open(std::filesystem::path(IBEAMLAB_TEST_DATA) / "model-package");
-    assert(throws([] { model::ModelPackage::open(
+    assert(throws([] { ibeamlab::model::ModelPackage::open(
         std::filesystem::path(IBEAMLAB_TEST_DATA) / "invalid-package"); }));
-    const auto zipped =
-        model::ModelPackage::open(std::filesystem::path(IBEAMLAB_TEST_DATA) / "model-package.zip");
-    assert(zipped.modelBytes() == package.modelBytes());
-    inference::OnnxInferenceEngine zippedEngine(zipped);
-    assert(std::abs(zippedEngine.predict({{{"RBS", {1.0F, 2.0F}}}})[0].values[0].value - 9.0F) <
-           1e-5F);
-    const auto predictions = zippedEngine.predict({{{"RBS", {4.0F, 5.0F}}}});
-    assert(std::abs(predictions[0].values[0].value - 24.0F) < 1e-5F);
-    assert(predictions[0].values[0].unit == "arb");
-    assert(throws([&] { zippedEngine.predict({{{"RBS", {1.0F}}}}); }));
+    const auto writtenPackageDirectory =
+        std::filesystem::temp_directory_path() / "ibeamlab-written-model-package";
+    const auto writtenPackageZip =
+        std::filesystem::temp_directory_path() / "ibeamlab-written-model-package.zip";
+    std::filesystem::remove_all(writtenPackageDirectory);
+    std::filesystem::remove(writtenPackageZip);
+    ibeamlab::model::ModelMetadata inverseMetadata;
+    inverseMetadata.modelType = ibeamlab::model::ModelType::Inverse;
+    inverseMetadata.className = "Linear";
+    inverseMetadata.inputDimension = 2;
+    inverseMetadata.outputDimension = 1;
+    inverseMetadata.opsetVersion = 18;
+    inverseMetadata.inputTransform.inputDimension = 2;
+    inverseMetadata.outputTransform.inputDimension = 1;
+    inverseMetadata.inverse.sampleTemplate = model;
+    inverseMetadata.inverse.setupTemplate = setup;
+    inverseMetadata.inverse.inputSpectra = {{"RBS", 2}};
+    inverseMetadata.inverse.outputParameters = {{"thickness", generation::LayerThickness{0},
+                                                  0, 100, std::nullopt, "arb"}};
+    auto inversePackage = ibeamlab::model::ModelPackage::fromOnnx(
+        std::filesystem::path(IBEAMLAB_TEST_DATA) / "model-package" / "model.onnx",
+        inverseMetadata);
+    inversePackage.write(writtenPackageDirectory);
+    inversePackage.write(writtenPackageZip);
+    const auto inverseFromDirectory =
+        ibeamlab::model::ModelPackage::open(writtenPackageDirectory);
+    const auto inverseFromZip = ibeamlab::model::ModelPackage::open(writtenPackageZip);
+    assert(inverseFromZip.modelBytes() == inverseFromDirectory.modelBytes());
+    inference::InverseModel inverse(inverseFromZip);
+    const auto inverseResults = inverse.predict({{{"RBS", {1.0F, 2.0F}}}});
+    assert(std::abs(inverseResults[0].sample.layers[0].thickness - 9.0) < 1e-5);
+    assert(inverseResults[0].parameters[0].name == "thickness");
+    assert(throws([&] { inverse.predict({{{"RBS", {1.0F}}}}); }));
+    std::filesystem::remove_all(writtenPackageDirectory);
+    std::filesystem::remove(writtenPackageZip);
+
+    ibeamlab::model::ModelMetadata forwardMetadata;
+    forwardMetadata.modelType = ibeamlab::model::ModelType::Forward;
+    forwardMetadata.className = "Linear";
+    forwardMetadata.inputDimension = 2;
+    forwardMetadata.outputDimension = 1;
+    forwardMetadata.opsetVersion = 18;
+    forwardMetadata.inputTransform.inputDimension = 2;
+    forwardMetadata.outputTransform.inputDimension = 1;
+    forwardMetadata.forward.sampleTemplate = model;
+    forwardMetadata.forward.setupTemplate = setup;
+    forwardMetadata.forward.inputParameters = {
+        {"thickness", generation::LayerThickness{0}, 0, 100, std::nullopt, "arb"},
+        {"energy", generation::BeamEnergy{"RBS"}, 0, 100, std::nullopt, "arb"}};
+    forwardMetadata.forward.outputSpectra = {{"RBS", 1}};
+    auto forwardPackage = ibeamlab::model::ModelPackage::fromOnnx(
+        std::filesystem::path(IBEAMLAB_TEST_DATA) / "model-package" / "model.onnx",
+        forwardMetadata);
+    inference::ForwardModel forward(std::move(forwardPackage));
+    auto forwardInput = simulator::SimulationInput{model, setup};
+    forwardInput.sample.layers[0].thickness = 1.0;
+    forwardInput.setup.detectors[0].beam.energy = 2.0;
+    const auto forwardResults = forward.predict({forwardInput});
+    assert(forwardResults[0].spectra[0].label == "RBS");
+    assert(std::abs(forwardResults[0].spectra[0].counts[0] - 9.0F) < 1e-5F);
     auto dummy = std::make_shared<simulator::DummySimulator>(128);
     generation::DataGenerator generator(config, dummy);
+    const std::vector<std::vector<double>> parameterRows{{91}, {97}, {103}, {109}};
     const auto summary =
-        generator.generate(directory, {.samples = 4, .batchSize = 2, .shardCount = 2, .seed = 42});
+        generator.generate(directory, parameterRows,
+                           {.batchSize = 2,
+                            .shardCount = 2,
+                            .seed = 42,
+                            .sampler = "native-test",
+                            .samplerVersion = 1,
+                            .samplingConfigToml = "strategy = \"explicit\"\n"});
     assert(summary.accepted == 4 && summary.failed == 0);
     datasets::DatasetReader reader(directory);
     assert(reader.metadata().complete && reader.readAll().size() == 4);
@@ -136,6 +189,8 @@ int main() {
            std::string::npos);
     assert(reader.metadata().generationConfigToml.find("beam_energy") != std::string::npos);
     assert(reader.metadata().generationOptionsToml.find("batch_size") != std::string::npos);
+    assert(reader.metadata().samplingConfigToml.find("explicit") != std::string::npos);
+    assert(reader.metadata().provenance.sampler == "native-test");
     assert(reader.metadata().simulatorConfigToml.find("dummy") != std::string::npos);
     std::filesystem::resize_file(directory / reader.metadata().shardFiles[0], 9);
     assert(throws([&] { reader.readAll(); }));

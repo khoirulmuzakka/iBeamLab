@@ -8,9 +8,9 @@ except ImportError as error:
     ) from error
 
 # Import the readable Python facades instead of publishing pybind11 submodules.
-from . import datasets, generation, inference, model, preprocessing, sample, simulator
+from . import datasets, generation, inference, model, sample, sampling, simulator, spectrum, transforms
 
 __all__ = [
     "datasets", "generation", "inference", "model", "native",
-    "preprocessing", "sample", "simulator",
+    "sample", "sampling", "simulator", "spectrum", "transforms",
 ]

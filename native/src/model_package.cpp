@@ -1,177 +1,48 @@
-#include <fstream>
 #include <ibeamlab/model_package.h>
+#include <ibeamlab/parameter.h>
+#include <ibeamlab/sample_toml.h>
+#include <toml++/toml.hpp>
+#include <miniz.h>
+#include <chrono>
+#include <fstream>
 #include <iomanip>
 #include <memory>
-#include <miniz.h>
 #include <sstream>
 #include <stdexcept>
-#include <toml++/toml.hpp>
+#include <type_traits>
 
-namespace ibeamlab::model {
-namespace {
-constexpr std::uint64_t MaxManifestSize = 4ULL * 1024 * 1024,
-                        MaxModelSize = 2ULL * 1024 * 1024 * 1024;
-std::vector<std::byte> readFile(const std::filesystem::path &path, std::uint64_t limit) {
-    const auto size = std::filesystem::file_size(path);
-    if (size > limit)
-        throw std::runtime_error("package entry exceeds safety limit: " + path.string());
-    std::vector<std::byte> out(static_cast<std::size_t>(size));
-    std::ifstream input(path, std::ios::binary);
-    input.read(reinterpret_cast<char *>(out.data()), static_cast<std::streamsize>(size));
-    if (!input)
-        throw std::runtime_error("failed to read package entry: " + path.string());
-    return out;
-}
-struct Archive {
-    mz_zip_archive zip{};
-    explicit Archive(const std::filesystem::path &path) {
-        if (!mz_zip_reader_init_file(&zip, path.string().c_str(), 0))
-            throw std::runtime_error("cannot open model ZIP");
-    }
-    ~Archive() { mz_zip_reader_end(&zip); }
-    std::vector<std::byte> read(const std::string &name, std::uint64_t limit) {
-        if (name.empty() || name.find('/') != std::string::npos ||
-            name.find('\\') != std::string::npos || name == "." || name == "..")
-            throw std::runtime_error("unsafe model ZIP entry name: " + name);
-        const int index =
-            mz_zip_reader_locate_file(&zip, name.c_str(), nullptr, MZ_ZIP_FLAG_CASE_SENSITIVE);
-        if (index < 0)
-            throw std::runtime_error("model ZIP is missing " + name);
-        mz_zip_archive_file_stat stat{};
-        if (!mz_zip_reader_file_stat(&zip, index, &stat) || stat.m_is_directory ||
-            stat.m_uncomp_size > limit)
-            throw std::runtime_error("invalid or oversized model ZIP entry: " + name);
-        std::vector<std::byte> out(static_cast<std::size_t>(stat.m_uncomp_size));
-        if (!mz_zip_reader_extract_to_mem(&zip, index, out.data(), out.size(), 0))
-            throw std::runtime_error("failed CRC validation while extracting: " + name);
-        return out;
-    }
-};
-std::vector<std::string> strings(const toml::array *a) {
-    std::vector<std::string> out;
-    if (a)
-        for (const auto &n : *a) {
-            auto v = n.value<std::string>();
-            if (!v)
-                throw std::runtime_error("non-string list value in package");
-            out.push_back(*v);
-        }
-    return out;
-}
-std::vector<float> floats(const toml::array *a) {
-    std::vector<float> out;
-    if (a)
-        for (const auto &n : *a) {
-            auto v = n.value<double>();
-            if (!v)
-                throw std::runtime_error("non-number list value in package");
-            out.push_back(static_cast<float>(*v));
-        }
-    return out;
-}
-std::vector<std::size_t> sizes(const toml::array *a) {
-    std::vector<std::size_t> out;
-    if (a)
-        for (const auto &n : *a) {
-            auto v = n.value<std::int64_t>();
-            if (!v || *v <= 0)
-                throw std::runtime_error("invalid spectrum length");
-            out.push_back(static_cast<std::size_t>(*v));
-        }
-    return out;
-}
-TransformSpec transform(const toml::table *t) {
-    TransformSpec o;
-    if (!t)
-        return o;
-    o.type = (*t)["type"].value_or<std::string>("identity");
-    o.inputDimension = (*t)["input_dimension"].value_or<std::size_t>(0);
-    o.factor = (*t)["factor"].value_or(1.0F);
-    o.offset = (*t)["offset"].value_or(1.0F);
-    o.low = (*t)["low"].value_or(0.0F);
-    o.high = (*t)["high"].value_or(1.0F);
-    o.minimum = floats((*t)["minimum"].as_array());
-    o.scale = floats((*t)["scale"].as_array());
-    o.mean = floats((*t)["mean"].as_array());
-    o.deviation = floats((*t)["deviation"].as_array());
-    if (auto a = (*t)["transforms"].as_array())
-        for (const auto &n : *a) {
-            if (!n.is_table())
-                throw std::runtime_error("pipeline transform must be a TOML table");
-            o.transforms.push_back(transform(n.as_table()));
-        }
-    return o;
-}
-std::string crc32(const std::vector<std::byte> &bytes) {
-    const auto value = mz_crc32(
-        MZ_CRC32_INIT, reinterpret_cast<const unsigned char *>(bytes.data()), bytes.size());
-    std::ostringstream out;
-    out << std::hex << std::setfill('0') << std::setw(8) << value;
-    return out.str();
-}
+namespace ibeamlab::model { namespace {
+constexpr std::uint64_t MaxManifest=4ULL*1024*1024,MaxModel=2ULL*1024*1024*1024;
+std::vector<std::byte> readFile(const std::filesystem::path&p,std::uint64_t limit){const auto n=std::filesystem::file_size(p);if(n>limit)throw std::runtime_error("package entry is too large");std::vector<std::byte>b(n);std::ifstream f(p,std::ios::binary);f.read(reinterpret_cast<char*>(b.data()),static_cast<std::streamsize>(n));if(!f)throw std::runtime_error("cannot read package entry: "+p.string());return b;}
+struct Archive{mz_zip_archive z{};explicit Archive(const std::filesystem::path&p){if(!mz_zip_reader_init_file(&z,p.string().c_str(),0))throw std::runtime_error("cannot open model ZIP");}~Archive(){mz_zip_reader_end(&z);}std::vector<std::byte>read(const std::string&name,std::uint64_t limit){if(name.empty()||name.find('/')!=std::string::npos||name.find('\\')!=std::string::npos)throw std::runtime_error("unsafe ZIP entry");const int i=mz_zip_reader_locate_file(&z,name.c_str(),nullptr,MZ_ZIP_FLAG_CASE_SENSITIVE);mz_zip_archive_file_stat s{};if(i<0||!mz_zip_reader_file_stat(&z,i,&s)||s.m_is_directory||s.m_uncomp_size>limit)throw std::runtime_error("missing or invalid ZIP entry: "+name);std::vector<std::byte>b(static_cast<std::size_t>(s.m_uncomp_size));if(!mz_zip_reader_extract_to_mem(&z,i,b.data(),b.size(),0))throw std::runtime_error("ZIP CRC validation failed");return b;}};
+std::string checksum(const std::vector<std::byte>&b){const auto n=mz_crc32(MZ_CRC32_INIT,reinterpret_cast<const unsigned char*>(b.data()),b.size());std::ostringstream s;s<<std::hex<<std::setfill('0')<<std::setw(8)<<n;return s.str();}
+std::string now(){const auto t=std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());std::tm u{};
+#ifdef _WIN32
+gmtime_s(&u,&t);
+#else
+gmtime_r(&t,&u);
+#endif
+std::ostringstream s;s<<std::put_time(&u,"%FT%TZ");return s.str();}
+template<class T>toml::array array(const std::vector<T>&v){toml::array a;for(const auto&x:v){if constexpr(std::is_integral_v<T>&&std::is_unsigned_v<T>)a.push_back(static_cast<std::int64_t>(x));else a.push_back(x);}return a;}
+std::vector<float>floats(const toml::array*a){std::vector<float>v;if(a)for(const auto&n:*a){auto x=n.value<double>();if(!x)throw std::runtime_error("invalid transform number");v.push_back(static_cast<float>(*x));}return v;}
+toml::table transform(const TransformSpec&s){toml::table t{{"type",s.type},{"input_dimension",static_cast<std::int64_t>(s.inputDimension)},{"factor",s.factor},{"offset",s.offset},{"low",s.low},{"high",s.high}};if(!s.minimum.empty())t.insert("minimum",array(s.minimum));if(!s.scale.empty())t.insert("scale",array(s.scale));if(!s.mean.empty())t.insert("mean",array(s.mean));if(!s.deviation.empty())t.insert("deviation",array(s.deviation));if(!s.transforms.empty()){toml::array a;for(const auto&x:s.transforms)a.push_back(transform(x));t.insert("transforms",std::move(a));}return t;}
+TransformSpec transform(const toml::table*t){TransformSpec s;if(!t)return s;s.type=(*t)["type"].value_or<std::string>("identity");s.inputDimension=(*t)["input_dimension"].value_or<std::size_t>(0);s.factor=(*t)["factor"].value_or(1.F);s.offset=(*t)["offset"].value_or(1.F);s.low=(*t)["low"].value_or(0.F);s.high=(*t)["high"].value_or(1.F);s.minimum=floats((*t)["minimum"].as_array());s.scale=floats((*t)["scale"].as_array());s.mean=floats((*t)["mean"].as_array());s.deviation=floats((*t)["deviation"].as_array());if(auto*a=(*t)["transforms"].as_array())for(const auto&n:*a){if(!n.is_table())throw std::runtime_error("invalid transform child");s.transforms.push_back(transform(n.as_table()));}return s;}
+toml::table target(const parameter::Target&t){toml::table o;std::visit([&](const auto&v){using T=std::decay_t<decltype(v)>;if constexpr(std::is_same_v<T,parameter::LayerThickness>){o.insert("type","layer_thickness");o.insert("layer",static_cast<std::int64_t>(v.layer));}else if constexpr(std::is_same_v<T,parameter::SpeciesConcentration>){o.insert("type","species_concentration");o.insert("layer",static_cast<std::int64_t>(v.layer));o.insert("element",v.element);}else{if constexpr(std::is_same_v<T,parameter::BeamEnergy>)o.insert("type","beam_energy");else if constexpr(std::is_same_v<T,parameter::BeamSpread>)o.insert("type","beam_spread");else if constexpr(std::is_same_v<T,parameter::CalibrationLinear>)o.insert("type","calibration_linear");else if constexpr(std::is_same_v<T,parameter::CalibrationOffset>)o.insert("type","calibration_offset");else if constexpr(std::is_same_v<T,parameter::CalibrationQuadratic>)o.insert("type","calibration_quadratic");else if constexpr(std::is_same_v<T,parameter::DetectorResolution>)o.insert("type","detector_resolution");else o.insert("type","particles_sr");o.insert("detector",v.detector);}},t);return o;}
+parameter::Target target(const toml::table&t){const auto k=t["type"].value_or<std::string>("");const auto l=t["layer"].value_or<std::size_t>(0);const auto e=t["element"].value_or<std::string>("");const auto d=t["detector"].value_or<std::string>("");if(k=="layer_thickness")return parameter::LayerThickness{l};if(k=="species_concentration")return parameter::SpeciesConcentration{l,e};if(k=="beam_energy")return parameter::BeamEnergy{d};if(k=="beam_spread")return parameter::BeamSpread{d};if(k=="calibration_linear")return parameter::CalibrationLinear{d};if(k=="calibration_offset")return parameter::CalibrationOffset{d};if(k=="calibration_quadratic")return parameter::CalibrationQuadratic{d};if(k=="detector_resolution")return parameter::DetectorResolution{d};if(k=="particles_sr")return parameter::ParticlesSr{d};throw std::runtime_error("unknown parameter target: "+k);}
+toml::array parameters(const std::vector<generation::ParameterSpec>&v){toml::array a;for(const auto&p:v){if(p.fixedValue)throw std::invalid_argument("model parameter cannot be fixed");a.push_back(toml::table{{"name",p.name},{"unit",p.unit},{"lower_bound",p.lowerBound},{"upper_bound",p.upperBound},{"target",target(p.target)}});}return a;}
+std::vector<generation::ParameterSpec>parameters(const toml::array*a){std::vector<generation::ParameterSpec>v;if(a)for(const auto&n:*a){auto*t=n.as_table();if(!t||!(*t)["target"].is_table())throw std::runtime_error("invalid parameter");v.push_back({(*t)["name"].value_or<std::string>(""),target(*(*t)["target"].as_table()),(*t)["lower_bound"].value_or(-1e300),(*t)["upper_bound"].value_or(1e300),std::nullopt,(*t)["unit"].value_or<std::string>("")});}return v;}
+toml::array spectra(const std::vector<SpectrumSpec>&v){toml::array a;for(const auto&s:v)a.push_back(toml::table{{"label",s.label},{"length",static_cast<std::int64_t>(s.length)}});return a;}
+std::vector<SpectrumSpec>spectra(const toml::array*a){std::vector<SpectrumSpec>v;if(a)for(const auto&n:*a){auto*t=n.as_table();if(!t)throw std::runtime_error("invalid spectrum specification");v.push_back({(*t)["label"].value_or<std::string>(""),(*t)["length"].value_or<std::size_t>(0)});}return v;}
+toml::table sampleTable(const sample::SampleModel&v){auto t=toml::parse(sample::toToml(v));t.erase("format");t.erase("format_version");return t;}toml::table setupTable(const sample::ExperimentalSetup&v){auto t=toml::parse(sample::toToml(v));t.erase("format");t.erase("format_version");return t;}
+std::string typed(toml::table t,const char*f){t.insert("format",f);t.insert("format_version",1);std::ostringstream s;s<<t;return s.str();}
+std::size_t total(const std::vector<SpectrumSpec>&v){std::size_t n=0;for(const auto&s:v){if(s.label.empty()||!s.length)throw std::invalid_argument("invalid spectrum specification");n+=s.length;}return n;}
+void validateParams(const sample::SampleModel&s,const sample::ExperimentalSetup&e,const std::vector<generation::ParameterSpec>&v){s.validate();e.validate();simulator::SimulationInput i{s,e};for(const auto&p:v){if(p.name.empty()||p.fixedValue||p.lowerBound>p.upperBound)throw std::invalid_argument("invalid model parameter");static_cast<void>(parameter::read(i,p.target));}}
+void validate(const ModelMetadata&m){if(m.formatVersion!=2||!m.inputDimension||!m.outputDimension)throw std::invalid_argument("invalid model metadata");if(m.modelType==ModelType::Inverse){validateParams(m.inverse.sampleTemplate,m.inverse.setupTemplate,m.inverse.outputParameters);if(total(m.inverse.inputSpectra)!=m.inputDimension||m.inverse.outputParameters.size()!=m.outputDimension)throw std::invalid_argument("inverse dimensions do not match metadata");}else{validateParams(m.forward.sampleTemplate,m.forward.setupTemplate,m.forward.inputParameters);if(m.forward.inputParameters.size()!=m.inputDimension||total(m.forward.outputSpectra)!=m.outputDimension)throw std::invalid_argument("forward dimensions do not match metadata");}}
+std::string manifest(const ModelMetadata&m){toml::table r{{"format","ibeamlab.onnx-package"},{"format_version",2},{"created_utc",m.createdUtc},{"model_type",m.modelType==ModelType::Inverse?"inverse":"forward"}};r.insert("model",toml::table{{"class_name",m.className},{"onnx_file","model.onnx"},{"opset_version",m.opsetVersion},{"input_name",m.inputName},{"output_name",m.outputName},{"input_dimension",static_cast<std::int64_t>(m.inputDimension)},{"output_dimension",static_cast<std::int64_t>(m.outputDimension)},{"size",static_cast<std::int64_t>(m.modelSize)},{"crc32",m.modelChecksum}});r.insert("transforms",toml::table{{"input",transform(m.inputTransform)},{"output",transform(m.outputTransform)}});if(m.modelType==ModelType::Inverse)r.insert("inverse",toml::table{{"sample_template",sampleTable(m.inverse.sampleTemplate)},{"setup_template",setupTable(m.inverse.setupTemplate)},{"input_spectra",spectra(m.inverse.inputSpectra)},{"output_parameters",parameters(m.inverse.outputParameters)}});else r.insert("forward",toml::table{{"sample_template",sampleTable(m.forward.sampleTemplate)},{"setup_template",setupTable(m.forward.setupTemplate)},{"input_parameters",parameters(m.forward.inputParameters)},{"output_spectra",spectra(m.forward.outputSpectra)}});std::ostringstream s;s<<r;return s.str();}
+template<class M>void templates(const toml::table&t,M&m){auto*s=t["sample_template"].as_table();auto*e=t["setup_template"].as_table();if(!s||!e)throw std::runtime_error("missing model templates");m.sampleTemplate=sample::sampleModelFromToml(typed(*s,"ibeamlab.sample"));m.setupTemplate=sample::experimentalSetupFromToml(typed(*e,"ibeamlab.experimental-setup"));}
 } // namespace
-ModelPackage ModelPackage::open(const std::filesystem::path &path) {
-    std::vector<std::byte> manifest;
-    std::unique_ptr<Archive> archive;
-    if (std::filesystem::is_directory(path))
-        manifest = readFile(path / "package.toml", MaxManifestSize);
-    else {
-        archive = std::make_unique<Archive>(path);
-        manifest = archive->read("package.toml", MaxManifestSize);
-    }
-    const std::string text(reinterpret_cast<const char *>(manifest.data()), manifest.size());
-    const auto root = toml::parse(text);
-    if (root["format"].value_or<std::string>("") != "ibeamlab.onnx-package")
-        throw std::runtime_error("unsupported model package format");
-    ModelPackage package;
-    auto &m = package.metadata_;
-    m.formatVersion = root["format_version"].value_or<std::uint32_t>(0);
-    if (m.formatVersion != 1)
-        throw std::runtime_error("unsupported model package major version");
-    m.createdUtc = root["created_utc"].value_or<std::string>("");
-    const auto *model = root["model"].as_table();
-    if (!model)
-        throw std::runtime_error("model package has no [model] table");
-    m.task = (*model)["task"].value_or<std::string>("");
-    m.className = (*model)["class_name"].value_or<std::string>("");
-    m.inputName = (*model)["input_name"].value_or<std::string>("inputs");
-    m.outputName = (*model)["output_name"].value_or<std::string>("outputs");
-    m.inputDimension = (*model)["input_dimension"].value_or<std::size_t>(0);
-    m.outputDimension = (*model)["output_dimension"].value_or<std::size_t>(0);
-    m.opsetVersion = (*model)["opset_version"].value_or(0);
-    m.modelSize = (*model)["size"].value_or<std::uint64_t>(0);
-    m.modelChecksum = (*model)["crc32"].value_or<std::string>("");
-    m.methodNames = strings(root["methods"].as_array());
-    m.spectrumLengths = sizes(root["spectrum_lengths"].as_array());
-    m.inputFeatures = strings(root["input_features"].as_array());
-    m.outputFeatures = strings(root["output_features"].as_array());
-    m.outputUnits = strings(root["output_units"].as_array());
-    if (m.methodNames.empty() || m.inputDimension == 0 || m.outputDimension == 0)
-        throw std::runtime_error("package is missing required dimensions or methods");
-    if (!m.spectrumLengths.empty()) {
-        if (m.spectrumLengths.size() != m.methodNames.size())
-            throw std::runtime_error("spectrum_lengths and methods differ in size");
-        std::size_t total = 0;
-        for (auto n : m.spectrumLengths)
-            total += n;
-        if (total != m.inputDimension)
-            throw std::runtime_error("spectrum lengths do not match input dimension");
-    }
-    if (m.outputFeatures.size() != m.outputDimension)
-        throw std::runtime_error("output features do not match output dimension");
-    if (!m.outputUnits.empty() && m.outputUnits.size() != m.outputDimension)
-        throw std::runtime_error("output units do not match output dimension");
-    if (auto p = root["preprocessing"].as_table()) {
-        m.inputTransform = transform((*p)["input"].as_table());
-        m.outputTransform = transform((*p)["output"].as_table());
-    }
-    const auto filename = (*model)["onnx_file"].value_or<std::string>("model.onnx");
-    package.modelBytes_ =
-        archive ? archive->read(filename, MaxModelSize) : readFile(path / filename, MaxModelSize);
-    if (m.modelSize && m.modelSize != package.modelBytes_.size())
-        throw std::runtime_error("model size does not match package.toml");
-    if (!m.modelChecksum.empty() && m.modelChecksum != crc32(package.modelBytes_))
-        throw std::runtime_error("model CRC32 checksum does not match package.toml");
-    return package;
-}
+
+ModelPackage ModelPackage::open(const std::filesystem::path&p){std::unique_ptr<Archive>a;std::vector<std::byte>b;if(std::filesystem::is_directory(p))b=readFile(p/"package.toml",MaxManifest);else{a=std::make_unique<Archive>(p);b=a->read("package.toml",MaxManifest);}const std::string text(reinterpret_cast<const char*>(b.data()),b.size());const auto r=toml::parse(text);if(r["format"].value_or<std::string>("")!="ibeamlab.onnx-package"||r["format_version"].value_or<int>(0)!=2)throw std::runtime_error("unsupported model package");ModelPackage q;auto&m=q.metadata_;m.createdUtc=r["created_utc"].value_or<std::string>("");const auto kind=r["model_type"].value_or<std::string>("");if(kind=="inverse")m.modelType=ModelType::Inverse;else if(kind=="forward")m.modelType=ModelType::Forward;else throw std::runtime_error("unknown model_type");auto*o=r["model"].as_table();if(!o)throw std::runtime_error("missing model table");m.className=(*o)["class_name"].value_or<std::string>("");m.inputName=(*o)["input_name"].value_or<std::string>("inputs");m.outputName=(*o)["output_name"].value_or<std::string>("outputs");m.inputDimension=(*o)["input_dimension"].value_or<std::size_t>(0);m.outputDimension=(*o)["output_dimension"].value_or<std::size_t>(0);m.opsetVersion=(*o)["opset_version"].value_or(0);m.modelSize=(*o)["size"].value_or<std::uint64_t>(0);m.modelChecksum=(*o)["crc32"].value_or<std::string>("");if(auto*t=r["transforms"].as_table()){m.inputTransform=transform((*t)["input"].as_table());m.outputTransform=transform((*t)["output"].as_table());}if(m.modelType==ModelType::Inverse){auto*t=r["inverse"].as_table();if(!t)throw std::runtime_error("missing inverse table");templates(*t,m.inverse);m.inverse.inputSpectra=spectra((*t)["input_spectra"].as_array());m.inverse.outputParameters=parameters((*t)["output_parameters"].as_array());}else{auto*t=r["forward"].as_table();if(!t)throw std::runtime_error("missing forward table");templates(*t,m.forward);m.forward.inputParameters=parameters((*t)["input_parameters"].as_array());m.forward.outputSpectra=spectra((*t)["output_spectra"].as_array());}validate(m);const auto name=(*o)["onnx_file"].value_or<std::string>("model.onnx");q.modelBytes_=a?a->read(name,MaxModel):readFile(p/name,MaxModel);if(m.modelSize&&m.modelSize!=q.modelBytes_.size())throw std::runtime_error("model size mismatch");if(!m.modelChecksum.empty()&&m.modelChecksum!=checksum(q.modelBytes_))throw std::runtime_error("model checksum mismatch");return q;}
+ModelPackage ModelPackage::fromOnnx(const std::filesystem::path&p,ModelMetadata m){ModelPackage q;q.modelBytes_=readFile(p,MaxModel);m.formatVersion=2;if(m.createdUtc.empty())m.createdUtc=now();m.modelSize=q.modelBytes_.size();m.modelChecksum=checksum(q.modelBytes_);validate(m);q.metadata_=std::move(m);return q;}
+void ModelPackage::write(const std::filesystem::path&p)const{validate(metadata_);if(modelBytes_.empty()||std::filesystem::exists(p))throw std::runtime_error("invalid or existing package output");const auto text=manifest(metadata_);if(p.extension()==".zip"){mz_zip_archive z{};if(!mz_zip_writer_init_file(&z,p.string().c_str(),0))throw std::runtime_error("cannot create ZIP");const bool ok=mz_zip_writer_add_mem(&z,"package.toml",text.data(),text.size(),MZ_BEST_COMPRESSION)&&mz_zip_writer_add_mem(&z,"model.onnx",modelBytes_.data(),modelBytes_.size(),MZ_BEST_COMPRESSION)&&mz_zip_writer_finalize_archive(&z);mz_zip_writer_end(&z);if(!ok){std::error_code e;std::filesystem::remove(p,e);throw std::runtime_error("cannot write ZIP");}return;}std::filesystem::create_directories(p);try{std::ofstream a(p/"package.toml",std::ios::binary);a.write(text.data(),text.size());std::ofstream b(p/"model.onnx",std::ios::binary);b.write(reinterpret_cast<const char*>(modelBytes_.data()),modelBytes_.size());if(!a||!b)throw std::runtime_error("cannot write package");}catch(...){std::error_code e;std::filesystem::remove_all(p,e);throw;}}
 } // namespace ibeamlab::model

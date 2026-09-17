@@ -1,37 +1,21 @@
-# Model package version 1
+# Model package version 2
 
-The package extension is `.ibeam.zip`. A package is a ZIP archive containing
-`package.toml` and `model.onnx`. Directory packages with the same files are
-supported for development.
+An iBeamLab model package is a directory or ZIP containing `package.toml` and
+`model.onnx`. The root explicitly declares `model_type = "inverse"` or
+`model_type = "forward"`. A package cannot serve both directions.
 
-`package.toml` starts with:
+Common ONNX tensor names, dimensions, opset, payload size, and CRC32 are stored
+in `[model]`. `[transforms.input]` is applied before ONNX execution and
+`[transforms.output]` is inverted afterward.
 
-```toml
-format = "ibeamlab.onnx-package"
-format_version = 1
-methods = ["RBS"]
-spectrum_lengths = [2]
-input_features = ["RBS:0", "RBS:1"]
-output_features = ["parameter"]
-output_units = ["1e15 atoms/cm2"]
+An inverse package contains sample/setup templates, ordered input spectrum
+labels and lengths, and ordered output parameters with physical targets,
+bounds, and units. `InverseModel` executes spectra-to-sample inference.
 
-[model]
-onnx_file = "model.onnx"
-input_name = "inputs"
-output_name = "outputs"
-input_dimension = 2
-output_dimension = 1
-opset_version = 18
-size = 1755
-crc32 = "03b53033"
-```
+A forward package contains sample/setup templates, ordered input parameters
+with physical targets and bounds, and ordered output spectrum labels and
+lengths. `ForwardModel` executes sample/setup-to-spectra inference. It does not
+implement `ISimulator` and is not a backend for `DataGenerator`.
 
-`[preprocessing.input]` and `[preprocessing.output]` describe `identity`,
-`constant_factor`, `standard_scaler`, `min_max_scaler`, `log`, or `pipeline` transforms.
-Pipelines contain an array of child transform tables. Unknown optional TOML keys
-are ignored; unknown format versions and transform types are rejected.
-
-The reader never extracts ZIP paths. It reads only the exact `package.toml` and
-declared root-level ONNX entry into bounded memory and lets miniz validate ZIP
-CRCs. Declared `size` and `crc32` values are checked against the ONNX payload.
-Method order and `spectrum_lengths` define concatenation order.
+The C++ writer calculates payload size and CRC32, refuses to overwrite existing
+outputs, and writes directory and ZIP packages. Python exposes the same API.

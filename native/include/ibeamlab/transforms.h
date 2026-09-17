@@ -1,5 +1,13 @@
 #pragma once
 
+/**
+ * @file transforms.h
+ * @brief Reversible matrix transforms used by packaged model preprocessing.
+ *
+ * These runtime transforms reproduce fitted training transformations during
+ * native inference; fitting the transform parameters remains a Python task.
+ */
+
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -7,8 +15,10 @@
 
 namespace ibeamlab::preprocessing {
 
+/** @brief Row-major float matrix exchanged with ONNX preprocessing. */
 using Matrix = std::vector<std::vector<float>>;
 
+/** @brief Abstract immutable matrix transform. */
 class Transform {
 public:
     virtual ~Transform() = default;
@@ -18,6 +28,7 @@ public:
     virtual std::size_t inputDimension() const noexcept = 0;
 };
 
+/** @brief No-op transform that still enforces the expected dimension. */
 class IdentityTransform final : public Transform {
 public:
     explicit IdentityTransform(std::size_t dimension) : dimension_(dimension) {}
@@ -28,6 +39,7 @@ public:
 private: std::size_t dimension_;
 };
 
+/** @brief Multiplies values by a fixed factor and supports inversion. */
 class ConstantFactorTransform final : public Transform {
 public:
     ConstantFactorTransform(std::size_t dimension, float factor);
@@ -39,6 +51,7 @@ public:
 private: std::size_t dimension_; float factor_;
 };
 
+/** @brief Applies a fitted per-feature mean and standard deviation. */
 class StandardScaler final : public Transform {
 public:
     StandardScaler(std::vector<float> mean, std::vector<float> deviation);
@@ -51,6 +64,7 @@ public:
 private: std::vector<float> mean_, deviation_;
 };
 
+/** @brief Applies a fitted per-feature affine min/max mapping. */
 class MinMaxScaler final : public Transform {
 public:
     MinMaxScaler(std::vector<float> minimum, std::vector<float> scale,
@@ -65,6 +79,7 @@ public:
 private: std::vector<float> minimum_, scale_; float low_, high_;
 };
 
+/** @brief Applies an offset natural logarithm and its inverse. */
 class LogTransform final : public Transform {
 public:
     LogTransform(std::size_t dimension, float offset = 1.0F);
@@ -76,6 +91,7 @@ public:
 private: std::size_t dimension_; float offset_;
 };
 
+/** @brief Applies an ordered sequence of transforms and reverses it safely. */
 class TransformPipeline final : public Transform {
 public:
     void add(std::shared_ptr<const Transform> transform);

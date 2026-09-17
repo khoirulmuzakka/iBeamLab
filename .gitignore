@@ -122,3 +122,5 @@ ehthumbs.db
 *~
 examples/datasets*
 xnra/backup.xnra
+autonra/* 
+ibamlkit/*

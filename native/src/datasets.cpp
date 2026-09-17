@@ -214,6 +214,7 @@ void DatasetWriter::writeManifest() const {
     root.insert("shards", std::move(shards));
     insertToml(root, "generation", metadata_.generationConfigToml);
     insertToml(root, "generation_options", metadata_.generationOptionsToml);
+    insertToml(root, "sampling_config", metadata_.samplingConfigToml);
     insertToml(root, "simulator_config", metadata_.simulatorConfigToml);
     root.insert("provenance",
                 toml::table{{"ibeamlab_version", metadata_.provenance.ibeamlabVersion},
@@ -258,6 +259,7 @@ DatasetReader::DatasetReader(std::filesystem::path directory) : directory_(std::
     metadata_.simulator = root["simulator"].value_or<std::string>("");
     metadata_.generationConfigToml = tableToml(root["generation"].as_table());
     metadata_.generationOptionsToml = tableToml(root["generation_options"].as_table());
+    metadata_.samplingConfigToml = tableToml(root["sampling_config"].as_table());
     metadata_.simulatorConfigToml = tableToml(root["simulator_config"].as_table());
     metadata_.parameterNames = strings(root["parameter_names"].as_array());
     metadata_.spectrumLabels = strings(root["spectrum_labels"].as_array());
