@@ -1,62 +1,72 @@
 # iBeamLab
 
-iBeamLab is an open-source toolkit for generating ion-beam-analysis datasets,
-preprocessing spectra, training machine-learning models in Python, and deploying
-exported ONNX models from C++.
+iBeamLab is a Python-first toolkit for ion-beam simulation, generated datasets,
+spectrum processing, and packaged ONNX inference. Its compiled C++ engine is an
+implementation detail; normal Python use requires no knowledge of C++.
 
-The native implementation is in `native/`. It is independent of Python and GUI
-frameworks. Python bindings expose selected native APIs through
-`ibeamlab._ibeamlab_cpp`.
+## Installation
 
-## Native build
+Install a compatible wheel with `pip install ibeamlab`. To build this checkout,
+install CMake 3.24+ and a C++20 compiler, then run `pip install .`.
 
-Requirements are CMake 3.24+, a C++20 compiler, and (on Windows) the Visual C++
-runtime. SIMNRA support is Windows-only. CMake fetches pinned toml++, miniz, and
-ONNX Runtime dependencies when they are not installed.
+SIMNRA is optional and Windows-only. The package can be imported, tested with
+the dummy simulator, used for dataset access, and used for ONNX inference
+without starting SIMNRA.
 
-```bat
-compile.bat Release
+## Five-minute example
+
+```python
+import ibeamlab as ibl
+
+sample = ibl.Sample([
+    ibl.Layer(500_000, {"Li": 0.25, "Ni": 0.20, "Mn": 0.025,
+                        "Co": 0.025, "O": 0.50})
+])
+experiment = ibl.Experiment(sample, [
+    ibl.Detector("RBS", ibl.Beam("H", energy=2974), resolution=20)
+])
+result = ibl.DummySimulator(channels=1024).simulate(experiment)
+print(result["RBS"].counts)
 ```
 
-This places the C++ import library at `lib/ibeamlab.lib`. The Python extension
-and its runtime DLLs are placed directly in the `ibeamlab/` package beside
-`__init__.py`, with no `Release/` directory. Use `compile.bat Debug` for a debug
-build.
+Generate and read a dataset:
 
-Or configure directly:
-
-```sh
-cmake -S . -B build -DBUILD_SHARED_LIBS=ON
-cmake --build build --config Release
-ctest --test-dir build -C Release --output-on-failure
-cmake --install build --config Release --prefix install
+```python
+study = ibl.GenerationStudy(experiment, [
+    ibl.vary.concentration("Li", layer=0, bounds=(0.1, 0.4)),
+    ibl.vary.concentration("Ni", layer=0, bounds=(0.1, 0.4)),
+])
+summary = study.generate(
+    "datasets/nmc", simulator=ibl.DummySimulator(), samples=1000, seed=42
+)
+dataset = ibl.open_dataset(summary.path)
+print(dataset.parameters.shape, dataset.spectra("RBS").shape)
 ```
 
-Native C++ consumers use one installed package and one library:
+See the [Python quick start](docs/getting-started.md),
+[dataset format](docs/dataset-format.md), and [model packages](docs/model-package.md).
 
-```cmake
-find_package(ibeamlab CONFIG REQUIRED)
-target_link_libraries(my_application PRIVATE ibeamlab)
+## Reproducible multilayer generation
+
+Multilayer collections are configured entirely through TOML:
+
+```console
+python examples/generate_multilayer.py examples/multilayer-generation.toml --validate-only
+python examples/generate_multilayer.py examples/multilayer-generation.toml
 ```
 
-Public headers use flat include paths such as `<ibeamlab/simulator.h>` and
-`<ibeamlab/inference.h>`.
+The run stores the original configuration, a resolved configuration containing
+absolute paths and reference-file checksums, per-dataset sampling audits, and a
+final generation summary. See
+[multilayer-generation.toml](examples/multilayer-generation.toml) for the full schema.
 
-Options include `IBEAMLAB_BUILD_TESTS`, `IBEAMLAB_BUILD_PYTHON`,
-`IBEAMLAB_ENABLE_SIMNRA`, `IBEAMLAB_ENABLE_ONNX`, `IBEAMLAB_FETCH_ONNX`,
-`IBEAMLAB_BUILD_EXAMPLES`, `IBEAMLAB_BUILD_BENCHMARKS`, and
-`IBEAMLAB_ENABLE_SANITIZERS`. Set `IBEAMLAB_SIMNRA_REFERENCE` to a usable `.xnra`
-file before configuring to enable the optional installed-SIMNRA integration test.
-Python bindings are disabled by default for C++ consumers. `compile.bat` enables
-them explicitly for the local Python training environment.
+## Units
 
-Sampling and training policy live in Python. Python supplies a complete matrix
-of open-parameter values to the native `DataGenerator`; C++ validates and
-materializes those rows, executes the simulator, and writes the dataset. See
-`examples/generate.py` and `examples/generate_multilayer.py`.
+- Beam energy, spread, and detector resolution: keV
+- Layer thickness: `1e15 atoms/cm2`
+- Acquisition time: seconds
+- Concentrations and isotope fractions: unitless
 
-`ibeamlab-generate-dummy OUTPUT [SAMPLES]` produces a deterministic headless test
-dataset without Python or SIMNRA.
-
-See [native architecture](docs/native.md), [dataset format](docs/dataset-format.md),
-and [model packages](docs/model-package.md).
+The native C++ API remains available to CMake consumers. Python users needing
+unstable low-level access can explicitly import `ibeamlab.native`; see
+[native architecture](docs/native.md).

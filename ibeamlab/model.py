@@ -1,16 +1,3 @@
-"""Reader and metadata types for packaged ONNX models."""
-
-from ._ibeamlab_cpp.model import (
-    ForwardModelMetadata,
-    InverseModelMetadata,
-    ModelMetadata,
-    ModelPackage,
-    ModelType,
-    SpectrumSpec,
-    TransformSpec,
-)
-
-__all__ = [
-    "ForwardModelMetadata", "InverseModelMetadata", "ModelMetadata",
-    "ModelPackage", "ModelType", "SpectrumSpec", "TransformSpec",
-]
+"""Model loading; prefer importing these names from :mod:`ibeamlab`."""
+from .models import *
+from .models import __all__

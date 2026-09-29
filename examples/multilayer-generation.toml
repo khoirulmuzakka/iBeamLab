@@ -1,0 +1,147 @@
+format = "ibeamlab.generation"
+format_version = 1
+name = "iba_multilayer"
+
+[output]
+directory = "datasets/iba_multilayer_seed_1"
+shards = 4
+
+[dataset]
+maximum_layers = 10
+mixed_samples_per_layer_count = 20000
+
+[random]
+seed = 1
+algorithm = "PCG64"
+seed_strategy = "named_streams_per_layer_count"
+
+[composition_sampling]
+strategy = "regional_weights"
+normalization = "sum_to_one"
+
+[[composition_sampling.regions]]
+name = "trace"
+lower = 0.0
+upper = 0.01
+
+[[composition_sampling.regions]]
+name = "minor"
+lower = 0.01
+upper = 0.10
+
+[[composition_sampling.regions]]
+name = "major"
+lower = 0.10
+upper = 0.50
+
+[[composition_sampling.regions]]
+name = "dominant"
+lower = 0.50
+upper = 1.0
+
+[[elements]]
+symbol = "Li"
+selection_probability = 1.0
+region_probabilities = [0.10, 0.30, 0.40, 0.20]
+
+[[elements]]
+symbol = "Ni"
+selection_probability = 1.0
+region_probabilities = [0.05, 0.20, 0.50, 0.25]
+
+[[elements]]
+symbol = "Mn"
+selection_probability = 1.0
+region_probabilities = [0.10, 0.25, 0.50, 0.15]
+
+[[elements]]
+symbol = "Co"
+selection_probability = 1.0
+region_probabilities = [0.10, 0.25, 0.50, 0.15]
+
+[[elements]]
+symbol = "O"
+selection_probability = 1.0
+region_probabilities = [0.05, 0.15, 0.45, 0.35]
+
+[[elements]]
+symbol = "Fe"
+selection_probability = 0.25
+region_probabilities = [0.30, 0.35, 0.25, 0.10]
+
+[[elements]]
+symbol = "Cu"
+selection_probability = 0.25
+region_probabilities = [0.30, 0.35, 0.25, 0.10]
+
+[[elements]]
+symbol = "Al"
+selection_probability = 0.25
+region_probabilities = [0.30, 0.35, 0.25, 0.10]
+
+[[elements]]
+symbol = "Si"
+selection_probability = 1.0
+region_probabilities = [0.30, 0.35, 0.25, 0.10]
+
+[one_layer_sampling.pure_element_samples]
+enabled = true
+samples_per_element = 2000
+thickness_sampling = "stratified"
+
+[thickness_sampling]
+strategy = "exponential_envelope"
+minimum_total_envelope = 50000.0
+maximum_total_envelope = 700000.0
+growth_ratio = 1.6
+layer_value_distribution = "uniform"
+unit = "1e15_atoms_per_cm2"
+
+# Fixed experimental setup; setup parameters are not varied.
+[[experiment.detectors]]
+label = "RBS"
+resolution = 20.0
+particles_sr = 1.0e12
+real_time = 0.001
+live_time = 0.001
+
+[experiment.detectors.beam]
+particle = "H"
+energy = 2974.0
+spread = 0.0
+
+[experiment.detectors.calibration]
+linear = 2.63714
+offset = 0.0
+quadratic = 0.0
+
+[[experiment.detectors]]
+label = "NRA"
+resolution = 20.0
+particles_sr = 1.0e13
+real_time = 0.001
+live_time = 0.001
+
+[experiment.detectors.beam]
+particle = "H"
+energy = 2974.0
+spread = 0.0
+
+[experiment.detectors.calibration]
+linear = 7.55
+offset = 0.0
+quadratic = 0.0
+
+[simulation]
+backend = "simnra"
+workers = 8
+batch_size = 8
+failure_policy = "stop"
+
+[[simulation.methods]]
+label = "RBS"
+reference_file = "../xnra/Ref_RBS_LiCOFNaAlSiPSTiMnFeCoNiCuH_nopu.xnra"
+
+[[simulation.methods]]
+label = "NRA"
+reference_file = "../xnra/Ref_NRA_LiCOFNaAlSiPSTiMnFeCoNiCuH_nopu.xnra"
