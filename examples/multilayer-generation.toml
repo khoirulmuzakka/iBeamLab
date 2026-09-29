@@ -8,7 +8,7 @@ shards = 4
 
 [dataset]
 maximum_layers = 10
-mixed_samples_per_layer_count = 20000
+mixed_samples_per_layer_count = 100000
 
 [random]
 seed = 1
@@ -46,17 +46,17 @@ region_probabilities = [0.10, 0.30, 0.40, 0.20]
 
 [[elements]]
 symbol = "Ni"
-selection_probability = 1.0
+selection_probability = 0.5
 region_probabilities = [0.05, 0.20, 0.50, 0.25]
 
 [[elements]]
 symbol = "Mn"
-selection_probability = 1.0
+selection_probability = 0.5
 region_probabilities = [0.10, 0.25, 0.50, 0.15]
 
 [[elements]]
 symbol = "Co"
-selection_probability = 1.0
+selection_probability = 0.5
 region_probabilities = [0.10, 0.25, 0.50, 0.15]
 
 [[elements]]
@@ -65,28 +65,33 @@ selection_probability = 1.0
 region_probabilities = [0.05, 0.15, 0.45, 0.35]
 
 [[elements]]
-symbol = "Fe"
-selection_probability = 0.25
+symbol = "C"
+selection_probability = 0.5
+region_probabilities = [0.30, 0.35, 0.25, 0.10]
+
+[[elements]]
+symbol = "F"
+selection_probability = 1.0
+region_probabilities = [0.30, 0.35, 0.25, 0.10]
+
+[[elements]]
+symbol = "P"
+selection_probability = 1.0
 region_probabilities = [0.30, 0.35, 0.25, 0.10]
 
 [[elements]]
 symbol = "Cu"
-selection_probability = 0.25
+selection_probability = 0.5
 region_probabilities = [0.30, 0.35, 0.25, 0.10]
 
 [[elements]]
 symbol = "Al"
-selection_probability = 0.25
-region_probabilities = [0.30, 0.35, 0.25, 0.10]
-
-[[elements]]
-symbol = "Si"
-selection_probability = 1.0
+selection_probability = 0.5
 region_probabilities = [0.30, 0.35, 0.25, 0.10]
 
 [one_layer_sampling.pure_element_samples]
 enabled = true
-samples_per_element = 2000
+samples_per_element = 10000
 thickness_sampling = "stratified"
 
 [thickness_sampling]
@@ -115,23 +120,6 @@ linear = 2.63714
 offset = 0.0
 quadratic = 0.0
 
-[[experiment.detectors]]
-label = "NRA"
-resolution = 20.0
-particles_sr = 1.0e13
-real_time = 0.001
-live_time = 0.001
-
-[experiment.detectors.beam]
-particle = "H"
-energy = 2974.0
-spread = 0.0
-
-[experiment.detectors.calibration]
-linear = 7.55
-offset = 0.0
-quadratic = 0.0
-
 [simulation]
 backend = "simnra"
 workers = 8
@@ -142,6 +130,3 @@ failure_policy = "stop"
 label = "RBS"
 reference_file = "../xnra/Ref_RBS_LiCOFNaAlSiPSTiMnFeCoNiCuH_nopu.xnra"
 
-[[simulation.methods]]
-label = "NRA"
-reference_file = "../xnra/Ref_NRA_LiCOFNaAlSiPSTiMnFeCoNiCuH_nopu.xnra"
