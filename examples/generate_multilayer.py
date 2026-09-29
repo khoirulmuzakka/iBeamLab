@@ -8,6 +8,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import ibeamlab as ibl
+from tqdm import tqdm
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -27,7 +28,22 @@ def main() -> None:
     if args.validate_only:
         print("Configuration is valid.")
         return
-    summaries = configuration.run()
+    total_samples = (configuration.mixed_samples * configuration.maximum_layers
+                     + len(configuration.elements) * configuration.pure_samples_per_element)
+    total_spectra = total_samples * len(configuration.methods)
+    previous_attempted = 0
+    with tqdm(total=total_spectra, desc="Finished sampled", unit="spectra",
+              bar_format="{desc}: {n_fmt}/{total_fmt} samples | {rate_fmt} | ETA {remaining}") as progress:
+
+        def update(event: ibl.GenerationProgress) -> None:
+            nonlocal previous_attempted
+            # The callback's attempted count restarts for each layer-count dataset.
+            delta = (event.attempted - previous_attempted
+                     if event.attempted >= previous_attempted else event.attempted)
+            previous_attempted = event.attempted
+            progress.update(delta * len(configuration.methods))
+
+        summaries = configuration.run(progress=update)
     for label, summary in summaries.items():
         print(label, summary)
 

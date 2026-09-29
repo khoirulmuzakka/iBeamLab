@@ -19,3 +19,6 @@ implement `ISimulator` and is not a backend for `DataGenerator`.
 
 The C++ writer calculates payload size and CRC32, refuses to overwrite existing
 outputs, and writes directory and ZIP packages. Python exposes the same API.
+
+For the trainable PyTorch layerwise recurrent forward model and package export
+workflow, see [LRN](lrn.md).

@@ -84,4 +84,13 @@ def load_model(path: str | Path, *, threads: int = 1) -> Model:
     except Exception as error:
         raise ModelPackageError(f"cannot load model package {path}: {error}") from error
 
-__all__ = ["ForwardModel", "InverseModel", "InversePrediction", "Model", "NamedValue", "load_model"]
+def __getattr__(name: str):
+    if name == "LRNModel":
+        try:
+            from .lrn import LRNModel
+        except ImportError as error:
+            raise ImportError("LRNModel requires the optional dependencies; install ibeamlab[training].") from error
+        return LRNModel
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+__all__ = ["ForwardModel", "InverseModel", "InversePrediction", "LRNModel", "Model", "NamedValue", "load_model"]

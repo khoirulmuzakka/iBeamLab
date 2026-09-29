@@ -23,9 +23,17 @@ __all__ = [
     "DatasetRecord", "Detector", "DummySimulator", "Experiment", "FailurePolicy",
     "FailureRecord", "ForwardModel", "GenerationConfiguration", "GenerationProgress", "GenerationStudy",
     "GenerationSummary", "IBeamLabError", "InferenceError", "InverseModel",
-    "InversePrediction", "Isotope", "Layer", "LinearCalibration", "Model",
+    "InversePrediction", "Isotope", "Layer", "LinearCalibration", "LRNModel", "Model",
     "ModelPackageError", "NamedValue", "NativeExtensionError", "Parameter", "Sample",
     "SimnraMethod", "SimnraSimulator", "SimnraUnavailableError", "SimulationError",
     "SimulationFailure", "SimulationResult", "Simulator", "Species", "Spectrum",
     "SetupVariation", "ValidationError", "load_generation_configuration", "load_model", "open_dataset", "vary",
 ]
+
+
+def __getattr__(name: str):
+    """Load the optional PyTorch LRN model only when explicitly requested."""
+    if name == "LRNModel":
+        from .lrn import LRNModel
+        return LRNModel
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
