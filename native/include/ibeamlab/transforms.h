@@ -9,6 +9,7 @@
  */
 
 #include <cstddef>
+#include <ibeamlab/export.h>
 #include <memory>
 #include <string>
 #include <vector>
@@ -19,7 +20,7 @@ namespace ibeamlab::preprocessing {
 using Matrix = std::vector<std::vector<float>>;
 
 /** @brief Abstract immutable matrix transform. */
-class Transform {
+class IBEAMLAB_API Transform {
 public:
     virtual ~Transform() = default;
     virtual Matrix apply(const Matrix& input) const = 0;
@@ -29,7 +30,7 @@ public:
 };
 
 /** @brief No-op transform that still enforces the expected dimension. */
-class IdentityTransform final : public Transform {
+class IBEAMLAB_API IdentityTransform final : public Transform {
 public:
     explicit IdentityTransform(std::size_t dimension) : dimension_(dimension) {}
     Matrix apply(const Matrix& input) const override;
@@ -40,7 +41,7 @@ private: std::size_t dimension_;
 };
 
 /** @brief Multiplies values by a fixed factor and supports inversion. */
-class ConstantFactorTransform final : public Transform {
+class IBEAMLAB_API ConstantFactorTransform final : public Transform {
 public:
     ConstantFactorTransform(std::size_t dimension, float factor);
     Matrix apply(const Matrix& input) const override;
@@ -52,7 +53,7 @@ private: std::size_t dimension_; float factor_;
 };
 
 /** @brief Applies a fitted per-feature mean and standard deviation. */
-class StandardScaler final : public Transform {
+class IBEAMLAB_API StandardScaler final : public Transform {
 public:
     StandardScaler(std::vector<float> mean, std::vector<float> deviation);
     Matrix apply(const Matrix& input) const override;
@@ -65,7 +66,7 @@ private: std::vector<float> mean_, deviation_;
 };
 
 /** @brief Applies a fitted per-feature affine min/max mapping. */
-class MinMaxScaler final : public Transform {
+class IBEAMLAB_API MinMaxScaler final : public Transform {
 public:
     MinMaxScaler(std::vector<float> minimum, std::vector<float> scale,
                  float low = 0.0F, float high = 1.0F);
@@ -79,8 +80,39 @@ public:
 private: std::vector<float> minimum_, scale_; float low_, high_;
 };
 
+/** @brief Applies a parameter-bound affine mapping while preserving its semantic type. */
+class IBEAMLAB_API ParameterBoundMinMaxScaler final : public Transform {
+public:
+    ParameterBoundMinMaxScaler(std::vector<float> minimum, std::vector<float> scale,
+                               float low = 0.0F, float high = 1.0F);
+    Matrix apply(const Matrix& input) const override;
+    Matrix inverse(const Matrix& input) const override;
+    std::string type() const override { return "parameter_bound_min_max_scaler"; }
+    std::size_t inputDimension() const noexcept override { return minimum_.size(); }
+    const auto& minimum() const noexcept { return minimum_; }
+    const auto& scale() const noexcept { return scale_; }
+    float low() const noexcept { return low_; }
+    float high() const noexcept { return high_; }
+private: std::vector<float> minimum_, scale_; float low_, high_;
+};
+
+/** @brief Normalizes non-negative concentration columns independently per layer. */
+class IBEAMLAB_API LayerwiseConcentrationNormalizer final : public Transform {
+public:
+    LayerwiseConcentrationNormalizer(
+        std::size_t dimension, std::vector<std::vector<std::size_t>> concentrationGroups);
+    Matrix apply(const Matrix& input) const override;
+    Matrix inverse(const Matrix& input) const override;
+    std::string type() const override { return "layerwise_concentration_normalizer"; }
+    std::size_t inputDimension() const noexcept override { return dimension_; }
+    const auto& concentrationGroups() const noexcept { return concentrationGroups_; }
+private:
+    std::size_t dimension_;
+    std::vector<std::vector<std::size_t>> concentrationGroups_;
+};
+
 /** @brief Applies an offset natural logarithm and its inverse. */
-class LogTransform final : public Transform {
+class IBEAMLAB_API LogTransform final : public Transform {
 public:
     LogTransform(std::size_t dimension, float offset = 1.0F);
     Matrix apply(const Matrix& input) const override;
@@ -92,7 +124,7 @@ private: std::size_t dimension_; float offset_;
 };
 
 /** @brief Applies an ordered sequence of transforms and reverses it safely. */
-class TransformPipeline final : public Transform {
+class IBEAMLAB_API TransformPipeline final : public Transform {
 public:
     void add(std::shared_ptr<const Transform> transform);
     Matrix apply(const Matrix& input) const override;

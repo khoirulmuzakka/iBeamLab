@@ -10,6 +10,7 @@
  */
 
 #include <ibeamlab/datasets.h>
+#include <ibeamlab/export.h>
 #include <ibeamlab/generation.h>
 
 #include <atomic>
@@ -50,7 +51,7 @@ using ProgressCallback = std::function<void(const GenerationProgress&)>;
  * responsibility is validation, materialization, bounded execution, failure
  * handling, progress reporting, and durable dataset output.
  */
-class DataGenerator {
+class IBEAMLAB_API DataGenerator {
 public:
     /** @brief Creates a generator using a fixed schema and simulator backend. */
     DataGenerator(GenerationConfig config, std::shared_ptr<simulator::ISimulator> simulator);

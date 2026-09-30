@@ -9,6 +9,7 @@
  */
 
 #include <ibeamlab/parameter.h>
+#include <ibeamlab/export.h>
 #include <ibeamlab/sample.h>
 #include <ibeamlab/simulator.h>
 
@@ -66,7 +67,7 @@ struct MethodConfig {
  * ParameterSpec replaces one baseline value with either a fixed value or a
  * value from an externally supplied row.
  */
-struct GenerationConfig {
+struct IBEAMLAB_API GenerationConfig {
     sample::SampleModel sample;
     sample::ExperimentalSetup setup;
     std::vector<MethodConfig> methods;
@@ -83,6 +84,6 @@ struct GenerationConfig {
 };
 
 /** @brief Serializes the reproducible generation schema as TOML. */
-std::string generationConfigToToml(const GenerationConfig& config);
+IBEAMLAB_API std::string generationConfigToToml(const GenerationConfig& config);
 
 } // namespace ibeamlab::generation

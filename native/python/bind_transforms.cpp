@@ -67,12 +67,38 @@ void bindTransforms(py::module_ &root) {
     py::class_<MinMaxScaler, Transform, std::shared_ptr<MinMaxScaler>> minmax(m, "MinMaxScaler");
     common(minmax);
     minmax.def(py::init<std::vector<float>, std::vector<float>, float, float>(), py::arg("minimum"),
-               py::arg("scale"), py::arg("low") = 0.0F, py::arg("high") = 1.0F);
+               py::arg("scale"), py::arg("low") = 0.0F, py::arg("high") = 1.0F)
+        .def_property_readonly("minimum", &MinMaxScaler::minimum)
+        .def_property_readonly("scale", &MinMaxScaler::scale)
+        .def_property_readonly("low", &MinMaxScaler::low)
+        .def_property_readonly("high", &MinMaxScaler::high);
+    py::class_<ParameterBoundMinMaxScaler, Transform,
+               std::shared_ptr<ParameterBoundMinMaxScaler>> parameterBound(
+        m, "ParameterBoundMinMaxScaler");
+    common(parameterBound);
+    parameterBound
+        .def(py::init<std::vector<float>, std::vector<float>, float, float>(),
+             py::arg("minimum"), py::arg("scale"), py::arg("low") = 0.0F,
+             py::arg("high") = 1.0F)
+        .def_property_readonly("minimum", &ParameterBoundMinMaxScaler::minimum)
+        .def_property_readonly("scale", &ParameterBoundMinMaxScaler::scale)
+        .def_property_readonly("low", &ParameterBoundMinMaxScaler::low)
+        .def_property_readonly("high", &ParameterBoundMinMaxScaler::high);
+    py::class_<LayerwiseConcentrationNormalizer, Transform,
+               std::shared_ptr<LayerwiseConcentrationNormalizer>> concentrationNormalizer(
+        m, "LayerwiseConcentrationNormalizer");
+    common(concentrationNormalizer);
+    concentrationNormalizer
+        .def(py::init<std::size_t, std::vector<std::vector<std::size_t>>>(),
+             py::arg("input_dimension"), py::arg("concentration_groups"))
+        .def_property_readonly("concentration_groups",
+                               &LayerwiseConcentrationNormalizer::concentrationGroups);
     py::class_<LogTransform, Transform, std::shared_ptr<LogTransform>> logarithm(m, "LogTransform");
     common(logarithm);
     logarithm.def(py::init<std::size_t, float>(), py::arg("dimension"), py::arg("offset") = 1.0F);
     py::class_<TransformPipeline, Transform, std::shared_ptr<TransformPipeline>> pipeline(
         m, "TransformPipeline");
     common(pipeline);
-    pipeline.def(py::init<>()).def("add", &TransformPipeline::add);
+    pipeline.def(py::init<>()).def("add", &TransformPipeline::add)
+        .def_property_readonly("transforms", &TransformPipeline::transforms);
 }

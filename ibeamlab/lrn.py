@@ -288,17 +288,22 @@ class LRNModel(nn.Module):
     def export(self, path: str | Path, *, opset_version: int = 17,
                input_minimum: Sequence[float] | None = None,
                input_scale: Sequence[float] | None = None,
+               input_transform=None,
                output_inverse_factor: float = 1.0) -> Path:
         """Export ONNX and wrap it in the native iBeamLab forward package format.
 
         ``input_minimum`` and ``input_scale`` describe the optional min-max
         input transform ``(x - minimum) / scale`` used before the network.
+        ``input_transform`` accepts a fitted native transform or transform
+        pipeline and is mutually exclusive with those legacy arrays.
         ``output_inverse_factor`` is applied by the package runtime as
         ``network_output / factor``; use it when training against scaled targets.
         """
         from ._native import native
         import math
 
+        if input_transform is not None and (input_minimum is not None or input_scale is not None):
+            raise ValueError("input_transform is mutually exclusive with input_minimum/input_scale.")
         if (input_minimum is None) != (input_scale is None):
             raise ValueError("input_minimum and input_scale must be supplied together.")
         if input_minimum is not None:
@@ -318,7 +323,37 @@ class LRNModel(nn.Module):
         metadata.input_dimension = self.input_dimension
         metadata.output_dimension = self.output_size
         metadata.opset_version = int(opset_version)
-        if input_minimum is not None:
+        if input_transform is not None:
+            if int(input_transform.input_dimension) != self.input_dimension:
+                raise ValueError("input_transform dimension must match the model input dimension.")
+
+            def transform_spec(value):
+                spec = native.model.TransformSpec()
+                spec.input_dimension = int(value.input_dimension)
+                if isinstance(value, native.transforms.LayerwiseConcentrationNormalizer):
+                    spec.type = "layerwise_concentration_normalizer"
+                    spec.concentration_groups = [list(group) for group in value.concentration_groups]
+                elif isinstance(value, native.transforms.ParameterBoundMinMaxScaler):
+                    spec.type = "parameter_bound_min_max_scaler"
+                    spec.minimum = list(value.minimum)
+                    spec.scale = list(value.scale)
+                    spec.low = float(value.low)
+                    spec.high = float(value.high)
+                elif isinstance(value, native.transforms.MinMaxScaler):
+                    spec.type = "min_max_scaler"
+                    spec.minimum = list(value.minimum)
+                    spec.scale = list(value.scale)
+                    spec.low = float(value.low)
+                    spec.high = float(value.high)
+                elif isinstance(value, native.transforms.TransformPipeline):
+                    spec.type = "pipeline"
+                    spec.transforms = [transform_spec(child) for child in value.transforms]
+                else:
+                    raise TypeError(f"Unsupported native input transform: {type(value).__name__}")
+                return spec
+
+            metadata.input_transform = transform_spec(input_transform)
+        elif input_minimum is not None:
             transform = native.model.TransformSpec()
             transform.type = "min_max_scaler"
             transform.input_dimension = self.input_dimension

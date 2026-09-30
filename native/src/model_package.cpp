@@ -4,6 +4,7 @@
 #include <toml++/toml.hpp>
 #include <miniz.h>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <memory>
@@ -25,8 +26,10 @@ gmtime_r(&t,&u);
 std::ostringstream s;s<<std::put_time(&u,"%FT%TZ");return s.str();}
 template<class T>toml::array array(const std::vector<T>&v){toml::array a;for(const auto&x:v){if constexpr(std::is_integral_v<T>&&std::is_unsigned_v<T>)a.push_back(static_cast<std::int64_t>(x));else a.push_back(x);}return a;}
 std::vector<float>floats(const toml::array*a){std::vector<float>v;if(a)for(const auto&n:*a){auto x=n.value<double>();if(!x)throw std::runtime_error("invalid transform number");v.push_back(static_cast<float>(*x));}return v;}
-toml::table transform(const TransformSpec&s){toml::table t{{"type",s.type},{"input_dimension",static_cast<std::int64_t>(s.inputDimension)},{"factor",s.factor},{"offset",s.offset},{"low",s.low},{"high",s.high}};if(!s.minimum.empty())t.insert("minimum",array(s.minimum));if(!s.scale.empty())t.insert("scale",array(s.scale));if(!s.mean.empty())t.insert("mean",array(s.mean));if(!s.deviation.empty())t.insert("deviation",array(s.deviation));if(!s.transforms.empty()){toml::array a;for(const auto&x:s.transforms)a.push_back(transform(x));t.insert("transforms",std::move(a));}return t;}
-TransformSpec transform(const toml::table*t){TransformSpec s;if(!t)return s;s.type=(*t)["type"].value_or<std::string>("identity");s.inputDimension=(*t)["input_dimension"].value_or<std::size_t>(0);s.factor=(*t)["factor"].value_or(1.F);s.offset=(*t)["offset"].value_or(1.F);s.low=(*t)["low"].value_or(0.F);s.high=(*t)["high"].value_or(1.F);s.minimum=floats((*t)["minimum"].as_array());s.scale=floats((*t)["scale"].as_array());s.mean=floats((*t)["mean"].as_array());s.deviation=floats((*t)["deviation"].as_array());if(auto*a=(*t)["transforms"].as_array())for(const auto&n:*a){if(!n.is_table())throw std::runtime_error("invalid transform child");s.transforms.push_back(transform(n.as_table()));}return s;}
+toml::array groups(const std::vector<std::vector<std::size_t>>&v){toml::array a;for(const auto&g:v)a.push_back(array(g));return a;}
+std::vector<std::vector<std::size_t>>groups(const toml::array*a){std::vector<std::vector<std::size_t>>v;if(a)for(const auto&n:*a){auto*g=n.as_array();if(!g)throw std::runtime_error("invalid concentration group");std::vector<std::size_t>x;for(const auto&i:*g){auto value=i.value<std::size_t>();if(!value)throw std::runtime_error("invalid concentration column");x.push_back(*value);}v.push_back(std::move(x));}return v;}
+toml::table transform(const TransformSpec&s){toml::table t{{"type",s.type},{"input_dimension",static_cast<std::int64_t>(s.inputDimension)},{"factor",s.factor},{"offset",s.offset},{"low",s.low},{"high",s.high}};if(!s.minimum.empty())t.insert("minimum",array(s.minimum));if(!s.scale.empty())t.insert("scale",array(s.scale));if(!s.mean.empty())t.insert("mean",array(s.mean));if(!s.deviation.empty())t.insert("deviation",array(s.deviation));if(!s.concentrationGroups.empty())t.insert("concentration_groups",groups(s.concentrationGroups));if(!s.transforms.empty()){toml::array a;for(const auto&x:s.transforms)a.push_back(transform(x));t.insert("transforms",std::move(a));}return t;}
+TransformSpec transform(const toml::table*t){TransformSpec s;if(!t)return s;s.type=(*t)["type"].value_or<std::string>("identity");s.inputDimension=(*t)["input_dimension"].value_or<std::size_t>(0);s.factor=(*t)["factor"].value_or(1.F);s.offset=(*t)["offset"].value_or(1.F);s.low=(*t)["low"].value_or(0.F);s.high=(*t)["high"].value_or(1.F);s.minimum=floats((*t)["minimum"].as_array());s.scale=floats((*t)["scale"].as_array());s.mean=floats((*t)["mean"].as_array());s.deviation=floats((*t)["deviation"].as_array());s.concentrationGroups=groups((*t)["concentration_groups"].as_array());if(auto*a=(*t)["transforms"].as_array())for(const auto&n:*a){if(!n.is_table())throw std::runtime_error("invalid transform child");s.transforms.push_back(transform(n.as_table()));}return s;}
 toml::table target(const parameter::Target&t){toml::table o;std::visit([&](const auto&v){using T=std::decay_t<decltype(v)>;if constexpr(std::is_same_v<T,parameter::LayerThickness>){o.insert("type","layer_thickness");o.insert("layer",static_cast<std::int64_t>(v.layer));}else if constexpr(std::is_same_v<T,parameter::SpeciesConcentration>){o.insert("type","species_concentration");o.insert("layer",static_cast<std::int64_t>(v.layer));o.insert("element",v.element);}else{if constexpr(std::is_same_v<T,parameter::BeamEnergy>)o.insert("type","beam_energy");else if constexpr(std::is_same_v<T,parameter::BeamSpread>)o.insert("type","beam_spread");else if constexpr(std::is_same_v<T,parameter::CalibrationLinear>)o.insert("type","calibration_linear");else if constexpr(std::is_same_v<T,parameter::CalibrationOffset>)o.insert("type","calibration_offset");else if constexpr(std::is_same_v<T,parameter::CalibrationQuadratic>)o.insert("type","calibration_quadratic");else if constexpr(std::is_same_v<T,parameter::DetectorResolution>)o.insert("type","detector_resolution");else o.insert("type","particles_sr");o.insert("detector",v.detector);}},t);return o;}
 parameter::Target target(const toml::table&t){const auto k=t["type"].value_or<std::string>("");const auto l=t["layer"].value_or<std::size_t>(0);const auto e=t["element"].value_or<std::string>("");const auto d=t["detector"].value_or<std::string>("");if(k=="layer_thickness")return parameter::LayerThickness{l};if(k=="species_concentration")return parameter::SpeciesConcentration{l,e};if(k=="beam_energy")return parameter::BeamEnergy{d};if(k=="beam_spread")return parameter::BeamSpread{d};if(k=="calibration_linear")return parameter::CalibrationLinear{d};if(k=="calibration_offset")return parameter::CalibrationOffset{d};if(k=="calibration_quadratic")return parameter::CalibrationQuadratic{d};if(k=="detector_resolution")return parameter::DetectorResolution{d};if(k=="particles_sr")return parameter::ParticlesSr{d};throw std::runtime_error("unknown parameter target: "+k);}
 toml::array parameters(const std::vector<generation::ParameterSpec>&v){toml::array a;for(const auto&p:v){if(p.fixedValue)throw std::invalid_argument("model parameter cannot be fixed");a.push_back(toml::table{{"name",p.name},{"unit",p.unit},{"lower_bound",p.lowerBound},{"upper_bound",p.upperBound},{"target",target(p.target)}});}return a;}
@@ -36,8 +39,47 @@ std::vector<SpectrumSpec>spectra(const toml::array*a){std::vector<SpectrumSpec>v
 toml::table sampleTable(const sample::SampleModel&v){auto t=toml::parse(sample::toToml(v));t.erase("format");t.erase("format_version");return t;}toml::table setupTable(const sample::ExperimentalSetup&v){auto t=toml::parse(sample::toToml(v));t.erase("format");t.erase("format_version");return t;}
 std::string typed(toml::table t,const char*f){t.insert("format",f);t.insert("format_version",1);std::ostringstream s;s<<t;return s.str();}
 std::size_t total(const std::vector<SpectrumSpec>&v){std::size_t n=0;for(const auto&s:v){if(s.label.empty()||!s.length)throw std::invalid_argument("invalid spectrum specification");n+=s.length;}return n;}
+void validateTransform(const TransformSpec&s,std::size_t expectedDimension){
+    if(s.inputDimension!=expectedDimension)throw std::invalid_argument("transform dimension does not match model metadata");
+    const auto finite=[](const std::vector<float>&values){for(float value:values)if(!std::isfinite(value))return false;return true;};
+    const auto positive=[](const std::vector<float>&values){for(float value:values)if(!std::isfinite(value)||value<=0)return false;return true;};
+    if(s.type.empty()||s.type=="identity")return;
+    if(s.type=="constant_factor"){
+        if(!std::isfinite(s.factor)||s.factor==0)throw std::invalid_argument("invalid constant-factor transform");
+        return;
+    }
+    if(s.type=="standard_scaler"){
+        if(s.mean.size()!=expectedDimension||s.deviation.size()!=expectedDimension||!finite(s.mean)||!positive(s.deviation))throw std::invalid_argument("invalid standard-scaler transform");
+        return;
+    }
+    if(s.type=="min_max_scaler"||s.type=="parameter_bound_min_max_scaler"){
+        if(s.minimum.size()!=expectedDimension||s.scale.size()!=expectedDimension||!finite(s.minimum)||!positive(s.scale)||!std::isfinite(s.low)||!std::isfinite(s.high)||s.high<=s.low)throw std::invalid_argument("invalid min-max transform");
+        return;
+    }
+    if(s.type=="layerwise_concentration_normalizer"){
+        std::vector<bool>seen(expectedDimension,false);
+        for(const auto&group:s.concentrationGroups){
+            if(group.empty())throw std::invalid_argument("empty concentration group");
+            for(const auto column:group){
+                if(column>=expectedDimension||seen[column])throw std::invalid_argument("invalid concentration group column");
+                seen[column]=true;
+            }
+        }
+        return;
+    }
+    if(s.type=="log"){
+        if(!std::isfinite(s.offset))throw std::invalid_argument("invalid log transform");
+        return;
+    }
+    if(s.type=="pipeline"){
+        if(s.transforms.empty())throw std::invalid_argument("transform pipeline cannot be empty");
+        for(const auto&child:s.transforms)validateTransform(child,expectedDimension);
+        return;
+    }
+    throw std::invalid_argument("unsupported transform type: "+s.type);
+}
 void validateParams(const sample::SampleModel&s,const sample::ExperimentalSetup&e,const std::vector<generation::ParameterSpec>&v){s.validate();e.validate();simulator::SimulationInput i{s,e};for(const auto&p:v){if(p.name.empty()||p.fixedValue||p.lowerBound>p.upperBound)throw std::invalid_argument("invalid model parameter");static_cast<void>(parameter::read(i,p.target));}}
-void validate(const ModelMetadata&m){if(m.formatVersion!=2||!m.inputDimension||!m.outputDimension)throw std::invalid_argument("invalid model metadata");if(m.modelType==ModelType::Inverse){validateParams(m.inverse.sampleTemplate,m.inverse.setupTemplate,m.inverse.outputParameters);if(total(m.inverse.inputSpectra)!=m.inputDimension||m.inverse.outputParameters.size()!=m.outputDimension)throw std::invalid_argument("inverse dimensions do not match metadata");}else{validateParams(m.forward.sampleTemplate,m.forward.setupTemplate,m.forward.inputParameters);if(m.forward.inputParameters.size()!=m.inputDimension||total(m.forward.outputSpectra)!=m.outputDimension)throw std::invalid_argument("forward dimensions do not match metadata");}}
+void validate(const ModelMetadata&m){if(m.formatVersion!=2||!m.inputDimension||!m.outputDimension)throw std::invalid_argument("invalid model metadata");validateTransform(m.inputTransform,m.inputDimension);validateTransform(m.outputTransform,m.outputDimension);if(m.modelType==ModelType::Inverse){validateParams(m.inverse.sampleTemplate,m.inverse.setupTemplate,m.inverse.outputParameters);if(total(m.inverse.inputSpectra)!=m.inputDimension||m.inverse.outputParameters.size()!=m.outputDimension)throw std::invalid_argument("inverse dimensions do not match metadata");}else{validateParams(m.forward.sampleTemplate,m.forward.setupTemplate,m.forward.inputParameters);if(m.forward.inputParameters.size()!=m.inputDimension||total(m.forward.outputSpectra)!=m.outputDimension)throw std::invalid_argument("forward dimensions do not match metadata");}}
 std::string manifest(const ModelMetadata&m){toml::table r{{"format","ibeamlab.onnx-package"},{"format_version",2},{"created_utc",m.createdUtc},{"model_type",m.modelType==ModelType::Inverse?"inverse":"forward"}};r.insert("model",toml::table{{"class_name",m.className},{"onnx_file","model.onnx"},{"opset_version",m.opsetVersion},{"input_name",m.inputName},{"output_name",m.outputName},{"input_dimension",static_cast<std::int64_t>(m.inputDimension)},{"output_dimension",static_cast<std::int64_t>(m.outputDimension)},{"size",static_cast<std::int64_t>(m.modelSize)},{"crc32",m.modelChecksum}});r.insert("transforms",toml::table{{"input",transform(m.inputTransform)},{"output",transform(m.outputTransform)}});if(m.modelType==ModelType::Inverse)r.insert("inverse",toml::table{{"sample_template",sampleTable(m.inverse.sampleTemplate)},{"setup_template",setupTable(m.inverse.setupTemplate)},{"input_spectra",spectra(m.inverse.inputSpectra)},{"output_parameters",parameters(m.inverse.outputParameters)}});else r.insert("forward",toml::table{{"sample_template",sampleTable(m.forward.sampleTemplate)},{"setup_template",setupTable(m.forward.setupTemplate)},{"input_parameters",parameters(m.forward.inputParameters)},{"output_spectra",spectra(m.forward.outputSpectra)}});std::ostringstream s;s<<r;return s.str();}
 template<class M>void templates(const toml::table&t,M&m){auto*s=t["sample_template"].as_table();auto*e=t["setup_template"].as_table();if(!s||!e)throw std::runtime_error("missing model templates");m.sampleTemplate=sample::sampleModelFromToml(typed(*s,"ibeamlab.sample"));m.setupTemplate=sample::experimentalSetupFromToml(typed(*e,"ibeamlab.experimental-setup"));}
 } // namespace

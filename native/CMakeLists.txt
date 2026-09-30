@@ -21,7 +21,18 @@ if(IBEAMLAB_ENABLE_SIMNRA AND WIN32)
 endif()
 
 add_library(ibeamlab ${IBEAMLAB_SOURCES})
+add_library(ibeamlab::ibeamlab ALIAS ibeamlab)
 target_compile_features(ibeamlab PUBLIC cxx_std_20)
+set_target_properties(ibeamlab PROPERTIES
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN YES)
+if(BUILD_SHARED_LIBS)
+    target_compile_definitions(ibeamlab PRIVATE IBEAMLAB_BUILDING_LIBRARY=1)
+else()
+    target_compile_definitions(ibeamlab PUBLIC IBEAMLAB_STATIC_DEFINE=1)
+endif()
 target_include_directories(ibeamlab
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -44,6 +55,7 @@ endif()
 
 find_package(OpenMP QUIET)
 if(OpenMP_CXX_FOUND)
+    set(IBEAMLAB_HAS_OPENMP TRUE PARENT_SCOPE)
     target_link_libraries(ibeamlab PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
@@ -67,6 +79,12 @@ install(TARGETS ibeamlab EXPORT ibeamlab-targets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+if(IBEAMLAB_HAS_ONNX AND ONNXRUNTIME_RUNTIME)
+    install(FILES "${ONNXRUNTIME_RUNTIME}" DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+if(IBEAMLAB_HAS_ONNX AND ONNXRUNTIME_LIBRARY AND (NOT BUILD_SHARED_LIBS OR ONNXRUNTIME_RUNTIME))
+    install(FILES "${ONNXRUNTIME_LIBRARY}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
+endif()
 
 add_executable(ibeamlab-generate-dummy tools/generate_dummy.cpp)
 target_link_libraries(ibeamlab-generate-dummy PRIVATE ibeamlab)
@@ -119,7 +137,6 @@ if(IBEAMLAB_BUILD_PYTHON)
         add_custom_command(TARGET _ibeamlab_cpp POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${ONNXRUNTIME_RUNTIME}" $<TARGET_FILE_DIR:_ibeamlab_cpp>)
-        install(FILES "${ONNXRUNTIME_RUNTIME}" DESTINATION ${CMAKE_INSTALL_BINDIR})
         install(FILES "${ONNXRUNTIME_RUNTIME}" DESTINATION ibeamlab)
     endif()
 endif()
@@ -130,6 +147,16 @@ if(IBEAMLAB_BUILD_TESTS)
     target_compile_definitions(ibeamlab-native-tests PRIVATE
         IBEAMLAB_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
     add_test(NAME ibeamlab-native-tests COMMAND ibeamlab-native-tests)
+    add_test(NAME ibeamlab-installed-consumer
+        COMMAND ${CMAKE_COMMAND}
+            "-DIBEAMLAB_BUILD_DIR=${CMAKE_BINARY_DIR}"
+            "-DIBEAMLAB_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
+            "-DIBEAMLAB_TEST_MODEL=${CMAKE_CURRENT_SOURCE_DIR}/tests/data/model-package/model.onnx"
+            "-DIBEAMLAB_CONFIG=$<CONFIG>"
+            "-DIBEAMLAB_GENERATOR=${CMAKE_GENERATOR}"
+            "-DIBEAMLAB_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
+            "-DIBEAMLAB_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_installed_consumer.cmake")
     if(IBEAMLAB_ENABLE_SIMNRA AND WIN32 AND DEFINED ENV{IBEAMLAB_SIMNRA_REFERENCE})
         add_executable(ibeamlab-simnra-integration tests/simnra_integration.cpp)
         target_link_libraries(ibeamlab-simnra-integration PRIVATE ibeamlab)

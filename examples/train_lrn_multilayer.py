@@ -23,7 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import ibeamlab as ibl
-from ibeamlab import LRNModel
+from ibeamlab import LRNModel, transforms
 
 
 def _arguments() -> argparse.Namespace:
@@ -110,14 +110,6 @@ def _make_splits(x: np.ndarray, y: np.ndarray, seed: int):
     return (x[train], y[train]), (x[validation], y[validation]), (x[test], y[test])
 
 
-def _scale_inputs(x: np.ndarray, parameters: tuple[ibl.Parameter, ...]):
-    minimum = np.asarray([item.lower for item in parameters], dtype=np.float32)
-    maximum = np.asarray([item.upper for item in parameters], dtype=np.float32)
-    scale = maximum - minimum
-    scale[scale <= 0] = 1.0
-    return (x - minimum) / scale, minimum, scale
-
-
 def _evaluate(model: LRNModel, x: np.ndarray, device: torch.device,
               batch_size: int, output_scale: float) -> np.ndarray:
     model.eval()
@@ -152,10 +144,8 @@ def _evaluate_deeper_layers(dataset_root: Path, configuration: ibl.GenerationCon
         source_index = {name: index for index, name in enumerate(source_names)}
         raw_inputs = np.asarray(dataset.parameters, dtype=np.float32)
         case_inputs = raw_inputs[:, [source_index[name] for name in case_names]]
-        minimum = np.asarray([parameter.lower for parameter in case_study.parameters], dtype=np.float32)
-        scale = np.asarray([parameter.upper - parameter.lower for parameter in case_study.parameters], dtype=np.float32)
-        scale[scale <= 0] = 1.0
-        case_inputs = (case_inputs - minimum) / scale
+        case_transform = transforms.build_lrn_input_transform(case_study)
+        case_inputs = case_transform.apply(case_inputs)
         case_targets = np.asarray(dataset.spectra(method), dtype=np.float32)
         predictions = _evaluate(model, case_inputs, device, batch_size, output_scale)
 
@@ -214,11 +204,16 @@ def main() -> None:
     x_raw, y_raw = _load_training_arrays(dataset_root, study, args.method, args.max_layers)
     (x_train, y_train), (x_val, y_val), (x_test, y_test) = _make_splits(x_raw, y_raw, args.seed)
 
-    # The same feature-wise min-max mapping is stored in the ONNX package, so
-    # C++ callers can continue passing physical parameter values.
-    x_train, input_minimum, input_scale = _scale_inputs(x_train, study.parameters)
-    x_val = (x_val - input_minimum) / input_scale
-    x_test = (x_test - input_minimum) / input_scale
+    # Concentrations are normalized independently in each layer. They then
+    # pass through unchanged while thickness and setup parameters are scaled.
+    # The complete pipeline is stored in the package for native inference.
+    input_transform = transforms.build_lrn_input_transform(study)
+    x_train = input_transform.apply(x_train)
+    x_val = input_transform.apply(x_val)
+    x_test = input_transform.apply(x_test)
+    parameter_scaler = input_transform.transforms[-1]
+    input_minimum = np.asarray(parameter_scaler.minimum, dtype=np.float32)
+    input_scale = np.asarray(parameter_scaler.scale, dtype=np.float32)
     output_scale = 1e-6
     y_train = y_train * output_scale
     y_val = y_val * output_scale
@@ -315,8 +310,7 @@ def main() -> None:
     )
     model.export(
         package_path,
-        input_minimum=input_minimum,
-        input_scale=input_scale,
+        input_transform=input_transform,
         output_inverse_factor=output_scale,
     )
 

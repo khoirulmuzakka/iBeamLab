@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 
 template <class F> bool throws(F &&function) {
@@ -33,6 +34,26 @@ int main() {
     const auto scaled = scaler.apply({{3, 6}});
     assert(scaled[0][0] == 1 && scaled[0][1] == 1);
     assert(scaler.inverse(scaled)[0][0] == 3);
+    preprocessing::LayerwiseConcentrationNormalizer concentrationNormalizer(
+        6, {{1, 2}, {4, 5}});
+    const auto normalizedConcentrations = concentrationNormalizer.apply(
+        {{100, 2, 6, 50000, -1, 3}});
+    assert(std::abs(normalizedConcentrations[0][1] - 0.25F) < 1e-6F);
+    assert(std::abs(normalizedConcentrations[0][2] - 0.75F) < 1e-6F);
+    assert(normalizedConcentrations[0][4] == 0.0F);
+    assert(normalizedConcentrations[0][5] == 1.0F);
+    preprocessing::ParameterBoundMinMaxScaler parameterScaler(
+        {0, 0, 0, 0, 0, 0}, {1000, 1, 1, 100000, 1, 1});
+    const auto parameterScaled = parameterScaler.apply(normalizedConcentrations);
+    assert(std::abs(parameterScaled[0][0] - 0.1F) < 1e-6F);
+    assert(std::abs(parameterScaled[0][3] - 0.5F) < 1e-6F);
+    assert(std::abs(parameterScaled[0][1] - 0.25F) < 1e-6F);
+    preprocessing::TransformPipeline inputPipeline;
+    inputPipeline.add(std::make_shared<preprocessing::LayerwiseConcentrationNormalizer>(
+        concentrationNormalizer));
+    inputPipeline.add(std::make_shared<preprocessing::ParameterBoundMinMaxScaler>(
+        parameterScaler));
+    assert(std::abs(inputPipeline.apply({{100, 2, 6, 50000, -1, 3}})[0][5] - 1.0F) < 1e-6F);
     preprocessing::LogTransform logarithm(2);
     const auto logged = logarithm.apply({{0, 3}});
     assert(std::abs(logarithm.inverse(logged)[0][1] - 3) < 1e-5);
@@ -130,6 +151,15 @@ int main() {
     inverseMetadata.inverse.inputSpectra = {{"RBS", 2}};
     inverseMetadata.inverse.outputParameters = {{"thickness", generation::LayerThickness{0},
                                                   0, 100, std::nullopt, "arb"}};
+    auto invalidTransformMetadata = inverseMetadata;
+    invalidTransformMetadata.inputTransform.type = "min_max_scaler";
+    invalidTransformMetadata.inputTransform.minimum = {0};
+    invalidTransformMetadata.inputTransform.scale = {1};
+    assert(throws([&] {
+        model::ModelPackage::fromOnnx(
+            std::filesystem::path(IBEAMLAB_TEST_DATA) / "model-package" / "model.onnx",
+            invalidTransformMetadata);
+    }));
     auto inversePackage = ibeamlab::model::ModelPackage::fromOnnx(
         std::filesystem::path(IBEAMLAB_TEST_DATA) / "model-package" / "model.onnx",
         inverseMetadata);
@@ -153,7 +183,18 @@ int main() {
     forwardMetadata.inputDimension = 2;
     forwardMetadata.outputDimension = 1;
     forwardMetadata.opsetVersion = 18;
+    forwardMetadata.inputTransform.type = "pipeline";
     forwardMetadata.inputTransform.inputDimension = 2;
+    model::TransformSpec concentrationTransform;
+    concentrationTransform.type = "layerwise_concentration_normalizer";
+    concentrationTransform.inputDimension = 2;
+    concentrationTransform.concentrationGroups = {{0, 1}};
+    model::TransformSpec parameterTransform;
+    parameterTransform.type = "parameter_bound_min_max_scaler";
+    parameterTransform.inputDimension = 2;
+    parameterTransform.minimum = {0, 0};
+    parameterTransform.scale = {1, 1};
+    forwardMetadata.inputTransform.transforms = {concentrationTransform, parameterTransform};
     forwardMetadata.outputTransform.inputDimension = 1;
     forwardMetadata.forward.sampleTemplate = model;
     forwardMetadata.forward.setupTemplate = setup;
@@ -164,13 +205,23 @@ int main() {
     auto forwardPackage = ibeamlab::model::ModelPackage::fromOnnx(
         std::filesystem::path(IBEAMLAB_TEST_DATA) / "model-package" / "model.onnx",
         forwardMetadata);
-    inference::ForwardModel forward(std::move(forwardPackage));
+    const auto forwardPackageDirectory =
+        std::filesystem::temp_directory_path() / "ibeamlab-forward-transform-package";
+    std::filesystem::remove_all(forwardPackageDirectory);
+    forwardPackage.write(forwardPackageDirectory);
+    const auto forwardRoundTrip = model::ModelPackage::open(forwardPackageDirectory);
+    const std::vector<std::vector<std::size_t>> expectedConcentrationGroups{{0, 1}};
+    assert(forwardRoundTrip.metadata().inputTransform.transforms[0].concentrationGroups ==
+           expectedConcentrationGroups);
+    inference::ForwardModel forward(forwardRoundTrip);
+    assert(forward.metadata().className == "Linear");
     auto forwardInput = simulator::SimulationInput{model, setup};
     forwardInput.sample.layers[0].thickness = 1.0;
     forwardInput.setup.detectors[0].beam.energy = 2.0;
     const auto forwardResults = forward.predict({forwardInput});
     assert(forwardResults[0].spectra[0].label == "RBS");
-    assert(std::abs(forwardResults[0].spectra[0].counts[0] - 9.0F) < 1e-5F);
+    assert(std::abs(forwardResults[0].spectra[0].counts[0] - 3.0F) < 1e-5F);
+    std::filesystem::remove_all(forwardPackageDirectory);
     auto dummy = std::make_shared<simulator::DummySimulator>(128);
     generation::DataGenerator generator(config, dummy);
     const std::vector<std::vector<double>> parameterRows{{91}, {97}, {103}, {109}};

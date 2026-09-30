@@ -17,6 +17,41 @@ The single `ibeamlab` library contains these concrete responsibilities:
 Consumers link only `ibeamlab`; the responsibilities above are C++ namespaces,
 not separately deployed libraries.
 
+After installing iBeamLab, a CMake consumer needs only the exported namespaced
+target:
+
+```cmake
+find_package(ibeamlab CONFIG REQUIRED)
+target_link_libraries(my_application PRIVATE ibeamlab::ibeamlab)
+ibeamlab_copy_runtime_dependencies(my_application)
+```
+
+The corresponding forward-inference entry point is intentionally small:
+
+```cpp
+#include <ibeamlab/forward_model.h>
+
+ibeamlab::inference::ForwardModel model("trained-model.zip");
+const auto& metadata = model.metadata();
+ibeamlab::simulator::SimulationInput input{
+    metadata.forward.sampleTemplate,
+    metadata.forward.setupTemplate,
+};
+const auto result = model.predict({input});
+```
+
+The installed runtime bundle includes the iBeamLab shared library and, when
+iBeamLab fetched ONNX Runtime itself, the matching ONNX Runtime shared library.
+On Windows, `ibeamlab_copy_runtime_dependencies()` places these DLLs beside the
+consumer executable. This also prevents an unrelated system-wide ONNX Runtime
+DLL from shadowing the version used to build iBeamLab.
+
+The shared-library ABI is versioned with the iBeamLab major version. Because
+the value-oriented API deliberately exchanges C++ standard-library containers,
+Windows consumers must use a binary-compatible MSVC toolset and C++ runtime.
+The public headers use explicit visibility annotations; implementation symbols
+are hidden instead of relying on automatic DLL symbol export.
+
 SIMNRA workers are persistent. Each worker constructs, uses, and destroys its COM
 objects on the same worker thread. Cancellations are cooperative. Batch results
 retain request order and may contain structured per-item failures.

@@ -9,26 +9,27 @@
  */
 
 #include <cstddef>
+#include <ibeamlab/export.h>
 #include <vector>
 
 namespace ibeamlab::spectrum {
 
 /** @brief Crops high channels or pads them to an exact size. */
-std::vector<double> cropOrPad(const std::vector<double>& spectrum,
+IBEAMLAB_API std::vector<double> cropOrPad(const std::vector<double>& spectrum,
                               std::size_t size, double padding = 0.0);
 /** @brief Concatenates spectra in caller-provided method order. */
-std::vector<double> concatenate(const std::vector<std::vector<double>>& spectra);
+IBEAMLAB_API std::vector<double> concatenate(const std::vector<std::vector<double>>& spectra);
 /** @brief Clamps every channel to an inclusive numeric interval. */
-std::vector<double> clip(const std::vector<double>& spectrum,double minimum,double maximum);
+IBEAMLAB_API std::vector<double> clip(const std::vector<double>& spectrum,double minimum,double maximum);
 
 /** @brief Conservatively rebins counts between arbitrary monotonic bin edges. */
-std::vector<double> rebin(
+IBEAMLAB_API std::vector<double> rebin(
     const std::vector<double>& oldEdges,
     const std::vector<double>& newEdges,
     const std::vector<double>& spectrum);
 
 /** @brief Applies the detector pileup model to a channel spectrum. */
-std::vector<double> pileup(
+IBEAMLAB_API std::vector<double> pileup(
     const std::vector<double>& spectrum,
     double realTime,
     double liveTime,
@@ -36,7 +37,7 @@ std::vector<double> pileup(
     bool clipNegative = true);
 
 /** @brief Converts an energy spectrum to channels and applies detector pileup. */
-std::vector<double> energyToChannelAndPileup(
+IBEAMLAB_API std::vector<double> energyToChannelAndPileup(
     const std::vector<double>& energySpectrum,
     double calibrationOffset,
     double calibrationLinear,

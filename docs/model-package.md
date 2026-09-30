@@ -8,6 +8,18 @@ Common ONNX tensor names, dimensions, opset, payload size, and CRC32 are stored
 in `[model]`. `[transforms.input]` is applied before ONNX execution and
 `[transforms.output]` is inverted afterward.
 
+Input transforms may be pipelines. In addition to ordinary affine transforms,
+the native runtime supports layerwise concentration normalization and
+parameter-bound min-max scaling. Concentration-group column indices are stored
+in the manifest so the same per-layer normalization used for training is
+reproduced during inference.
+
+Every transform is validated recursively when a package is created or opened.
+Dimensions, numeric parameters, concentration-column groups, and child
+pipelines must be consistent with the ONNX model metadata; unsupported or
+malformed transform specifications are rejected before an inference session is
+created.
+
 An inverse package contains sample/setup templates, ordered input spectrum
 labels and lengths, and ordered output parameters with physical targets,
 bounds, and units. `InverseModel` executes spectra-to-sample inference.

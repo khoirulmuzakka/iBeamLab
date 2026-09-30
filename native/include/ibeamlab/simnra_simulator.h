@@ -9,6 +9,7 @@
  */
 
 #include <ibeamlab/simulator.h>
+#include <ibeamlab/export.h>
 
 #include <cstddef>
 #include <filesystem>
@@ -39,7 +40,7 @@ struct SimnraSimulatorConfig {
  * Each worker reuses one SIMNRA object per configured method. close() and the
  * destructor release COM resources and remove private temporary files.
  */
-class SimnraSimulator final : public ISimulator {
+class IBEAMLAB_API SimnraSimulator final : public ISimulator {
 public:
     /** @brief Starts a persistent worker pool for the configured methods. */
     explicit SimnraSimulator(SimnraSimulatorConfig config);

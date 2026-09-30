@@ -9,6 +9,7 @@
  */
 
 #include <ibeamlab/simulator.h>
+#include <ibeamlab/export.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -78,7 +79,7 @@ struct DatasetMetadata {
 };
 
 /** @brief Abstract streaming dataset sink. */
-class IDatasetWriter {
+class IBEAMLAB_API IDatasetWriter {
 public:
     virtual ~IDatasetWriter() = default;
     virtual void append(const DatasetRecord& record) = 0;
@@ -88,7 +89,7 @@ public:
 };
 
 /** @brief Abstract dataset source. */
-class IDatasetReader {
+class IBEAMLAB_API IDatasetReader {
 public:
     virtual ~IDatasetReader() = default;
     virtual const DatasetMetadata& metadata() const noexcept = 0;
@@ -102,7 +103,7 @@ public:
  * The writer keeps the manifest incomplete until finalize() succeeds and tracks
  * the maximum spectrum length per method without buffering the full dataset.
  */
-class DatasetWriter final : public IDatasetWriter {
+class IBEAMLAB_API DatasetWriter final : public IDatasetWriter {
 public:
     /** @brief Creates a new dataset directory and its output shards. */
     DatasetWriter(std::filesystem::path directory, DatasetMetadata metadata,
@@ -132,7 +133,7 @@ private:
  * Shorter spectra are zero-padded to the per-method maximum declared by the
  * manifest so callers receive rectangular method inputs.
  */
-class DatasetReader final : public IDatasetReader {
+class IBEAMLAB_API DatasetReader final : public IDatasetReader {
 public:
     /** @brief Opens a dataset directory and parses its manifest. */
     explicit DatasetReader(std::filesystem::path directory);

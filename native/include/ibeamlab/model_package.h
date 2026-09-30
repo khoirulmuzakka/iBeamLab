@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <ibeamlab/export.h>
 #include <ibeamlab/generation.h>
 #include <ibeamlab/sample.h>
 #include <string>
@@ -17,7 +18,14 @@
 
 namespace ibeamlab::model {
 /** @brief Serializable description of one preprocessing transform or pipeline. */
-struct TransformSpec { std::string type{"identity"}; std::size_t inputDimension{}; float factor{1}; float offset{1}; float low{0}; float high{1}; std::vector<float> minimum,scale,mean,deviation; std::vector<TransformSpec> transforms; };
+struct TransformSpec {
+    std::string type{"identity"};
+    std::size_t inputDimension{};
+    float factor{1}, offset{1}, low{0}, high{1};
+    std::vector<float> minimum, scale, mean, deviation;
+    std::vector<std::vector<std::size_t>> concentrationGroups;
+    std::vector<TransformSpec> transforms;
+};
 enum class ModelType { Inverse, Forward };
 struct SpectrumSpec {
     std::string label;
@@ -53,7 +61,7 @@ struct ModelMetadata {
  * Packages may be opened from a development directory or ZIP and written to
  * either form. The writer calculates model size and CRC32 itself.
  */
-class ModelPackage {
+class IBEAMLAB_API ModelPackage {
 public:
     /** @brief Opens and validates a package directory or ZIP archive. */
     static ModelPackage open(const std::filesystem::path& path);

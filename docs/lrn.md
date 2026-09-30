@@ -11,21 +11,30 @@ plot extra as well and run `python examples/train_lrn_multilayer.py`.
 ```python
 import torch
 import ibeamlab as ibl
-from ibeamlab import LRNModel
+from ibeamlab import LRNModel, transforms
 
 study = ibl.GenerationStudy(experiment, parameters, methods=methods)
 model = LRNModel(study, {"RBS": 2048}, hidden_size=128)
+input_transform = transforms.build_lrn_input_transform(study)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-for inputs, target_spectra in training_loader:
+for physical_inputs, target_spectra in training_loader:
+    inputs = torch.from_numpy(input_transform.apply(physical_inputs.numpy()))
     prediction = model(inputs)
     loss = torch.nn.functional.mse_loss(prediction, target_spectra)
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
 
-model.export("rbs-lrn.zip")
+model.export("rbs-lrn.zip", input_transform=input_transform)
 ```
+
+`build_lrn_input_transform()` first clips and normalizes the concentration
+features independently in each layer, then leaves those fractions unchanged
+while applying parameter-bound min-max scaling to thickness and setup
+features. By default, thickness is mapped from `[0, 100000]` to `[0, 1]`.
+The complete pipeline is serialized into the package and applied by native
+inference, so callers continue to supply physical parameter values.
 
 The example script loads `layers_01` through `layers_05` with
 `ibeamlab.open_dataset`, pads shorter layer systems to the five-layer parameter

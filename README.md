@@ -70,3 +70,12 @@ final generation summary. See
 The native C++ API remains available to CMake consumers. Python users needing
 unstable low-level access can explicitly import `ibeamlab.native`; see
 [native architecture](docs/native.md).
+
+An installed C++ consumer links the versioned target and copies its matching
+runtime DLLs with:
+
+```cmake
+find_package(ibeamlab CONFIG REQUIRED)
+target_link_libraries(my_application PRIVATE ibeamlab::ibeamlab)
+ibeamlab_copy_runtime_dependencies(my_application)
+```

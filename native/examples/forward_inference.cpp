@@ -8,9 +8,12 @@ int main(int argc, char** argv) {
     }
     try {
         ibeamlab::inference::ForwardModel model(argv[1]);
-        ibeamlab::simulator::SimulationInput input;
-        // Applications populate input.sample and input.setup using their own
-        // adapter before invoking the model.
+        const auto& metadata = model.metadata();
+        ibeamlab::simulator::SimulationInput input{
+            metadata.forward.sampleTemplate,
+            metadata.forward.setupTemplate,
+        };
+        // Applications may replace values targeted by metadata.forward.inputParameters.
         const auto results = model.predict({input});
         std::cout << results.front().spectra.size() << " spectrum/spectra\n";
         return 0;

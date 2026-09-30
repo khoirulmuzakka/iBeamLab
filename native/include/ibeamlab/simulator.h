@@ -9,6 +9,7 @@
  */
 
 #include <ibeamlab/sample.h>
+#include <ibeamlab/export.h>
 
 #include <atomic>
 #include <cstddef>
@@ -62,7 +63,7 @@ struct SimulationOptions {
  * Implementations are responsible for stable batch ordering, cooperative
  * cancellation, and structured failures.
  */
-class ISimulator {
+class IBEAMLAB_API ISimulator {
 public:
     virtual ~ISimulator() = default;
     /** @brief Simulates all inputs and returns results in input order. */
@@ -81,7 +82,7 @@ protected:
 };
 
 /** @brief Deterministic dependency-free simulator used by tests and examples. */
-class DummySimulator final : public ISimulator {
+class IBEAMLAB_API DummySimulator final : public ISimulator {
 public:
     explicit DummySimulator(std::size_t channels = 1024) : channels_(channels) {}
     std::vector<SimulationResult> simulateBatch(

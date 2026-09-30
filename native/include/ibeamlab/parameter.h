@@ -6,6 +6,7 @@
  */
 
 #include <ibeamlab/simulator.h>
+#include <ibeamlab/export.h>
 
 #include <cstddef>
 #include <string>
@@ -27,12 +28,12 @@ using Target = std::variant<LayerThickness, SpeciesConcentration, BeamEnergy, Be
     CalibrationLinear, CalibrationOffset, CalibrationQuadratic, DetectorResolution, ParticlesSr>;
 
 /** @brief Returns a stable identity used for duplicate-target validation. */
-std::string key(const Target& target);
+IBEAMLAB_API std::string key(const Target& target);
 
 /** @brief Reads one physical value from a fully materialized input. */
-double read(const simulator::SimulationInput& input, const Target& target);
+IBEAMLAB_API double read(const simulator::SimulationInput& input, const Target& target);
 
 /** @brief Replaces one physical value in a simulation input. */
-void write(simulator::SimulationInput& input, const Target& target, double value);
+IBEAMLAB_API void write(simulator::SimulationInput& input, const Target& target, double value);
 
 } // namespace ibeamlab::parameter

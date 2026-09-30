@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 import ibeamlab as ibl
+from ibeamlab import transforms
 
 def experiment():
     return ibl.Experiment(
@@ -35,3 +36,17 @@ def test_study_sampling_and_native_config(tmp_path):
     dataset = ibl.open_dataset(summary.path)
     assert dataset.parameters.shape == (10, 2)
     assert dataset.spectra("RBS").shape == (10, 32)
+
+
+def test_lrn_input_transform_normalizes_each_layer_and_scales_thickness():
+    study = ibl.GenerationStudy(experiment(), [
+        ibl.vary.layer_thickness(layer=0, bounds=(1_000, 90_000)),
+        ibl.vary.concentration("Li", layer=0, bounds=(0.0, 1.0)),
+        ibl.vary.concentration("Ni", layer=0, bounds=(0.0, 1.0)),
+    ])
+    transform = transforms.build_lrn_input_transform(study)
+    values = np.asarray([[50_000.0, 2.0, 6.0]], dtype=np.float32)
+
+    transformed = transform.apply(values)
+
+    assert np.allclose(transformed, [[0.5, 0.25, 0.75]])

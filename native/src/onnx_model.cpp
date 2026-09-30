@@ -14,6 +14,8 @@ std::shared_ptr<const preprocessing::Transform> makeTransform(const model::Trans
     if(s.type=="constant_factor")return std::make_shared<preprocessing::ConstantFactorTransform>(s.inputDimension,s.factor);
     if(s.type=="standard_scaler")return std::make_shared<preprocessing::StandardScaler>(s.mean,s.deviation);
     if(s.type=="min_max_scaler")return std::make_shared<preprocessing::MinMaxScaler>(s.minimum,s.scale,s.low,s.high);
+    if(s.type=="parameter_bound_min_max_scaler")return std::make_shared<preprocessing::ParameterBoundMinMaxScaler>(s.minimum,s.scale,s.low,s.high);
+    if(s.type=="layerwise_concentration_normalizer")return std::make_shared<preprocessing::LayerwiseConcentrationNormalizer>(s.inputDimension,s.concentrationGroups);
     if(s.type=="log")return std::make_shared<preprocessing::LogTransform>(s.inputDimension,s.offset);
     if(s.type=="pipeline"){auto p=std::make_shared<preprocessing::TransformPipeline>();for(const auto&c:s.transforms)p->add(makeTransform(c));return p;}
     throw std::runtime_error("unsupported transform type: "+s.type);

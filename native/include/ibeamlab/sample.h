@@ -9,6 +9,7 @@
  */
 
 #include <cstdint>
+#include <ibeamlab/export.h>
 #include <string>
 #include <vector>
 
@@ -38,7 +39,7 @@ struct Layer {
 };
 
 /** @brief Surface-to-depth ordered stack of sample layers. */
-struct SampleModel {
+struct IBEAMLAB_API SampleModel {
     std::vector<Layer> layers;
     /** @brief Validates layer dimensions, species, and normalized compositions. */
     void validate() const;
@@ -66,7 +67,7 @@ struct Detector {
 };
 
 /** @brief Ordered detector configurations used to produce method spectra. */
-struct ExperimentalSetup {
+struct IBEAMLAB_API ExperimentalSetup {
     std::vector<Detector> detectors;
     /** @brief Validates detector labels, beam values, and calibration settings. */
     void validate() const;

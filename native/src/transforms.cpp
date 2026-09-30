@@ -41,6 +41,62 @@ MinMaxScaler::MinMaxScaler(std::vector<float> minimum, std::vector<float> scale,
 }
 Matrix MinMaxScaler::apply(const Matrix& in) const { return mapped(in, minimum_.size(), [&](float v, std::size_t c){ return low_ + (v - minimum_[c]) / scale_[c] * (high_ - low_); }); }
 Matrix MinMaxScaler::inverse(const Matrix& in) const { return mapped(in, minimum_.size(), [&](float v, std::size_t c){ return minimum_[c] + (v - low_) / (high_ - low_) * scale_[c]; }); }
+ParameterBoundMinMaxScaler::ParameterBoundMinMaxScaler(
+    std::vector<float> minimum, std::vector<float> scale, float low, float high)
+    : minimum_(std::move(minimum)), scale_(std::move(scale)), low_(low), high_(high) {
+    if (minimum_.empty() || minimum_.size() != scale_.size() || !(high > low))
+        throw std::invalid_argument("invalid parameter-bound min-max scaler");
+    for (float value : minimum_)
+        if (!std::isfinite(value)) throw std::invalid_argument("minimum must be finite");
+    for (float value : scale_)
+        if (!std::isfinite(value) || value <= 0)
+            throw std::invalid_argument("parameter-bound min-max scale must be positive");
+}
+Matrix ParameterBoundMinMaxScaler::apply(const Matrix& in) const {
+    return mapped(in, minimum_.size(), [&](float v, std::size_t c) {
+        return low_ + (v - minimum_[c]) / scale_[c] * (high_ - low_);
+    });
+}
+Matrix ParameterBoundMinMaxScaler::inverse(const Matrix& in) const {
+    return mapped(in, minimum_.size(), [&](float v, std::size_t c) {
+        return minimum_[c] + (v - low_) / (high_ - low_) * scale_[c];
+    });
+}
+
+LayerwiseConcentrationNormalizer::LayerwiseConcentrationNormalizer(
+    std::size_t dimension, std::vector<std::vector<std::size_t>> concentrationGroups)
+    : dimension_(dimension), concentrationGroups_(std::move(concentrationGroups)) {
+    if (dimension_ == 0) throw std::invalid_argument("normalizer dimension must be positive");
+    std::vector<bool> seen(dimension_, false);
+    for (const auto& group : concentrationGroups_) {
+        if (group.empty()) throw std::invalid_argument("concentration groups cannot be empty");
+        for (const auto column : group) {
+            if (column >= dimension_) throw std::invalid_argument("concentration column is out of range");
+            if (seen[column]) throw std::invalid_argument("concentration column occurs more than once");
+            seen[column] = true;
+        }
+    }
+}
+Matrix LayerwiseConcentrationNormalizer::apply(const Matrix& input) const {
+    validate(input, dimension_);
+    Matrix output = input;
+    for (auto& row : output) {
+        for (const auto& group : concentrationGroups_) {
+            float sum = 0.0F;
+            for (const auto column : group) {
+                row[column] = std::max(row[column], 0.0F);
+                sum += row[column];
+            }
+            if (sum > 0.0F)
+                for (const auto column : group) row[column] /= sum;
+        }
+    }
+    return output;
+}
+Matrix LayerwiseConcentrationNormalizer::inverse(const Matrix& input) const {
+    validate(input, dimension_);
+    return input;
+}
 LogTransform::LogTransform(std::size_t dimension, float offset)
     : dimension_(dimension), offset_(offset) {
     if (dimension == 0 || !std::isfinite(offset))

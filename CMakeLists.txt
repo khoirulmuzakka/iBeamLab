@@ -11,12 +11,14 @@ option(IBEAMLAB_ENABLE_SIMNRA "Build the Windows SIMNRA backend" ON)
 option(IBEAMLAB_ENABLE_ONNX "Build ONNX Runtime inference" ON)
 option(IBEAMLAB_FETCH_ONNX "Fetch a pinned ONNX Runtime package when not installed" ON)
 set(IBEAMLAB_ONNX_VERSION "1.22.1" CACHE STRING "ONNX Runtime version used by the fallback package")
+set(IBEAMLAB_HAS_ONNX FALSE)
+set(IBEAMLAB_HAS_OPENMP FALSE)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS OFF)
 if(IBEAMLAB_ENABLE_SANITIZERS AND NOT MSVC)
     add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
     add_link_options(-fsanitize=address,undefined)
@@ -108,6 +110,7 @@ write_basic_package_version_file(
 )
 install(EXPORT ibeamlab-targets
     FILE ibeamlab-targets.cmake
+    NAMESPACE ibeamlab::
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ibeamlab"
 )
 install(FILES

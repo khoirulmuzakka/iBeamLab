@@ -1,5 +1,46 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
+if(NOT @BUILD_SHARED_LIBS@ AND @IBEAMLAB_HAS_OPENMP@)
+    find_dependency(OpenMP COMPONENTS CXX)
+endif()
+if(NOT @BUILD_SHARED_LIBS@ AND @IBEAMLAB_HAS_ONNX@ AND NOT TARGET ONNXRuntime::ONNXRuntime)
+    if(WIN32)
+        add_library(ONNXRuntime::ONNXRuntime SHARED IMPORTED)
+        set_target_properties(ONNXRuntime::ONNXRuntime PROPERTIES
+            IMPORTED_IMPLIB "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/onnxruntime.lib"
+            IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/onnxruntime.dll")
+    else()
+        find_library(ibeamlab_ONNXRUNTIME_LIBRARY NAMES onnxruntime REQUIRED)
+        add_library(ONNXRuntime::ONNXRuntime UNKNOWN IMPORTED)
+        set_target_properties(ONNXRuntime::ONNXRuntime PROPERTIES
+            IMPORTED_LOCATION "${ibeamlab_ONNXRUNTIME_LIBRARY}")
+    endif()
+endif()
 include("${CMAKE_CURRENT_LIST_DIR}/ibeamlab-targets.cmake")
+if(TARGET ibeamlab::ibeamlab AND NOT TARGET ibeamlab)
+    add_library(ibeamlab INTERFACE IMPORTED)
+    set_property(TARGET ibeamlab PROPERTY
+        INTERFACE_LINK_LIBRARIES ibeamlab::ibeamlab)
+endif()
+
+set(ibeamlab_RUNTIME_DLLS)
+if(WIN32 AND @BUILD_SHARED_LIBS@)
+    list(APPEND ibeamlab_RUNTIME_DLLS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/ibeamlab.dll")
+endif()
+if(WIN32 AND EXISTS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/onnxruntime.dll")
+    list(APPEND ibeamlab_RUNTIME_DLLS
+        "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/onnxruntime.dll")
+endif()
+
+function(ibeamlab_copy_runtime_dependencies target)
+    if(WIN32)
+        foreach(runtime_dll IN LISTS ibeamlab_RUNTIME_DLLS)
+            add_custom_command(TARGET "${target}" POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${runtime_dll}" "$<TARGET_FILE_DIR:${target}>")
+        endforeach()
+    endif()
+endfunction()
+
 check_required_components(ibeamlab)
