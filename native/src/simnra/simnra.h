@@ -6,33 +6,36 @@
 /**
  * @class SIMNRA
  * @brief A class to interface with the SIMNRA simulation software for ion beam analysis.
- * 
- * This class provides methods to control the SIMNRA application, manage target layers, 
- * calculate spectra, and configure various simulation parameters such as beam properties, 
+ *
+ * This class provides methods to control the SIMNRA application, manage target layers,
+ * calculate spectra, and configure various simulation parameters such as beam properties,
  * stopping power, and scattering models
  */
 class SIMNRA {
-private:
-    IDispatch* m_App{};          ///< Pointer to the SIMNRA application COM interface
-    IDispatch* m_Setup{};        ///< Pointer to the setup COM interface
-    IDispatch* m_Target{};       ///< Pointer to the target COM interface
-    IDispatch* m_Calc{};         ///< Pointer to the calculation COM interface
-    IDispatch* m_Fit{};          ///< Pointer to the fitting COM interface
-    IDispatch* m_Projectile{};   ///< Pointer to the projectile COM interface
-    IDispatch* m_Spectrum{};     ///< Pointer to the spectrum COM interface
-    IDispatch* m_Stopping{};     ///< Pointer to the stopping power COM interface
-    IDispatch* m_PIGE{};         ///< Pointer to the PIGE (Particle-Induced Gamma-ray Emission) COM interface
-    IDispatch* m_CrossSec{};     ///< Pointer to the cross-section COM interface
-    bool m_comInitialized{};     ///< This instance owns a successful CoInitializeEx call.
+  private:
+    IDispatch *m_App{};        ///< Pointer to the SIMNRA application COM interface
+    IDispatch *m_Setup{};      ///< Pointer to the setup COM interface
+    IDispatch *m_Target{};     ///< Pointer to the target COM interface
+    IDispatch *m_Calc{};       ///< Pointer to the calculation COM interface
+    IDispatch *m_Fit{};        ///< Pointer to the fitting COM interface
+    IDispatch *m_Projectile{}; ///< Pointer to the projectile COM interface
+    IDispatch *m_Spectrum{};   ///< Pointer to the spectrum COM interface
+    IDispatch *m_Stopping{};   ///< Pointer to the stopping power COM interface
+    IDispatch
+        *m_PIGE{}; ///< Pointer to the PIGE (Particle-Induced Gamma-ray Emission) COM interface
+    IDispatch *m_CrossSec{};            ///< Pointer to the cross-section COM interface
+    bool m_comInitialized{};            ///< This instance owns a successful CoInitializeEx call.
     std::vector<double> m_lastSpectrum; ///< Cached spectrum buffer reused across queries
 
-private : 
+  private:
     void pumpMessages();
 
-public:
+  public:
     /**
      * @brief Constructs a SIMNRA object and initializes COM interfaces.
-     * @param MTA : if true, use mult-threaded apartment. Useful for maximizing cpu utilization. However, the result can sometimes be incorrect. Recommendation : use MTA = True for fitting, MTA=False for data generation.
+     * @param MTA : if true, use mult-threaded apartment. Useful for maximizing cpu utilization.
+     However, the result can sometimes be incorrect. Recommendation : use MTA = True for fitting,
+     MTA=False for data generation.
      * @param threadPriorityIndex : set the thread priority
      *          case -3: THREAD_PRIORITY_IDLE
                 case -2: THREAD_PRIORITY_LOWEST
@@ -42,7 +45,7 @@ public:
                 case 2:  THREAD_PRIORITY_HIGHEST
                 case 3:  THREAD_PRIORITY_TIME_CRITICAL
      */
-    SIMNRA( bool MTA=true, int threadPriorityIndex = 0);
+    SIMNRA(bool MTA = true, int threadPriorityIndex = 0);
 
     /**
      * @brief Destructor that releases COM interfaces.
@@ -62,7 +65,7 @@ public:
      * @param type The type of file to open (-1 for default).
      * @return True if the file was opened successfully, false otherwise.
      */
-    bool open(const wchar_t* filename, int type = -1);
+    bool open(const wchar_t *filename, int type = -1);
 
     /**
      * @brief Save a SIMNRA file.
@@ -70,7 +73,7 @@ public:
      * @param type The type of file to open (2 for default).
      * @return True if the file was saved successfully, false otherwise.
      */
-    bool saveAs(const wchar_t* filename, int filetype = 2);
+    bool saveAs(const wchar_t *filename, int filetype = 2);
 
     /**
      * @brief Calculates the spectrum using the current setup.
@@ -90,7 +93,7 @@ public:
      * @param index The index of the spectrum to read.
      * @return True if the data was read successfully, false otherwise.
      */
-    bool readSpectrumData(const std::wstring& file, int index);
+    bool readSpectrumData(const std::wstring &file, int index);
 
     /**
      * @brief Gets the version of the SIMNRA application.
@@ -104,14 +107,14 @@ public:
      * @param spID The spectrum ID (default is 1).
      * @return A vector containing the spectrum data.
      */
-    std::vector<double>& getSpectrum(int spID = 1);
+    std::vector<double> &getSpectrum(int spID = 1);
     /**
      * @brief Sets spectrum data for a given spectrum ID.
      * @param spID The spectrum ID.
      * @param data Spectrum data to set.
      * @return True if the spectrum was set successfully, false otherwise.
      */
-    bool setSpectrum(int spID, const std::vector<double>& data);
+    bool setSpectrum(int spID, const std::vector<double> &data);
 
     /**
      * @brief Gets the spectrum ID associated with an element's atomic number.
@@ -165,7 +168,8 @@ public:
      * @param elementCons Vector of element concentrations.
      * @param thickness The thickness of the layer.
      */
-    void addLayerProperties(std::vector<std::wstring> elementNames, std::vector<double> elementCons, double thickness);
+    void addLayerProperties(std::vector<std::wstring> elementNames, std::vector<double> elementCons,
+                            double thickness);
 
     /**
      * @brief Sets the concentration of an isotope in a specific layer and element.
@@ -239,7 +243,7 @@ public:
      * @param elementIndex The index of the element.
      * @param elname The name of the element (default is empty string).
      */
-    void setElementName(int layerIndex , int elementIndex, std::wstring elname);
+    void setElementName(int layerIndex, int elementIndex, std::wstring elname);
 
     /**
      * @brief Sets the Z for an element in a specific layer.
@@ -255,14 +259,14 @@ public:
      * @param elementIndex The index of the element.
      * @param conc The concentration value .
      */
-    void setElementConcentration(int layerIndex, int elementIndex , double conc );
+    void setElementConcentration(int layerIndex, int elementIndex, double conc);
 
     /**
      * @brief Sets the concentrations of all elements in a specific layer.
      * @param layerIndex The index of the layer.
      * @param concentrations Vector of concentration values.
      */
-    void setElementConcentrationArray(int layerIndex, const std::vector<double>& concentrations);
+    void setElementConcentrationArray(int layerIndex, const std::vector<double> &concentrations);
 
     /**
      * @brief Sets the concentration matrix for all layers.
@@ -348,7 +352,7 @@ public:
      * @param elementIndex The index of the element.
      * @return The element name as a wide string.
      */
-    std::wstring getElementName(int layerIndex, int elementIndex );
+    std::wstring getElementName(int layerIndex, int elementIndex);
 
     /**
      * @brief Gets the Z for an element in a specific layer.
@@ -427,7 +431,7 @@ public:
      */
     void setLiveTime(double val);
 
-     /**
+    /**
      * @brief Set pileup calculation status.
      * @param val true if pileup is calculated, otherwise false.
      */
@@ -438,7 +442,6 @@ public:
      * @param val true if LT is calculated, otherwise false.
      */
     void setLiveTimeCorrection(bool val);
-
 
     /**
      * @brief Gets the beam spread.
@@ -603,7 +606,7 @@ public:
      */
     void setCalc_ElementSpectra(bool flag);
 
-     /**
+    /**
      * @brief Sets pile up calculation model
      * @param val 0 for accurate, 1 for fast.
      */
@@ -705,7 +708,7 @@ public:
      */
     bool getCalc_ElementSpectra();
 
-     /**
+    /**
      * @brief Gets pile up calculation model
      * @return 0 for accurate, 1 for fast.
      */
@@ -721,7 +724,8 @@ public:
      * @param elementIndex The index of the element.
      * @return The stopping straggling value.
      */
-    double stoppingStragglingInLayer(int ionZ, double ionMass, double Ein, int layerIndex, int elementIndex);
+    double stoppingStragglingInLayer(int ionZ, double ionMass, double Ein, int layerIndex,
+                                     int elementIndex);
 
     /**
      * @brief Calculates the energy loss in a layer for a given ion.
@@ -732,7 +736,8 @@ public:
      * @param elementElement The index of the element.
      * @return The energy loss value.
      */
-    double stoppingEnergyLossInLayer(int ionZ, double ionMass, double Ein, int layerIndex, int elementIndex);
+    double stoppingEnergyLossInLayer(int ionZ, double ionMass, double Ein, int layerIndex,
+                                     int elementIndex);
 
     /**
      * @brief Clears the stopping power cache.

@@ -38,11 +38,16 @@ struct GenerationOptions {
     FailurePolicy failurePolicy{FailurePolicy::Stop};
 };
 /** @brief Snapshot reported after a completed simulation batch. */
-struct GenerationProgress { std::size_t attempted{}, accepted{}, invalid{}, failed{}, total{}; };
+struct GenerationProgress {
+    std::size_t attempted{}, accepted{}, invalid{}, failed{}, total{};
+};
 /** @brief Final counters and cancellation state for a generation run. */
-struct GenerationSummary { std::size_t requested{}, accepted{}, invalid{}, failed{}; bool cancelled{}; };
+struct GenerationSummary {
+    std::size_t requested{}, accepted{}, invalid{}, failed{};
+    bool cancelled{};
+};
 /** @brief Optional callback invoked after each native batch. */
-using ProgressCallback = std::function<void(const GenerationProgress&)>;
+using ProgressCallback = std::function<void(const GenerationProgress &)>;
 
 /**
  * @brief Connects externally sampled parameters to a simulator and dataset writer.
@@ -52,7 +57,7 @@ using ProgressCallback = std::function<void(const GenerationProgress&)>;
  * handling, progress reporting, and durable dataset output.
  */
 class IBEAMLAB_API DataGenerator {
-public:
+  public:
     /** @brief Creates a generator using a fixed schema and simulator backend. */
     DataGenerator(GenerationConfig config, std::shared_ptr<simulator::ISimulator> simulator);
     /**
@@ -64,12 +69,13 @@ public:
      * @return Counters describing the completed or cancelled run.
      * @throws std::invalid_argument if any row or option is invalid.
      */
-    GenerationSummary generate(const std::filesystem::path& output,
-        const std::vector<std::vector<double>>& parameterRows,
-        const GenerationOptions& options, ProgressCallback progress = {});
+    GenerationSummary generate(const std::filesystem::path &output,
+                               const std::vector<std::vector<double>> &parameterRows,
+                               const GenerationOptions &options, ProgressCallback progress = {});
     /** @brief Cooperatively requests cancellation of this run and its simulator. */
     void requestStop() noexcept;
-private:
+
+  private:
     GenerationConfig config_;
     std::shared_ptr<simulator::ISimulator> simulator_;
     std::atomic_bool stopRequested_{false};

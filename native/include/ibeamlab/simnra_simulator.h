@@ -8,8 +8,8 @@
  * reference copies, configuration caching, parallel execution, and cleanup.
  */
 
-#include <ibeamlab/simulator.h>
 #include <ibeamlab/export.h>
+#include <ibeamlab/simulator.h>
 
 #include <cstddef>
 #include <filesystem>
@@ -41,28 +41,29 @@ struct SimnraSimulatorConfig {
  * destructor release COM resources and remove private temporary files.
  */
 class IBEAMLAB_API SimnraSimulator final : public ISimulator {
-public:
+  public:
     /** @brief Starts a persistent worker pool for the configured methods. */
     explicit SimnraSimulator(SimnraSimulatorConfig config);
     ~SimnraSimulator() override;
-    SimnraSimulator(const SimnraSimulator&) = delete;
-    SimnraSimulator& operator=(const SimnraSimulator&) = delete;
+    SimnraSimulator(const SimnraSimulator &) = delete;
+    SimnraSimulator &operator=(const SimnraSimulator &) = delete;
     /** @brief Simulates a batch while preserving input and method ordering. */
-    std::vector<SimulationResult> simulateBatch(const std::vector<SimulationInput>& inputs,
-        const SimulationOptions& options = {}) override;
+    std::vector<SimulationResult> simulateBatch(const std::vector<SimulationInput> &inputs,
+                                                const SimulationOptions &options = {}) override;
     /** @brief Returns the backend configuration and reference-file provenance. */
     std::string configurationToml() const override;
     /**
      * @brief Configures SIMNRA and reads the effective sample/setup back.
      * @details Intended for integration tests and configuration diagnostics.
      */
-    SimulationInput inspectConfiguration(const SimulationInput& input,
-        const std::string& methodLabel);
+    SimulationInput inspectConfiguration(const SimulationInput &input,
+                                         const std::string &methodLabel);
     void requestStop() noexcept override;
     void resetStop() noexcept override;
     /** @brief Idempotently stops workers and releases all COM resources. */
     void close() noexcept;
-private:
+
+  private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

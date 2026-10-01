@@ -13,12 +13,12 @@
 #include <cmath>
 #include <condition_variable>
 #include <deque>
+#include <fstream>
 #include <functional>
 #include <future>
-#include <fstream>
 #include <mutex>
-#include <stdexcept>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -133,9 +133,9 @@ bool sameTarget(const sample::SampleModel &left, const sample::SampleModel &righ
     return true;
 }
 bool sameSetup(const sample::Detector &a, const sample::Detector &b) {
-    return a.label == b.label && a.beam.energy == b.beam.energy &&
-           a.beam.spread == b.beam.spread && a.calibrationLinear == b.calibrationLinear &&
-           a.particlesSr == b.particlesSr && a.calibrationOffset == b.calibrationOffset &&
+    return a.label == b.label && a.beam.energy == b.beam.energy && a.beam.spread == b.beam.spread &&
+           a.calibrationLinear == b.calibrationLinear && a.particlesSr == b.particlesSr &&
+           a.calibrationOffset == b.calibrationOffset &&
            a.calibrationQuadratic == b.calibrationQuadratic && a.resolution == b.resolution &&
            a.realTime == b.realTime && a.liveTime == b.liveTime;
 }
@@ -163,8 +163,8 @@ void updateTarget(SIMNRA &sim, const sample::SampleModel &sample) {
                 const int elementId = static_cast<int>(elementIndex + 1);
                 const int isotopeId = static_cast<int>(isotopeIndex + 1);
                 sim.setIsotopeMass(layerId, elementId, isotopeId,
-                    isotope.exactMass > 0 ? isotope.exactMass
-                                          : static_cast<double>(isotope.massNumber));
+                                   isotope.exactMass > 0 ? isotope.exactMass
+                                                         : static_cast<double>(isotope.massNumber));
                 sim.setIsotopeConcentration(layerId, elementId, isotopeId, isotope.fraction);
             }
     }
@@ -277,7 +277,7 @@ struct SimnraSimulator::Impl {
             return future;
         }
         std::future<SimulationInput> submitInspection(const SimulationInput &input,
-                                                       std::string methodLabel) {
+                                                      std::string methodLabel) {
             auto task = std::make_shared<std::packaged_task<SimulationInput()>>(
                 [this, &input, methodLabel = std::move(methodLabel)] {
                     return inspect(input, methodLabel);
@@ -306,7 +306,8 @@ struct SimnraSimulator::Impl {
                 return;
             if (referenceCopies.empty()) {
                 const auto sequence = temporaryDirectoryCounter.fetch_add(1);
-                workingDirectory = std::filesystem::temp_directory_path() /
+                workingDirectory =
+                    std::filesystem::temp_directory_path() /
                     ("ibeamlab-simnra-" + std::to_string(GetCurrentProcessId()) + "-" +
                      std::to_string(workerIndex) + "-" + std::to_string(sequence));
                 std::filesystem::create_directories(workingDirectory);
@@ -317,10 +318,11 @@ struct SimnraSimulator::Impl {
                         if (!std::filesystem::is_regular_file(source))
                             throw std::runtime_error("SIMNRA reference file does not exist: " +
                                                      source.string());
-                        const auto destination = workingDirectory /
+                        const auto destination =
+                            workingDirectory /
                             (std::to_wstring(methodIndex) + L"_" + source.filename().wstring());
-                        std::filesystem::copy_file(source, destination,
-                                                   std::filesystem::copy_options::overwrite_existing);
+                        std::filesystem::copy_file(
+                            source, destination, std::filesystem::copy_options::overwrite_existing);
                         referenceCopies.push_back(destination);
                     }
                 } catch (...) {
@@ -367,8 +369,7 @@ struct SimnraSimulator::Impl {
                 cachedTargets[methodIndex] = input.sample;
             }
 
-            const auto &requestedSetup =
-                detector(input, owner.config.methods[methodIndex].label);
+            const auto &requestedSetup = detector(input, owner.config.methods[methodIndex].label);
             if (!cachedSetups[methodIndex] ||
                 !sameSetup(*cachedSetups[methodIndex], requestedSetup)) {
                 configureSetup(sim, requestedSetup);
@@ -380,11 +381,13 @@ struct SimnraSimulator::Impl {
             input.sample.validate();
             input.setup.validate();
             ensureInstances();
-            const auto method = std::find_if(owner.config.methods.begin(), owner.config.methods.end(),
-                [&](const auto &value) { return value.label == methodLabel; });
+            const auto method =
+                std::find_if(owner.config.methods.begin(), owner.config.methods.end(),
+                             [&](const auto &value) { return value.label == methodLabel; });
             if (method == owner.config.methods.end())
                 throw std::invalid_argument("unknown SIMNRA method: " + methodLabel);
-            const auto methodIndex = static_cast<std::size_t>(method - owner.config.methods.begin());
+            const auto methodIndex =
+                static_cast<std::size_t>(method - owner.config.methods.begin());
             auto &sim = applyConfiguration(methodIndex, input);
             const auto &requestedSetup = detector(input, methodLabel);
 
@@ -522,16 +525,18 @@ std::string SimnraSimulator::configurationToml() const {
             }
         }
         crc = ~crc;
-        methods.push_back(toml::table{{"label", method.label},
+        methods.push_back(toml::table{
+            {"label", method.label},
             {"reference_file", path.generic_string()},
             {"reference_size", static_cast<std::int64_t>(std::filesystem::file_size(path))},
             {"reference_crc32", static_cast<std::int64_t>(crc)}});
     }
     toml::table root{{"type", "simnra"},
-        {"workers", static_cast<std::int64_t>(impl_->config.workers)},
-        {"multithreaded_apartment", impl_->config.multithreadedApartment},
-        {"thread_priority", impl_->config.threadPriority},
-        {"fast_calculation", impl_->config.fastCalculation}, {"methods", std::move(methods)}};
+                     {"workers", static_cast<std::int64_t>(impl_->config.workers)},
+                     {"multithreaded_apartment", impl_->config.multithreadedApartment},
+                     {"thread_priority", impl_->config.threadPriority},
+                     {"fast_calculation", impl_->config.fastCalculation},
+                     {"methods", std::move(methods)}};
     std::ostringstream output;
     output << root;
     return output.str();
@@ -557,7 +562,7 @@ SimnraSimulator::simulateBatch(const std::vector<SimulationInput> &inputs,
     return results;
 }
 SimulationInput SimnraSimulator::inspectConfiguration(const SimulationInput &input,
-                                                       const std::string &methodLabel) {
+                                                      const std::string &methodLabel) {
 #ifdef IBEAMLAB_HAS_SIMNRA
     if (impl_->closed.load())
         throw std::logic_error("SimnraSimulator is closed");

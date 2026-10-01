@@ -8,8 +8,8 @@
  * not choose samples, split training data, or perform ML-specific augmentation.
  */
 
-#include <ibeamlab/simulator.h>
 #include <ibeamlab/export.h>
+#include <ibeamlab/simulator.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -43,7 +43,9 @@ struct DatasetRecord {
 };
 
 /** @brief In-memory group of successful dataset records. */
-struct DatasetBatch { std::vector<DatasetRecord> records; };
+struct DatasetBatch {
+    std::vector<DatasetRecord> records;
+};
 /** @brief Build, simulator, and external-sampler provenance. */
 struct DatasetProvenance {
     std::string ibeamlabVersion;
@@ -80,19 +82,19 @@ struct DatasetMetadata {
 
 /** @brief Abstract streaming dataset sink. */
 class IBEAMLAB_API IDatasetWriter {
-public:
+  public:
     virtual ~IDatasetWriter() = default;
-    virtual void append(const DatasetRecord& record) = 0;
-    virtual void appendFailure(const FailureRecord& failure) = 0;
+    virtual void append(const DatasetRecord &record) = 0;
+    virtual void appendFailure(const FailureRecord &failure) = 0;
     virtual void noteDiscardedFailure() = 0;
     virtual void finalize() = 0;
 };
 
 /** @brief Abstract dataset source. */
 class IBEAMLAB_API IDatasetReader {
-public:
+  public:
     virtual ~IDatasetReader() = default;
-    virtual const DatasetMetadata& metadata() const noexcept = 0;
+    virtual const DatasetMetadata &metadata() const noexcept = 0;
     virtual std::vector<DatasetRecord> readAll() const = 0;
     virtual std::vector<FailureRecord> readFailures() const = 0;
 };
@@ -104,20 +106,21 @@ public:
  * the maximum spectrum length per method without buffering the full dataset.
  */
 class IBEAMLAB_API DatasetWriter final : public IDatasetWriter {
-public:
+  public:
     /** @brief Creates a new dataset directory and its output shards. */
     DatasetWriter(std::filesystem::path directory, DatasetMetadata metadata,
                   std::size_t shardCount = 1);
     ~DatasetWriter() override;
-    void append(const DatasetRecord& record) override;
-    void appendFailure(const FailureRecord& failure) override;
+    void append(const DatasetRecord &record) override;
+    void appendFailure(const FailureRecord &failure) override;
     void noteDiscardedFailure() override;
-    void appendInvalid(const FailureRecord& failure);
+    void appendInvalid(const FailureRecord &failure);
     /** @brief Flushes output and marks the manifest complete. */
     void finalize() override;
     /** @brief Returns the writer's current manifest metadata. */
-    const DatasetMetadata& metadata() const noexcept { return metadata_; }
-private:
+    const DatasetMetadata &metadata() const noexcept { return metadata_; }
+
+  private:
     void writeManifest() const;
     std::filesystem::path directory_;
     DatasetMetadata metadata_;
@@ -134,16 +137,17 @@ private:
  * manifest so callers receive rectangular method inputs.
  */
 class IBEAMLAB_API DatasetReader final : public IDatasetReader {
-public:
+  public:
     /** @brief Opens a dataset directory and parses its manifest. */
     explicit DatasetReader(std::filesystem::path directory);
     /** @brief Returns parsed manifest metadata. */
-    const DatasetMetadata& metadata() const noexcept override { return metadata_; }
+    const DatasetMetadata &metadata() const noexcept override { return metadata_; }
     /** @brief Reads every successful record and pads spectra as declared. */
     std::vector<DatasetRecord> readAll() const override;
     /** @brief Reads all recorded simulator and validation failures. */
     std::vector<FailureRecord> readFailures() const override;
-private:
+
+  private:
     std::filesystem::path directory_;
     DatasetMetadata metadata_;
 };

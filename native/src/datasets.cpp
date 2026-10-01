@@ -263,9 +263,13 @@ DatasetReader::DatasetReader(std::filesystem::path directory) : directory_(std::
     metadata_.simulatorConfigToml = tableToml(root["simulator_config"].as_table());
     metadata_.parameterNames = strings(root["parameter_names"].as_array());
     metadata_.spectrumLabels = strings(root["spectrum_labels"].as_array());
-    if (auto values=root["spectrum_lengths"].as_array()) for(const auto& value:*values) {
-        auto length=value.value<std::uint64_t>(); if(!length) throw std::runtime_error("invalid spectrum length in dataset manifest"); metadata_.spectrumLengths.push_back(*length);
-    }
+    if (auto values = root["spectrum_lengths"].as_array())
+        for (const auto &value : *values) {
+            auto length = value.value<std::uint64_t>();
+            if (!length)
+                throw std::runtime_error("invalid spectrum length in dataset manifest");
+            metadata_.spectrumLengths.push_back(*length);
+        }
     metadata_.shardFiles = strings(root["shards"].as_array());
     if (metadata_.spectrumLengths.size() != metadata_.spectrumLabels.size())
         throw std::runtime_error("dataset spectrum lengths and labels differ in size");
@@ -314,8 +318,8 @@ std::vector<DatasetRecord> DatasetReader::readAll() const {
                         static_cast<std::streamsize>(count * sizeof(float)));
                 if (!in)
                     throw std::runtime_error("truncated spectrum");
-                spectrum.counts.resize(
-                    static_cast<std::size_t>(metadata_.spectrumLengths[i]), 0.0F);
+                spectrum.counts.resize(static_cast<std::size_t>(metadata_.spectrumLengths[i]),
+                                       0.0F);
                 record.result.spectra.push_back(std::move(spectrum));
             }
             records.push_back(std::move(record));

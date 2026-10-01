@@ -8,8 +8,8 @@
  * sampled values. Distribution design and random sampling belong to Python.
  */
 
-#include <ibeamlab/parameter.h>
 #include <ibeamlab/export.h>
+#include <ibeamlab/parameter.h>
 #include <ibeamlab/sample.h>
 #include <ibeamlab/simulator.h>
 
@@ -80,10 +80,10 @@ struct IBEAMLAB_API GenerationConfig {
     /** @brief Returns fixed parameter values in declaration order. */
     std::vector<double> fixedParameterValues() const;
     /** @brief Builds and validates one concrete simulator input. */
-    simulator::SimulationInput materialize(const std::vector<double>& openValues) const;
+    simulator::SimulationInput materialize(const std::vector<double> &openValues) const;
 };
 
 /** @brief Serializes the reproducible generation schema as TOML. */
-IBEAMLAB_API std::string generationConfigToToml(const GenerationConfig& config);
+IBEAMLAB_API std::string generationConfigToToml(const GenerationConfig &config);
 
 } // namespace ibeamlab::generation

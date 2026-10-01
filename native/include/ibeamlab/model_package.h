@@ -45,12 +45,15 @@ struct ForwardModelMetadata {
 };
 /** @brief Versioned metadata for exactly one inverse or forward model. */
 struct ModelMetadata {
-    std::uint32_t formatVersion{2}; std::string createdUtc,className;
+    std::uint32_t formatVersion{2};
+    std::string createdUtc, className;
     ModelType modelType{ModelType::Inverse};
-    std::string inputName{"inputs"},outputName{"outputs"}; std::size_t inputDimension{},outputDimension{}; int opsetVersion{};
+    std::string inputName{"inputs"}, outputName{"outputs"};
+    std::size_t inputDimension{}, outputDimension{};
+    int opsetVersion{};
     std::string modelChecksum;
     std::uint64_t modelSize{};
-    TransformSpec inputTransform,outputTransform;
+    TransformSpec inputTransform, outputTransform;
     InverseModelMetadata inverse;
     ForwardModelMetadata forward;
 };
@@ -62,18 +65,20 @@ struct ModelMetadata {
  * either form. The writer calculates model size and CRC32 itself.
  */
 class IBEAMLAB_API ModelPackage {
-public:
+  public:
     /** @brief Opens and validates a package directory or ZIP archive. */
-    static ModelPackage open(const std::filesystem::path& path);
+    static ModelPackage open(const std::filesystem::path &path);
     /** @brief Creates a validated package from an ONNX file and metadata. */
-    static ModelPackage fromOnnx(const std::filesystem::path& onnxFile,
-                                 ModelMetadata metadata);
+    static ModelPackage fromOnnx(const std::filesystem::path &onnxFile, ModelMetadata metadata);
     /** @brief Writes a new directory package or ZIP without overwriting. */
-    void write(const std::filesystem::path& path) const;
+    void write(const std::filesystem::path &path) const;
     /** @brief Returns immutable package metadata. */
-    const ModelMetadata& metadata() const noexcept{return metadata_;}
+    const ModelMetadata &metadata() const noexcept { return metadata_; }
     /** @brief Returns the validated ONNX payload. */
-    const std::vector<std::byte>& modelBytes() const noexcept{return modelBytes_;}
-private: ModelMetadata metadata_;std::vector<std::byte> modelBytes_;
+    const std::vector<std::byte> &modelBytes() const noexcept { return modelBytes_; }
+
+  private:
+    ModelMetadata metadata_;
+    std::vector<std::byte> modelBytes_;
 };
-}
+} // namespace ibeamlab::model

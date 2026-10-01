@@ -1,6 +1,6 @@
 #include "bindings.h"
-#include <ibeamlab/sample_toml.h>
 #include <ibeamlab/sample.h>
+#include <ibeamlab/sample_toml.h>
 #include <pybind11/stl.h>
 namespace py = pybind11;
 using namespace ibeamlab::sample;

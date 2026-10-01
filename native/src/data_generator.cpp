@@ -11,13 +11,15 @@
 namespace ibeamlab::generation {
 namespace {
 std::string optionsToml(const GenerationOptions &options) {
-    const char *failurePolicy = options.failurePolicy == FailurePolicy::Stop ? "stop"
-        : options.failurePolicy == FailurePolicy::Record ? "record" : "discard";
+    const char *failurePolicy = options.failurePolicy == FailurePolicy::Stop     ? "stop"
+                                : options.failurePolicy == FailurePolicy::Record ? "record"
+                                                                                 : "discard";
     toml::table table{{"batch_size", static_cast<std::int64_t>(options.batchSize)},
-        {"shard_count", static_cast<std::int64_t>(options.shardCount)},
-        {"seed", static_cast<std::int64_t>(options.seed)},
-        {"failure_policy", failurePolicy}, {"sampler", options.sampler},
-        {"sampler_version", static_cast<std::int64_t>(options.samplerVersion)}};
+                      {"shard_count", static_cast<std::int64_t>(options.shardCount)},
+                      {"seed", static_cast<std::int64_t>(options.seed)},
+                      {"failure_policy", failurePolicy},
+                      {"sampler", options.sampler},
+                      {"sampler_version", static_cast<std::int64_t>(options.samplerVersion)}};
     std::ostringstream output;
     output << table;
     return output.str();

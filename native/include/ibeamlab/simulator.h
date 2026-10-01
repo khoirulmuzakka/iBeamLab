@@ -8,8 +8,8 @@
  * do not define sampling distributions or training behavior.
  */
 
-#include <ibeamlab/sample.h>
 #include <ibeamlab/export.h>
+#include <ibeamlab/sample.h>
 
 #include <atomic>
 #include <cstddef>
@@ -64,12 +64,11 @@ struct SimulationOptions {
  * cancellation, and structured failures.
  */
 class IBEAMLAB_API ISimulator {
-public:
+  public:
     virtual ~ISimulator() = default;
     /** @brief Simulates all inputs and returns results in input order. */
-    virtual std::vector<SimulationResult> simulateBatch(
-        const std::vector<SimulationInput>& inputs,
-        const SimulationOptions& options = {}) = 0;
+    virtual std::vector<SimulationResult> simulateBatch(const std::vector<SimulationInput> &inputs,
+                                                        const SimulationOptions &options = {}) = 0;
     /** @brief Returns reproducibility metadata for the concrete backend. */
     virtual std::string configurationToml() const { return {}; }
     /** @brief Cooperatively requests cancellation. */
@@ -77,19 +76,19 @@ public:
     /** @brief Clears a previous cancellation request before a new run. */
     virtual void resetStop() noexcept { stopRequested_.store(false); }
 
-protected:
+  protected:
     std::atomic_bool stopRequested_{false};
 };
 
 /** @brief Deterministic dependency-free simulator used by tests and examples. */
 class IBEAMLAB_API DummySimulator final : public ISimulator {
-public:
+  public:
     explicit DummySimulator(std::size_t channels = 1024) : channels_(channels) {}
-    std::vector<SimulationResult> simulateBatch(
-        const std::vector<SimulationInput>& inputs,
-        const SimulationOptions& options = {}) override;
+    std::vector<SimulationResult> simulateBatch(const std::vector<SimulationInput> &inputs,
+                                                const SimulationOptions &options = {}) override;
     std::string configurationToml() const override;
-private:
+
+  private:
     std::size_t channels_;
 };
 

@@ -1,13 +1,13 @@
-#include <ibeamlab/datasets.h>
 #include <ibeamlab/data_generator.h>
-#include <ibeamlab/inference.h>
+#include <ibeamlab/datasets.h>
 #include <ibeamlab/forward_model.h>
+#include <ibeamlab/inference.h>
 #include <ibeamlab/inverse_model.h>
+#include <ibeamlab/sample.h>
+#include <ibeamlab/sample_toml.h>
+#include <ibeamlab/simulator.h>
 #include <ibeamlab/spectrum_processing.h>
 #include <ibeamlab/transforms.h>
-#include <ibeamlab/sample_toml.h>
-#include <ibeamlab/sample.h>
-#include <ibeamlab/simulator.h>
 
 #include <cassert>
 #include <cmath>
@@ -34,25 +34,23 @@ int main() {
     const auto scaled = scaler.apply({{3, 6}});
     assert(scaled[0][0] == 1 && scaled[0][1] == 1);
     assert(scaler.inverse(scaled)[0][0] == 3);
-    preprocessing::LayerwiseConcentrationNormalizer concentrationNormalizer(
-        6, {{1, 2}, {4, 5}});
-    const auto normalizedConcentrations = concentrationNormalizer.apply(
-        {{100, 2, 6, 50000, -1, 3}});
+    preprocessing::LayerwiseConcentrationNormalizer concentrationNormalizer(6, {{1, 2}, {4, 5}});
+    const auto normalizedConcentrations =
+        concentrationNormalizer.apply({{100, 2, 6, 50000, -1, 3}});
     assert(std::abs(normalizedConcentrations[0][1] - 0.25F) < 1e-6F);
     assert(std::abs(normalizedConcentrations[0][2] - 0.75F) < 1e-6F);
     assert(normalizedConcentrations[0][4] == 0.0F);
     assert(normalizedConcentrations[0][5] == 1.0F);
-    preprocessing::ParameterBoundMinMaxScaler parameterScaler(
-        {0, 0, 0, 0, 0, 0}, {1000, 1, 1, 100000, 1, 1});
+    preprocessing::ParameterBoundMinMaxScaler parameterScaler({0, 0, 0, 0, 0, 0},
+                                                              {1000, 1, 1, 100000, 1, 1});
     const auto parameterScaled = parameterScaler.apply(normalizedConcentrations);
     assert(std::abs(parameterScaled[0][0] - 0.1F) < 1e-6F);
     assert(std::abs(parameterScaled[0][3] - 0.5F) < 1e-6F);
     assert(std::abs(parameterScaled[0][1] - 0.25F) < 1e-6F);
     preprocessing::TransformPipeline inputPipeline;
-    inputPipeline.add(std::make_shared<preprocessing::LayerwiseConcentrationNormalizer>(
-        concentrationNormalizer));
-    inputPipeline.add(std::make_shared<preprocessing::ParameterBoundMinMaxScaler>(
-        parameterScaler));
+    inputPipeline.add(
+        std::make_shared<preprocessing::LayerwiseConcentrationNormalizer>(concentrationNormalizer));
+    inputPipeline.add(std::make_shared<preprocessing::ParameterBoundMinMaxScaler>(parameterScaler));
     assert(std::abs(inputPipeline.apply({{100, 2, 6, 50000, -1, 3}})[0][5] - 1.0F) < 1e-6F);
     preprocessing::LogTransform logarithm(2);
     const auto logged = logarithm.apply({{0, 3}});
@@ -85,9 +83,13 @@ int main() {
     const auto generated = config.materialize({105});
     assert(generated.setup.detectors[0].beam.energy == 105);
 
-    sample::SampleModel mixture{{sample::Layer{1.0, 0, 0, 0,
-        {sample::Species{"C", 0.4, {}}, sample::Species{"O", 0.4, {}},
-         sample::Species{"Zr", 0.2, {}}}}}};
+    sample::SampleModel mixture{
+        {sample::Layer{1.0,
+                       0,
+                       0,
+                       0,
+                       {sample::Species{"C", 0.4, {}}, sample::Species{"O", 0.4, {}},
+                        sample::Species{"Zr", 0.2, {}}}}}};
     generation::GenerationConfig mixtureConfig{
         mixture,
         setup,
@@ -95,8 +97,8 @@ int main() {
         {
             generation::ParameterSpec{"C", generation::SpeciesConcentration{0, "C"}, 0, 0.8,
                                       std::nullopt, "fraction"},
-            generation::ParameterSpec{"Zr", generation::SpeciesConcentration{0, "Zr"}, 0, 1,
-                                      0.2, "fraction"},
+            generation::ParameterSpec{"Zr", generation::SpeciesConcentration{0, "Zr"}, 0, 1, 0.2,
+                                      "fraction"},
             generation::ParameterSpec{"O", generation::SpeciesConcentration{0, "O"}, 0, 0.8,
                                       std::nullopt, "fraction"},
         }};
@@ -114,8 +116,7 @@ int main() {
     {
         datasets::DatasetWriter writer(variableDirectory, variableMetadata);
         writer.append({0, "short", {}, {{{"RBS", {1.0F, 2.0F}}}, {}, std::nullopt}});
-        writer.append(
-            {1, "long", {}, {{{"RBS", {3.0F, 4.0F, 5.0F, 6.0F}}}, {}, std::nullopt}});
+        writer.append({1, "long", {}, {{{"RBS", {3.0F, 4.0F, 5.0F, 6.0F}}}, {}, std::nullopt}});
         writer.finalize();
     }
     datasets::DatasetReader variableReader(variableDirectory);
@@ -130,8 +131,10 @@ int main() {
 
     const auto directory = std::filesystem::temp_directory_path() / "ibeamlab-native-test-dataset";
     std::filesystem::remove_all(directory);
-    assert(throws([] { ibeamlab::model::ModelPackage::open(
-        std::filesystem::path(IBEAMLAB_TEST_DATA) / "invalid-package"); }));
+    assert(throws([] {
+        ibeamlab::model::ModelPackage::open(std::filesystem::path(IBEAMLAB_TEST_DATA) /
+                                            "invalid-package");
+    }));
     const auto writtenPackageDirectory =
         std::filesystem::temp_directory_path() / "ibeamlab-written-model-package";
     const auto writtenPackageZip =
@@ -149,24 +152,23 @@ int main() {
     inverseMetadata.inverse.sampleTemplate = model;
     inverseMetadata.inverse.setupTemplate = setup;
     inverseMetadata.inverse.inputSpectra = {{"RBS", 2}};
-    inverseMetadata.inverse.outputParameters = {{"thickness", generation::LayerThickness{0},
-                                                  0, 100, std::nullopt, "arb"}};
+    inverseMetadata.inverse.outputParameters = {
+        {"thickness", generation::LayerThickness{0}, 0, 100, std::nullopt, "arb"}};
     auto invalidTransformMetadata = inverseMetadata;
     invalidTransformMetadata.inputTransform.type = "min_max_scaler";
     invalidTransformMetadata.inputTransform.minimum = {0};
     invalidTransformMetadata.inputTransform.scale = {1};
     assert(throws([&] {
-        model::ModelPackage::fromOnnx(
-            std::filesystem::path(IBEAMLAB_TEST_DATA) / "model-package" / "model.onnx",
-            invalidTransformMetadata);
+        model::ModelPackage::fromOnnx(std::filesystem::path(IBEAMLAB_TEST_DATA) / "model-package" /
+                                          "model.onnx",
+                                      invalidTransformMetadata);
     }));
     auto inversePackage = ibeamlab::model::ModelPackage::fromOnnx(
         std::filesystem::path(IBEAMLAB_TEST_DATA) / "model-package" / "model.onnx",
         inverseMetadata);
     inversePackage.write(writtenPackageDirectory);
     inversePackage.write(writtenPackageZip);
-    const auto inverseFromDirectory =
-        ibeamlab::model::ModelPackage::open(writtenPackageDirectory);
+    const auto inverseFromDirectory = ibeamlab::model::ModelPackage::open(writtenPackageDirectory);
     const auto inverseFromZip = ibeamlab::model::ModelPackage::open(writtenPackageZip);
     assert(inverseFromZip.modelBytes() == inverseFromDirectory.modelBytes());
     inference::InverseModel inverse(inverseFromZip);
@@ -225,14 +227,13 @@ int main() {
     auto dummy = std::make_shared<simulator::DummySimulator>(128);
     generation::DataGenerator generator(config, dummy);
     const std::vector<std::vector<double>> parameterRows{{91}, {97}, {103}, {109}};
-    const auto summary =
-        generator.generate(directory, parameterRows,
-                           {.batchSize = 2,
-                            .shardCount = 2,
-                            .seed = 42,
-                            .sampler = "native-test",
-                            .samplerVersion = 1,
-                            .samplingConfigToml = "strategy = \"explicit\"\n"});
+    const auto summary = generator.generate(directory, parameterRows,
+                                            {.batchSize = 2,
+                                             .shardCount = 2,
+                                             .seed = 42,
+                                             .sampler = "native-test",
+                                             .samplerVersion = 1,
+                                             .samplingConfigToml = "strategy = \"explicit\"\n"});
     assert(summary.accepted == 4 && summary.failed == 0);
     datasets::DatasetReader reader(directory);
     assert(reader.metadata().complete && reader.readAll().size() == 4);

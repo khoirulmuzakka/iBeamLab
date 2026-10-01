@@ -1,9 +1,9 @@
 #include "com.h"
 
-#include <string>
-#include <stdexcept>
-#include <iostream> 
+#include <iostream>
 #include <sstream>
+#include <stdexcept>
+#include <string>
 
 #include <unordered_map>
 
@@ -11,21 +11,23 @@
 // DISPID cache: per-thread IDispatch* -> (name -> DISPID)
 using NameToID = std::unordered_map<std::wstring, DISPID>;
 // thread-local cache: each COM apartment/thread has its own cache
-static thread_local std::unordered_map<IDispatch*, NameToID> g_dispid_cache;
+static thread_local std::unordered_map<IDispatch *, NameToID> g_dispid_cache;
 
-std::string w2s(const std::wstring& wstr) {
-    if (wstr.empty()) return {};
-    const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wstr.data(),
-        static_cast<int>(wstr.size()), nullptr, 0, nullptr, nullptr);
-    if (size <= 0) throw std::runtime_error("failed to encode UTF-16 COM text as UTF-8");
+std::string w2s(const std::wstring &wstr) {
+    if (wstr.empty())
+        return {};
+    const int size =
+        WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wstr.data(),
+                            static_cast<int>(wstr.size()), nullptr, 0, nullptr, nullptr);
+    if (size <= 0)
+        throw std::runtime_error("failed to encode UTF-16 COM text as UTF-8");
     std::string output(static_cast<std::size_t>(size), '\0');
-    WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wstr.data(),
-        static_cast<int>(wstr.size()), output.data(), size, nullptr, nullptr);
+    WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wstr.data(), static_cast<int>(wstr.size()),
+                        output.data(), size, nullptr, nullptr);
     return output;
 }
 
-
-DISPID ResolveDispID(IDispatch* disp, const wchar_t* name) {
+DISPID ResolveDispID(IDispatch *disp, const wchar_t *name) {
     if (!disp) {
         std::string msg = "ResolveDispID: IDispatch is null";
         fprintf(stderr, "%s\n", msg.c_str());
@@ -51,7 +53,7 @@ DISPID ResolveDispID(IDispatch* disp, const wchar_t* name) {
     HRESULT hr = disp->GetIDsOfNames(IID_NULL, &namePtr, 1, LOCALE_USER_DEFAULT, &dispid);
     if (FAILED(hr)) {
         std::wstring wname(name);
-        std::string msg = "ResolveDispID: GetIDsOfNames failed for " + w2s(wname)+ ")";
+        std::string msg = "ResolveDispID: GetIDsOfNames failed for " + w2s(wname) + ")";
         fprintf(stderr, "%s\n", msg.c_str());
         throw std::runtime_error(msg);
     }
@@ -60,29 +62,30 @@ DISPID ResolveDispID(IDispatch* disp, const wchar_t* name) {
     return dispid;
 }
 
-
-void check_hresult(HRESULT hr, const std::string& msg) {
+void check_hresult(HRESULT hr, const std::string &msg) {
     if (FAILED(hr)) {
         std::ostringstream detail;
-        detail << msg << " (HRESULT 0x" << std::hex
-               << static_cast<unsigned long>(hr) << ')';
+        detail << msg << " (HRESULT 0x" << std::hex << static_cast<unsigned long>(hr) << ')';
         throw std::runtime_error(detail.str());
     }
 }
 
-VARIANT GetPropertyValue(IDispatch* disp, const wchar_t* propertyName, const std::vector<VARIANT>& args) {
-    if (!disp) throw std::runtime_error("GetPropertyValue: IDispatch is null");
+VARIANT GetPropertyValue(IDispatch *disp, const wchar_t *propertyName,
+                         const std::vector<VARIANT> &args) {
+    if (!disp)
+        throw std::runtime_error("GetPropertyValue: IDispatch is null");
 
     DISPID dispid = ResolveDispID(disp, propertyName);
 
     std::vector<VARIANT> args_reverse(args.rbegin(), args.rend());
-    DISPPARAMS dp{ const_cast<VARIANT*>(args_reverse.data()), nullptr,
-                   static_cast<UINT>(args_reverse.size()), 0 };
+    DISPPARAMS dp{const_cast<VARIANT *>(args_reverse.data()), nullptr,
+                  static_cast<UINT>(args_reverse.size()), 0};
 
     VARIANT result;
     VariantInit(&result);
 
-    HRESULT hr = disp->Invoke(dispid, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYGET, &dp, &result, nullptr, nullptr);
+    HRESULT hr = disp->Invoke(dispid, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYGET, &dp,
+                              &result, nullptr, nullptr);
     if (FAILED(hr)) {
         throw std::runtime_error("GetPropertyValue: Invoke PROPERTYGET failed for property " +
                                  w2s(propertyName));
@@ -91,33 +94,37 @@ VARIANT GetPropertyValue(IDispatch* disp, const wchar_t* propertyName, const std
     return result;
 }
 
-
-void SetPropertyValue(IDispatch* disp, const wchar_t* propertyName, const std::vector<VARIANT>& args) {
-    if (!disp) throw std::runtime_error("SetPropertyValue: IDispatch is null");
-    if (args.empty()) throw std::runtime_error("SetPropertyValue: Setter requires at least one argument");
+void SetPropertyValue(IDispatch *disp, const wchar_t *propertyName,
+                      const std::vector<VARIANT> &args) {
+    if (!disp)
+        throw std::runtime_error("SetPropertyValue: IDispatch is null");
+    if (args.empty())
+        throw std::runtime_error("SetPropertyValue: Setter requires at least one argument");
 
     DISPID dispid = ResolveDispID(disp, propertyName);
 
     DISPID namedArg = DISPID_PROPERTYPUT;
     std::vector<VARIANT> args_reverse(args.rbegin(), args.rend());
-    DISPPARAMS dp{ const_cast<VARIANT*>(args_reverse.data()), &namedArg,
-                   static_cast<UINT>(args_reverse.size()), 1 };
+    DISPPARAMS dp{const_cast<VARIANT *>(args_reverse.data()), &namedArg,
+                  static_cast<UINT>(args_reverse.size()), 1};
 
-    HRESULT hr = disp->Invoke(dispid, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYPUT, &dp, nullptr, nullptr, nullptr);
+    HRESULT hr = disp->Invoke(dispid, IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_PROPERTYPUT, &dp,
+                              nullptr, nullptr, nullptr);
     if (FAILED(hr)) {
         throw std::runtime_error("SetPropertyValue: Invoke PROPERTYPUT failed for property " +
                                  w2s(propertyName));
     }
 }
 
-
-IDispatch* CreateDispatch(const wchar_t* progID) {
+IDispatch *CreateDispatch(const wchar_t *progID) {
     CLSID clsid;
     HRESULT hr = CLSIDFromProgID(progID, &clsid);
-    if (FAILED(hr)) throw std::runtime_error("CLSIDFromProgID failed");
+    if (FAILED(hr))
+        throw std::runtime_error("CLSIDFromProgID failed");
 
-    IDispatch* disp = nullptr;
-    hr = CoCreateInstance(clsid, NULL, CLSCTX_LOCAL_SERVER, IID_IDispatch, (void**)&disp);
-    if (FAILED(hr) || !disp) throw std::runtime_error("CoCreateInstance failed");
+    IDispatch *disp = nullptr;
+    hr = CoCreateInstance(clsid, NULL, CLSCTX_LOCAL_SERVER, IID_IDispatch, (void **)&disp);
+    if (FAILED(hr) || !disp)
+        throw std::runtime_error("CoCreateInstance failed");
     return disp;
 }

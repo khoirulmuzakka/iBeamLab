@@ -18,7 +18,7 @@ namespace ibeamlab::sample {
 /** @brief Isotopic composition entry for a chemical species. */
 struct Isotope {
     std::int32_t massNumber{0}; // 0 selects natural abundance.
-    double exactMass{0.0};     // Atomic mass units; 0 means unspecified.
+    double exactMass{0.0};      // Atomic mass units; 0 means unspecified.
     double fraction{1.0};
 };
 
