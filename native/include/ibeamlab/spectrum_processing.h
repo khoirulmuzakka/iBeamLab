@@ -28,7 +28,7 @@ IBEAMLAB_API std::vector<double> rebin(const std::vector<double> &oldEdges,
                                        const std::vector<double> &newEdges,
                                        const std::vector<double> &spectrum);
 
-/** @brief Applies the detector pileup model to a channel spectrum. */
+/** @brief Applies the detector pileup model; realTime, liveTime and fudgeFactor are seconds. */
 IBEAMLAB_API std::vector<double> pileup(const std::vector<double> &spectrum, double realTime,
                                         double liveTime, double fudgeFactor,
                                         bool clipNegative = true);

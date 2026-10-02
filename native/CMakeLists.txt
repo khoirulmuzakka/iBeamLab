@@ -115,15 +115,17 @@ if(IBEAMLAB_BUILD_PYTHON)
         python/bind_spectrum_processing.cpp python/bind_transforms.cpp
         python/bind_model_inference.cpp)
     target_link_libraries(_ibeamlab_cpp PRIVATE ibeamlab)
+    set(IBEAMLAB_PYTHON_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/ibeamlab" CACHE PATH
+        "Python extension output directory (override to build beside a running kernel)")
     set_target_properties(_ibeamlab_cpp PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/ibeamlab/$<0:>"
-        RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/ibeamlab/$<0:>")
+        LIBRARY_OUTPUT_DIRECTORY "${IBEAMLAB_PYTHON_OUTPUT_DIRECTORY}/$<0:>"
+        RUNTIME_OUTPUT_DIRECTORY "${IBEAMLAB_PYTHON_OUTPUT_DIRECTORY}/$<0:>")
     if(CMAKE_CONFIGURATION_TYPES)
         foreach(config ${CMAKE_CONFIGURATION_TYPES})
             string(TOUPPER "${config}" config_upper)
             set_target_properties(_ibeamlab_cpp PROPERTIES
-                LIBRARY_OUTPUT_DIRECTORY_${config_upper} "${PROJECT_SOURCE_DIR}/ibeamlab"
-                RUNTIME_OUTPUT_DIRECTORY_${config_upper} "${PROJECT_SOURCE_DIR}/ibeamlab")
+                LIBRARY_OUTPUT_DIRECTORY_${config_upper} "${IBEAMLAB_PYTHON_OUTPUT_DIRECTORY}"
+                RUNTIME_OUTPUT_DIRECTORY_${config_upper} "${IBEAMLAB_PYTHON_OUTPUT_DIRECTORY}")
         endforeach()
     endif()
     add_custom_command(TARGET _ibeamlab_cpp POST_BUILD

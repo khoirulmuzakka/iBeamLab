@@ -38,6 +38,9 @@ struct InverseModelMetadata {
     std::vector<generation::ParameterSpec> outputParameters;
 };
 struct ForwardModelMetadata {
+    bool bareSpectrumCorrections{false}; // Legacy packages retain raw inference.
+    bool applyPileupOnInference{true};
+    double pileupFudgeFactorSeconds{0.4e-6};
     sample::SampleModel sampleTemplate;
     sample::ExperimentalSetup setupTemplate;
     std::vector<generation::ParameterSpec> inputParameters;

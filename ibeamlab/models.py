@@ -56,11 +56,13 @@ class InverseModel(Model):
 
 class ForwardModel(Model):
     """An experiment-to-spectra model."""
-    def __init__(self, path: str | Path, *, threads: int = 1):
+    def __init__(self, path: str | Path, *, threads: int = 1, correction_threads: int = 1, apply_pileup_on_inference: bool | None = None):
         super().__init__(path, threads=threads)
         from ._native import native
         options = native.inference.InferenceOptions()
         options.intra_op_threads = threads
+        options.correction_threads = correction_threads
+        options.apply_pileup_on_inference = apply_pileup_on_inference
         self._native = native.inference.ForwardModel(self.path, options)
     def predict(self, experiments: Experiment | Sequence[Experiment]) -> SimulationResult | list[SimulationResult]:
         single = isinstance(experiments, Experiment)
@@ -72,13 +74,13 @@ class ForwardModel(Model):
             raise InferenceError(str(error)) from error
         return results[0] if single else results
 
-def load_model(path: str | Path, *, threads: int = 1) -> Model:
+def load_model(path: str | Path, *, threads: int = 1, correction_threads: int = 1, apply_pileup_on_inference: bool | None = None) -> Model:
     """Load an inverse or forward model by inspecting its package metadata."""
     from ._native import native
     try:
         metadata = native.model.ModelPackage.open(Path(path)).metadata
         cls = InverseModel if metadata.model_type == native.model.ModelType.INVERSE else ForwardModel
-        return cls(path, threads=threads)
+        return cls(path, threads=threads, **({"apply_pileup_on_inference": apply_pileup_on_inference, "correction_threads": correction_threads} if cls is ForwardModel else {}))
     except (InferenceError, ModelPackageError):
         raise
     except Exception as error:

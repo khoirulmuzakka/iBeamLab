@@ -50,3 +50,22 @@ def test_lrn_input_transform_normalizes_each_layer_and_scales_thickness():
     transformed = transform.apply(values)
 
     assert np.allclose(transformed, [[0.5, 0.25, 0.75]])
+
+
+def test_forward_correction_bindings_and_seconds():
+    from ibeamlab._native import native
+    metadata = native.model.ForwardModelMetadata()
+    assert metadata.Apply_pileup_on_inference is True
+    assert metadata.pileup_fudge_factor_seconds == pytest.approx(0.4e-6)
+    options = native.inference.InferenceOptions()
+    assert options.correction_threads == 1
+    options.correction_threads = 16
+    assert options.correction_threads == 16
+    assert options.apply_pileup_on_inference is None
+    options.apply_pileup_on_inference = False
+    assert options.apply_pileup_on_inference is False
+    tau, real, live = 0.4e-6, 10.0, 8.0
+    factor = tau / real * np.exp(-6.0 / real * tau)
+    expected = live / real * (np.array([2., 4., 0.]) -
+        2 * factor * 6 * np.array([2., 4., 0.]) + factor * np.array([4., 16., 16.]))
+    assert np.allclose(native.spectrum.pileup([2., 4.], real, live, tau), expected, rtol=1e-12)

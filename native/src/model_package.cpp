@@ -375,6 +375,24 @@ void validate(const ModelMetadata &m) {
             m.inverse.outputParameters.size() != m.outputDimension)
             throw std::invalid_argument("inverse dimensions do not match metadata");
     } else {
+        if (!std::isfinite(m.forward.pileupFudgeFactorSeconds) ||
+            m.forward.pileupFudgeFactorSeconds < 0)
+            throw std::invalid_argument("invalid pileup fudge factor in seconds");
+        if (m.forward.bareSpectrumCorrections) {
+            for (const auto &s : m.forward.outputSpectra) {
+                const auto &ds = m.forward.setupTemplate.detectors;
+                const auto d = std::find_if(ds.begin(), ds.end(),
+                                            [&](const auto &v) { return v.label == s.label; });
+                if (d == ds.end() || d->particlesSr <= 0 || d->calibrationLinear <= 0)
+                    throw std::invalid_argument("bare spectrum requires reference detector "
+                                                "calibration and positive ParticlesSr");
+            }
+            for (const auto &p : m.forward.inputParameters)
+                if (!std::holds_alternative<parameter::LayerThickness>(p.target) &&
+                    !std::holds_alternative<parameter::SpeciesConcentration>(p.target))
+                    throw std::invalid_argument(
+                        "bare spectrum corrections require fixed training setup");
+        }
         validateParams(m.forward.sampleTemplate, m.forward.setupTemplate,
                        m.forward.inputParameters);
         if (m.forward.inputParameters.size() != m.inputDimension ||
@@ -406,10 +424,14 @@ std::string manifest(const ModelMetadata &m) {
                              {"input_spectra", spectra(m.inverse.inputSpectra)},
                              {"output_parameters", parameters(m.inverse.outputParameters)}});
     else
-        r.insert("forward", toml::table{{"sample_template", sampleTable(m.forward.sampleTemplate)},
-                                        {"setup_template", setupTable(m.forward.setupTemplate)},
-                                        {"input_parameters", parameters(m.forward.inputParameters)},
-                                        {"output_spectra", spectra(m.forward.outputSpectra)}});
+        r.insert("forward",
+                 toml::table{{"bare_spectrum_corrections", m.forward.bareSpectrumCorrections},
+                             {"Apply_pileup_on_inference", m.forward.applyPileupOnInference},
+                             {"pileup_fudge_factor_seconds", m.forward.pileupFudgeFactorSeconds},
+                             {"sample_template", sampleTable(m.forward.sampleTemplate)},
+                             {"setup_template", setupTable(m.forward.setupTemplate)},
+                             {"input_parameters", parameters(m.forward.inputParameters)},
+                             {"output_spectra", spectra(m.forward.outputSpectra)}});
     std::ostringstream s;
     s << r;
     return s.str();
@@ -474,6 +496,9 @@ ModelPackage ModelPackage::open(const std::filesystem::path &p) {
         auto *t = r["forward"].as_table();
         if (!t)
             throw std::runtime_error("missing forward table");
+        m.forward.bareSpectrumCorrections = (*t)["bare_spectrum_corrections"].value_or(false);
+        m.forward.applyPileupOnInference = (*t)["Apply_pileup_on_inference"].value_or(true);
+        m.forward.pileupFudgeFactorSeconds = (*t)["pileup_fudge_factor_seconds"].value_or(0.4e-6);
         templates(*t, m.forward);
         m.forward.inputParameters = parameters((*t)["input_parameters"].as_array());
         m.forward.outputSpectra = spectra((*t)["output_spectra"].as_array());

@@ -9,12 +9,16 @@
 #include <ibeamlab/spectrum_processing.h>
 #include <ibeamlab/transforms.h>
 
+#ifdef NDEBUG
+#undef NDEBUG // Keep numerical and package checks active in Release builds.
+#endif
 #include <cassert>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 
 template <class F> bool throws(F &&function) {
@@ -30,6 +34,15 @@ int main() {
     using namespace ibeamlab;
     const auto rebinned = spectrum::rebin({0, 1, 2}, {0, 2}, {2, 4});
     assert(rebinned.size() == 1 && std::abs(rebinned[0] - 6.0) < 1e-12);
+    // AutoNRA formula uses seconds after converting its 0.4 microsecond setting.
+    const double tau = 0.4e-6, real = 10, live = 8, n = 6;
+    const double a = tau / real * std::exp(-n / real * tau);
+    const auto pu = spectrum::pileup({2, 4}, real, live, tau);
+    assert(pu.size() == 3);
+    assert(std::abs(pu[0] - live / real * (2 - 2 * a * n * 2 + a * 4)) < 1e-12);
+    assert(std::abs(pu[1] - live / real * (4 - 2 * a * n * 4 + a * 16)) < 1e-12);
+    assert(std::abs(pu[2] - live / real * a * 16) < 1e-12);
+    assert(throws([] { spectrum::pileup({1}, 0, 1, 0.4e-6); }));
     preprocessing::StandardScaler scaler({1, 2}, {2, 4});
     const auto scaled = scaler.apply({{3, 6}});
     assert(scaled[0][0] == 1 && scaled[0][1] == 1);
@@ -222,7 +235,84 @@ int main() {
     forwardInput.setup.detectors[0].beam.energy = 2.0;
     const auto forwardResults = forward.predict({forwardInput});
     assert(forwardResults[0].spectra[0].label == "RBS");
-    assert(std::abs(forwardResults[0].spectra[0].counts[0] - 3.0F) < 1e-5F);
+    assert(std::abs(forwardResults[0].spectra[0].counts[0] - (11.0F / 3.0F)) < 1e-5F);
+    auto correctedMetadata = forwardMetadata;
+    correctedMetadata.inputTransform.type = "identity";
+    correctedMetadata.inputTransform.transforms.clear();
+    correctedMetadata.forward.inputParameters[1] = {
+        "Si", generation::SpeciesConcentration{0, "Si"}, 0, 1, std::nullopt, "fraction"};
+    correctedMetadata.forward.bareSpectrumCorrections = true;
+    auto correctedPackage = model::ModelPackage::fromOnnx(
+        std::filesystem::path(IBEAMLAB_TEST_DATA) / "model-package" / "model.onnx",
+        correctedMetadata);
+    std::filesystem::remove_all(forwardPackageDirectory);
+    correctedPackage.write(forwardPackageDirectory);
+    auto correctedRoundTrip = model::ModelPackage::open(forwardPackageDirectory);
+    assert(correctedRoundTrip.metadata().forward.bareSpectrumCorrections);
+    assert(correctedRoundTrip.metadata().forward.applyPileupOnInference);
+    assert(correctedRoundTrip.metadata().forward.pileupFudgeFactorSeconds == 0.4e-6);
+    inference::InferenceOptions noPileup;
+    noPileup.applyPileupOnInference = false;
+    inference::ForwardModel corrected(correctedRoundTrip, noPileup);
+    auto requested = simulator::SimulationInput{model, setup};
+    const auto bare = corrected.predict({requested})[0].spectra[0].counts;
+    assert(bare.size() == 1);
+    requested.setup.detectors[0].particlesSr *= 2;
+    const auto doubled = corrected.predict({requested})[0].spectra[0].counts;
+    assert(std::abs(doubled[0] - 2 * bare[0]) < 1e-5);
+    requested.setup.detectors[0].calibrationLinear = 0.5;
+    const auto split = corrected.predict({requested})[0].spectra[0].counts;
+    assert(split.size() == 2 && std::abs(split[0] - bare[0]) < 1e-5 &&
+           std::abs(split[1] - bare[0]) < 1e-5);
+    requested.setup.detectors[0].calibrationOffset = 0.25;
+    requested.setup.detectors[0].calibrationQuadratic = 0.25;
+    const auto quadratic = corrected.predict({requested})[0].spectra[0].counts;
+    assert(quadratic.size() == 1 && std::abs(quadratic[0] - 1.5 * bare[0]) < 1e-5);
+    requested.setup.detectors[0].realTime = 10;
+    requested.setup.detectors[0].liveTime = 8;
+    inference::ForwardModel withPileup(correctedRoundTrip);
+    const auto expectedPileup =
+        spectrum::pileup(std::vector<double>(quadratic.begin(), quadratic.end()), 10, 8, 0.4e-6);
+    const auto piled = withPileup.predict({requested})[0].spectra[0].counts;
+    assert(piled.size() == expectedPileup.size());
+    assert(std::abs(piled[0] - expectedPileup[0]) < 1e-5);
+    inference::InferenceOptions parallelOptions;
+    parallelOptions.correctionThreads = 4;
+    inference::ForwardModel parallel(correctedRoundTrip, parallelOptions);
+    std::vector<simulator::SimulationInput> candidates(32, requested);
+    for (std::size_t c = 0; c < candidates.size(); ++c) {
+        candidates[c].setup.detectors[0].particlesSr *= (c + 1);
+        candidates[c].setup.detectors[0].calibrationLinear += c * 0.01;
+    }
+    const auto serialBatch = withPileup.predict(candidates);
+    const auto parallelBatch = parallel.predict(candidates);
+    for (std::size_t c = 0; c < candidates.size(); ++c)
+        assert(serialBatch[c].spectra[0].counts == parallelBatch[c].spectra[0].counts);
+    candidates[12].setup.detectors[0].realTime = 0;
+    assert(throws([&] { parallel.predict(candidates); }));
+    assert(parallel.predict({}).empty());
+    parallelOptions.correctionThreads = 0;
+    assert(throws([&] { inference::ForwardModel invalid(correctedRoundTrip, parallelOptions); }));
+    requested.setup.detectors[0].realTime = 0;
+    assert(throws([&] { withPileup.predict({requested}); }));
+    requested.sample.layers[0].species = {{"C", 1, {}}};
+    std::ostringstream warnings;
+    auto *oldWarningBuffer = std::cerr.rdbuf(warnings.rdbuf());
+    requested.setup.detectors[0].beam.energy = 200;
+    assert(!corrected.predict({requested}).empty()); // Missing Si becomes zero.
+    const auto firstWarnings = warnings.str();
+    assert(firstWarnings.find("unsupported element C") != std::string::npos);
+    assert(firstWarnings.find("beam or detector resolution") != std::string::npos);
+    corrected.predict({requested});
+    assert(warnings.str() == firstWarnings);
+    std::cerr.rdbuf(oldWarningBuffer);
+    auto invalidBare = correctedMetadata;
+    invalidBare.forward.inputParameters[1] = forwardMetadata.forward.inputParameters[1];
+    assert(throws([&] {
+        model::ModelPackage::fromOnnx(std::filesystem::path(IBEAMLAB_TEST_DATA) / "model-package" /
+                                          "model.onnx",
+                                      invalidBare);
+    }));
     std::filesystem::remove_all(forwardPackageDirectory);
     auto dummy = std::make_shared<simulator::DummySimulator>(128);
     generation::DataGenerator generator(config, dummy);

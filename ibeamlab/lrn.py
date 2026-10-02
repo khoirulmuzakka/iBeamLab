@@ -289,7 +289,10 @@ class LRNModel(nn.Module):
                input_minimum: Sequence[float] | None = None,
                input_scale: Sequence[float] | None = None,
                input_transform=None,
-               output_inverse_factor: float = 1.0) -> Path:
+               output_inverse_factor: float = 1.0,
+               bare_spectrum_corrections: bool = False,
+               Apply_pileup_on_inference: bool = True,
+               pileup_fudge_factor_seconds: float = 0.4e-6) -> Path:
         """Export ONNX and wrap it in the native iBeamLab forward package format.
 
         ``input_minimum`` and ``input_scale`` describe the optional min-max
@@ -298,7 +301,13 @@ class LRNModel(nn.Module):
         pipeline and is mutually exclusive with those legacy arrays.
         ``output_inverse_factor`` is applied by the package runtime as
         ``network_output / factor``; use it when training against scaled targets.
+        ``bare_spectrum_corrections=True`` declares pileup-free reference-channel
+        spectra at a fixed study setup. Native inference rebins and scales to
+        the requested setup before optionally applying pileup. The fudge factor
+        is in seconds (0.4e-6 matches AutoNRA's default).
         """
+        # Bare corrections require a fixed setup and spectra generated without pileup.
+        # The reference channel grid and exposure come from the study setup template.
         from ._native import native
         import math
 
@@ -369,6 +378,9 @@ class LRNModel(nn.Module):
             transform.factor = float(output_inverse_factor)
             metadata.output_transform = transform
         forward_metadata = native.model.ForwardModelMetadata()
+        forward_metadata.bare_spectrum_corrections = bare_spectrum_corrections
+        forward_metadata.Apply_pileup_on_inference = Apply_pileup_on_inference
+        forward_metadata.pileup_fudge_factor_seconds = pileup_fudge_factor_seconds
         forward_metadata.sample_template = config.sample
         forward_metadata.setup_template = config.setup
         forward_metadata.input_parameters = config.parameters

@@ -39,7 +39,11 @@ void bindModel(py::module_ &root) {
         .def_readwrite("sample_template", &ForwardModelMetadata::sampleTemplate)
         .def_readwrite("setup_template", &ForwardModelMetadata::setupTemplate)
         .def_readwrite("input_parameters", &ForwardModelMetadata::inputParameters)
-        .def_readwrite("output_spectra", &ForwardModelMetadata::outputSpectra);
+        .def_readwrite("output_spectra", &ForwardModelMetadata::outputSpectra)
+        .def_readwrite("bare_spectrum_corrections", &ForwardModelMetadata::bareSpectrumCorrections)
+        .def_readwrite("Apply_pileup_on_inference", &ForwardModelMetadata::applyPileupOnInference)
+        .def_readwrite("pileup_fudge_factor_seconds",
+                       &ForwardModelMetadata::pileupFudgeFactorSeconds);
     py::class_<ModelMetadata>(m, "ModelMetadata")
         .def(py::init<>())
         .def_readwrite("format_version", &ModelMetadata::formatVersion)
@@ -69,6 +73,8 @@ void bindInference(py::module_ &root) {
     auto m = root.def_submodule("inference");
     py::class_<InferenceOptions>(m, "InferenceOptions")
         .def(py::init<>())
+        .def_readwrite("apply_pileup_on_inference", &InferenceOptions::applyPileupOnInference)
+        .def_readwrite("correction_threads", &InferenceOptions::correctionThreads)
         .def_readwrite("intra_op_threads", &InferenceOptions::intraOpThreads)
         .def_readwrite("inter_op_threads", &InferenceOptions::interOpThreads)
         .def_readwrite("execution_provider", &InferenceOptions::executionProvider)
