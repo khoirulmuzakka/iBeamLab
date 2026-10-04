@@ -101,13 +101,12 @@ class _LayerwiseGRUBlock(nn.Module):
         self.fused_tower = nn.Sequential(*tower) if tower else nn.Identity()
         self.gru = nn.GRUCell(previous, hidden_size)
         contribution_hidden = max(contribution_size, embedding_dim)
-        self.thickness_gate = nn.Linear(previous + hidden_size, hidden_size)
         self.contribution_head = nn.Sequential(
             nn.Linear(previous + hidden_size, contribution_hidden), nn.LeakyReLU(),
             nn.Linear(contribution_hidden, contribution_size),
         )
 
-    def forward(self, layer, setup, hidden, thickness):
+    def forward(self, layer, setup, hidden):
         if self.dummy_layer:
             layer = layer.new_ones((layer.shape[0], 1))
         if self.dummy_setup:
@@ -118,11 +117,7 @@ class _LayerwiseGRUBlock(nn.Module):
         conditioned = layer_features * (torch.tanh(gamma) + 1.0) + beta
         fused = self.fused_tower(torch.cat((conditioned, setup_features,
                                             self.hidden_projection(hidden)), dim=1))
-        candidate_hidden = self.gru(fused, hidden)
-        # thickness is t / t_ref, using the same reference as areal densities.
-        rate = F.softplus(self.thickness_gate(torch.cat((fused, hidden), dim=1)))
-        gate = 1.0 - torch.exp(-thickness * rate)
-        next_hidden = hidden + gate * (candidate_hidden - hidden)
+        next_hidden = self.gru(fused, hidden)
         contribution = self.contribution_head(torch.cat((fused, next_hidden), dim=1))
         return contribution, next_hidden
 
@@ -161,7 +156,8 @@ class LRNModel(nn.Module):
 
     Parameters are taken in the exact order of ``study.parameters``. A shared
     GRU block receives elemental areal densities in place of thickness and
-    concentrations. Its state update vanishes continuously with thickness.
+    concentrations. The GRU learns state retention and updates; zero-thickness
+    layers preserve the state and contribute nothing.
     Inputs must use normalized concentrations and thickness scaled as t/t_ref
     (for example, build_lrn_input_transform with zero lower thickness bound).
     The public input width retains the physical parameter schema for export.
@@ -298,7 +294,7 @@ class LRNModel(nn.Module):
         for layer in layers:
             features, thickness = self.layer_areal_features(layer)
             mask = (thickness > 0).to(inputs.dtype)
-            contribution, next_hidden = self.layer_block(features, setup, hidden, thickness)
+            contribution, next_hidden = self.layer_block(features, setup, hidden)
             contributions = contributions + contribution * mask
             hidden = hidden * (1.0 - mask) + next_hidden * mask
         return torch.cat((contributions, hidden, setup_context), dim=1), setup

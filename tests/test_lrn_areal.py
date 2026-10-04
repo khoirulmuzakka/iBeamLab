@@ -41,20 +41,21 @@ def test_areal_features_and_zero_thickness_skip():
     torch.testing.assert_close(model(single), model(with_empty_tail))
 
 
-def test_thickness_gate_identity_and_thin_limit():
+def test_standard_gru_update_and_gradients():
     _, model = make_model()
     block = model.layer_block
+    captured = {}
+    def capture_gru(module, inputs, output):
+        captured["candidate"] = output
+    hook = block.gru.register_forward_hook(capture_gru)
     hidden = torch.randn(1, 8)
-    features = torch.tensor([[0.25, 0.75]])
-    setup = torch.empty(1, 0)
-    _, at_zero = block(features, setup, hidden, torch.zeros(1, 1))
-    _, thin = block(features, setup, hidden, torch.full((1, 1), 1e-5))
-    _, thick = block(features, setup, hidden, torch.ones(1, 1))
-    torch.testing.assert_close(at_zero, hidden, rtol=0, atol=0)
-    assert torch.linalg.vector_norm(thin - hidden) < torch.linalg.vector_norm(thick - hidden)
+    _, updated = block(torch.tensor([[0.25, 0.75]]), torch.empty(1, 0), hidden)
+    hook.remove()
+    torch.testing.assert_close(updated, captured["candidate"], rtol=0, atol=0)
+    assert not hasattr(block, "thickness_gate")
     model(torch.tensor([[0.5, 0.25, 0.75]])).sum().backward()
-    assert block.thickness_gate.weight.grad is not None
-    assert torch.isfinite(block.thickness_gate.weight.grad).all()
+    assert block.gru.weight_ih.grad is not None
+    assert torch.isfinite(block.gru.weight_ih.grad).all()
 
 
 def test_export_matches_native_prediction(tmp_path):

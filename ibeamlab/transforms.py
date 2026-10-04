@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
@@ -24,7 +25,7 @@ from ._ibeamlab_cpp.transforms import (
 def build_lrn_input_transform(
     study: "GenerationStudy",
     *,
-    thickness_bounds: tuple[float, float] = (0.0, 100_000.0),
+    thickness_bounds: tuple[float, float] | None = None,
     low: float = 0.0,
     high: float = 1.0,
 ) -> TransformPipeline:
@@ -32,18 +33,24 @@ def build_lrn_input_transform(
 
     Concentrations are clipped at zero and normalized to sum to one within
     each layer.  They then pass through the scaler unchanged.  Layer thickness
-    uses ``thickness_bounds``; all other parameters use their declared study
-    bounds.
+    uses a shared zero-based scale derived from the largest declared layer
+    thickness upper bound. An explicit ``thickness_bounds=(0, reference)``
+    overrides that scale. Zero remains zero for areal densities and padding;
+    all other parameters use their declared study bounds.
     """
     if high <= low:
         raise ValueError("high must be greater than low")
-    thickness_low, thickness_high = map(float, thickness_bounds)
-    if thickness_high <= thickness_low:
-        raise ValueError("thickness_bounds must satisfy high > low")
-
     parameters = tuple(study.parameters)
     if not parameters:
         raise ValueError("LRN input transform requires at least one parameter")
+    if thickness_bounds is None:
+        upper_bounds = [float(p.upper) for p in parameters
+                        if p.kind in {"thickness", "layer_thickness"}]
+        thickness_low, thickness_high = 0.0, max(upper_bounds, default=1.0)
+    else:
+        thickness_low, thickness_high = map(float, thickness_bounds)
+    if thickness_low != 0.0 or not math.isfinite(thickness_high) or thickness_high <= 0:
+        raise ValueError("thickness_bounds must be (0, a finite positive reference thickness)")
     concentration_groups: dict[int, list[int]] = defaultdict(list)
     minimum: list[float] = []
     scale: list[float] = []
