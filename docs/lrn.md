@@ -5,8 +5,8 @@ iBeamLab `GenerationStudy`. A shared GRU block processes each layer, sums latent
 contributions, and decodes the result into the configured output spectra.
 
 Install the training dependencies with `pip install "ibeamlab[training]"`.
-To run the five-layer RBS example against the small generated data, install the
-plot extra as well and run `python examples/train_lrn_multilayer.py`.
+To run the multilayer RBS example, install the plot extra as well and open
+`examples/train_lrn_multilayer.ipynb`.
 
 ```python
 import torch
@@ -36,11 +36,11 @@ features. By default, thickness is mapped from `[0, 100000]` to `[0, 1]`.
 The complete pipeline is serialized into the package and applied by native
 inference, so callers continue to supply physical parameter values.
 
-The example script loads `layers_01` through `layers_05` with
-`ibeamlab.open_dataset`, pads shorter layer systems to the five-layer parameter
-layout, trains with an 80/10/10 split, saves model weights and plots, then
-exports an iBeamLab package. Override the dataset or training settings with
-`--dataset-root`, `--max-layers`, `--epochs`, and `--batch-size`.
+The notebook discovers `layers_XX` datasets recursively with
+`ibeamlab.open_dataset`, pads shorter layer systems to the configured parameter
+layout, trains with an 80/10/10 split, saves model weights, then exports an
+iBeamLab package. Edit dataset settings in the dataset cell and batch size and
+learning-rate schedule in the training cell.
 
 `LRNModel` takes input columns in `study.parameters` order. The output column
 order follows the experiment detector order, using each detector's length from

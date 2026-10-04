@@ -101,12 +101,13 @@ class _LayerwiseGRUBlock(nn.Module):
         self.fused_tower = nn.Sequential(*tower) if tower else nn.Identity()
         self.gru = nn.GRUCell(previous, hidden_size)
         contribution_hidden = max(contribution_size, embedding_dim)
+        self.thickness_gate = nn.Linear(previous + hidden_size, hidden_size)
         self.contribution_head = nn.Sequential(
             nn.Linear(previous + hidden_size, contribution_hidden), nn.LeakyReLU(),
             nn.Linear(contribution_hidden, contribution_size),
         )
 
-    def forward(self, layer, setup, hidden):
+    def forward(self, layer, setup, hidden, thickness):
         if self.dummy_layer:
             layer = layer.new_ones((layer.shape[0], 1))
         if self.dummy_setup:
@@ -117,7 +118,11 @@ class _LayerwiseGRUBlock(nn.Module):
         conditioned = layer_features * (torch.tanh(gamma) + 1.0) + beta
         fused = self.fused_tower(torch.cat((conditioned, setup_features,
                                             self.hidden_projection(hidden)), dim=1))
-        next_hidden = self.gru(fused, hidden)
+        candidate_hidden = self.gru(fused, hidden)
+        # thickness is t / t_ref, using the same reference as areal densities.
+        rate = F.softplus(self.thickness_gate(torch.cat((fused, hidden), dim=1)))
+        gate = 1.0 - torch.exp(-thickness * rate)
+        next_hidden = hidden + gate * (candidate_hidden - hidden)
         contribution = self.contribution_head(torch.cat((fused, next_hidden), dim=1))
         return contribution, next_hidden
 
@@ -155,7 +160,12 @@ class LRNModel(nn.Module):
     """Layerwise recurrent forward network for an iBeamLab generation study.
 
     Parameters are taken in the exact order of ``study.parameters``. A shared
-    GRU block processes each layer; its latent contributions are summed and
+    GRU block receives elemental areal densities in place of thickness and
+    concentrations. Its state update vanishes continuously with thickness.
+    Inputs must use normalized concentrations and thickness scaled as t/t_ref
+    (for example, build_lrn_input_transform with zero lower thickness bound).
+    The public input width retains the physical parameter schema for export.
+    Latent contributions are summed and
     decoded once into the concatenated output spectra. Train this module with
     ordinary PyTorch optimizers, then call :meth:`export` to create a package
     consumable by iBeamLab's native C++ ``ForwardModel``.
@@ -182,6 +192,18 @@ class LRNModel(nn.Module):
         self.setup_param_size = self.layout.setup_size
         self.layer_param_size = self.layout.layer_size
         self.layer_count = self.layout.layer_count
+        self.thickness_index = None
+        self.concentration_indices = ()
+        if self.layer_count:
+            layer_parameters = [study.parameters[i] for i in self.layout.layer_indices[0]]
+            thickness_indices = [i for i, p in enumerate(layer_parameters)
+                                 if p.kind in {"thickness", "layer_thickness"}]
+            self.concentration_indices = tuple(i for i, p in enumerate(layer_parameters)
+                                               if p.kind == "concentration")
+            if len(thickness_indices) != 1 or not self.concentration_indices:
+                raise ValueError("LRN layers require one thickness and elemental concentrations.")
+            self.thickness_index = thickness_indices[0]
+        self.layer_feature_size = self.layer_param_size - int(self.thickness_index is not None)
         self.input_dimension = len(study.parameters)
         if self.input_dimension <= 0:
             raise ValueError("LRN requires at least one study parameter.")
@@ -200,7 +222,7 @@ class LRNModel(nn.Module):
             nn.Linear(setup_embedding_dim, setup_embedding_dim), nn.LeakyReLU(),
         )
         self.layer_block = _LayerwiseGRUBlock(
-            self.layer_param_size, self.setup_param_size, hidden_size, contribution_size,
+            self.layer_feature_size, self.setup_param_size, hidden_size, contribution_size,
             layer_embedding_dim, block_hidden_sizes,
         )
         decoder_layers: list[nn.Module] = []
@@ -254,6 +276,19 @@ class LRNModel(nn.Module):
             setup = setup.new_ones((setup.shape[0], 1))
         return self.setup_context_encoder(setup)
 
+    def layer_areal_features(self, layer: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Convert zero-based scaled thickness and fractions to scaled areal amounts.
+
+        The public input schema stays unchanged for datasets/native packages.
+        With t scaled by t_ref, each elemental feature is (t / t_ref) * c_e.
+        Other layer properties retain their existing representation.
+        """
+        thickness = layer[:, self.thickness_index:self.thickness_index + 1].clamp_min(0.0)
+        features = [layer[:, i:i + 1] * thickness if i in self.concentration_indices
+                    else layer[:, i:i + 1]
+                    for i in range(self.layer_param_size) if i != self.thickness_index]
+        return torch.cat(features, dim=1), thickness
+
     def encode_latent(self, inputs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         self.validate_input_shape(inputs)
         setup, layers = self.split_inputs(inputs)
@@ -261,8 +296,9 @@ class LRNModel(nn.Module):
         contributions = inputs.new_zeros((inputs.shape[0], self.contribution_size))
         setup_context = self._encode_setup(setup)
         for layer in layers:
-            mask = (~(layer == 0).all(dim=1)).to(inputs.dtype).unsqueeze(1)
-            contribution, next_hidden = self.layer_block(layer, setup, hidden)
+            features, thickness = self.layer_areal_features(layer)
+            mask = (thickness > 0).to(inputs.dtype)
+            contribution, next_hidden = self.layer_block(features, setup, hidden, thickness)
             contributions = contributions + contribution * mask
             hidden = hidden * (1.0 - mask) + next_hidden * mask
         return torch.cat((contributions, hidden, setup_context), dim=1), setup
@@ -332,6 +368,14 @@ class LRNModel(nn.Module):
         metadata.input_dimension = self.input_dimension
         metadata.output_dimension = self.output_size
         metadata.opset_version = int(opset_version)
+        identity_input = native.model.TransformSpec()
+        identity_input.type = "identity"
+        identity_input.input_dimension = self.input_dimension
+        metadata.input_transform = identity_input
+        identity_output = native.model.TransformSpec()
+        identity_output.type = "identity"
+        identity_output.input_dimension = self.output_size
+        metadata.output_transform = identity_output
         if input_transform is not None:
             if int(input_transform.input_dimension) != self.input_dimension:
                 raise ValueError("input_transform dimension must match the model input dimension.")
@@ -411,6 +455,7 @@ class LRNModel(nn.Module):
                     dynamic_axes={"inputs": {0: "batch"}, "outputs": {0: "batch"}},
                     opset_version=opset_version,
                     do_constant_folding=True,
+                    dynamo=False,
                 )
             finally:
                 self.to(original_device)

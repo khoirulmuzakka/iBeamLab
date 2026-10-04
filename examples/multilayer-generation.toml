@@ -3,7 +3,7 @@ format_version = 1
 name = "iba_multilayer"
 
 [output]
-directory = "datasets/iba_multilayer_seed_1"
+directory = "datasets/iba_multilayer_moreC_seed3"
 shards = 4
 
 [dataset]
@@ -11,7 +11,7 @@ maximum_layers = 10
 mixed_samples_per_layer_count = 100000
 
 [random]
-seed = 1
+seed = 3
 algorithm = "PCG64"
 seed_strategy = "named_streams_per_layer_count"
 
@@ -61,32 +61,32 @@ region_probabilities = [0.10, 0.25, 0.50, 0.15]
 
 [[elements]]
 symbol = "O"
-selection_probability = 1.0
+selection_probability = 0.5
 region_probabilities = [0.05, 0.15, 0.45, 0.35]
 
 [[elements]]
 symbol = "C"
 selection_probability = 0.5
-region_probabilities = [0.30, 0.35, 0.25, 0.10]
+region_probabilities = [0.1, 0.20, 0.30, 0.4]
 
 [[elements]]
 symbol = "F"
-selection_probability = 1.0
+selection_probability = 0.25
 region_probabilities = [0.30, 0.35, 0.25, 0.10]
 
 [[elements]]
 symbol = "P"
-selection_probability = 1.0
+selection_probability = 0.25
 region_probabilities = [0.30, 0.35, 0.25, 0.10]
 
 [[elements]]
 symbol = "Cu"
-selection_probability = 0.5
+selection_probability = 0.25
 region_probabilities = [0.30, 0.35, 0.25, 0.10]
 
 [[elements]]
 symbol = "Al"
-selection_probability = 0.5
+selection_probability = 0.25
 region_probabilities = [0.30, 0.35, 0.25, 0.10]
 
 [one_layer_sampling.pure_element_samples]
@@ -122,8 +122,8 @@ quadratic = 0.0
 
 [simulation]
 backend = "simnra"
-workers = 8
-batch_size = 8
+workers = 120
+batch_size = 256
 failure_policy = "stop"
 
 [[simulation.methods]]
