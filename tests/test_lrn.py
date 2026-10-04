@@ -25,17 +25,19 @@ def make_model():
     return study, model
 
 
-def test_areal_features_and_zero_thickness_skip():
+def test_separate_layer_features_and_padding():
     _, model = make_model()
-    inputs = torch.tensor([[0.5, 0.25, 0.75], [0, 0.25, 0.75]])
-    features, thickness = model.layer_areal_features(inputs)
-    torch.testing.assert_close(features, torch.tensor([[0.125, 0.375], [0, 0]]))
-    assert model.layer_block.layer_encoder[0].in_features == 2
+    inputs = torch.tensor([[0.5, 0.25, 0.75], [0, 0, 0]])
+    captured = {}
+    def capture_encoder(module, args):
+        captured["inputs"] = args[0]
+    hook = model.layer_block.layer_encoder.register_forward_pre_hook(capture_encoder)
     latent, _ = model.encode_latent(inputs)
+    hook.remove()
+    torch.testing.assert_close(captured["inputs"], inputs, rtol=0, atol=0)
+    assert model.layer_block.layer_encoder[0].in_features == 3
     assert torch.count_nonzero(latent[1, :16]) == 0
-    torch.testing.assert_close(model(inputs[1:]), model(torch.zeros(1, 3)))
     model.eval()
-    # A zero-thickness layer after real material must preserve its latent state.
     single = inputs[:1]
     with_empty_tail = torch.cat((single, inputs[1:]), dim=1)
     torch.testing.assert_close(model(single), model(with_empty_tail))
@@ -49,7 +51,7 @@ def test_standard_gru_update_and_gradients():
         captured["candidate"] = output
     hook = block.gru.register_forward_hook(capture_gru)
     hidden = torch.randn(1, 8)
-    _, updated = block(torch.tensor([[0.25, 0.75]]), torch.empty(1, 0), hidden)
+    _, updated = block(torch.tensor([[0.5, 0.25, 0.75]]), torch.empty(1, 0), hidden)
     hook.remove()
     torch.testing.assert_close(updated, captured["candidate"], rtol=0, atol=0)
     assert not hasattr(block, "thickness_gate")
@@ -62,7 +64,7 @@ def test_export_matches_native_prediction(tmp_path):
     pytest.importorskip("onnx")
     study, model = make_model()
     transform = transforms.build_lrn_input_transform(study)
-    package = model.export(tmp_path / "areal.zip", input_transform=transform)
+    package = model.export(tmp_path / "lrn.zip", input_transform=transform)
     experiment = study.experiment
     expected = model.predict(torch.from_numpy(transform.apply(
         np.array([[50_000, 0.25, 0.75]], dtype=np.float32)))).numpy()[0]

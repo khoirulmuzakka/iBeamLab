@@ -32,9 +32,9 @@ model.export("rbs-lrn.zip", input_transform=input_transform)
 `build_lrn_input_transform()` first clips and normalizes the concentration
 features independently in each layer, then leaves those fractions unchanged
 while applying parameter-bound min-max scaling to thickness and setup
-features. By default, all layers share a thickness reference equal to the largest declared
-thickness upper bound; thickness is divided by that reference, preserving zero.
-An explicit `thickness_bounds=(0, reference)` can override it.
+features. By default, thickness and setup features use each parameter’s declared lower
+and upper bounds. An explicit `thickness_bounds=(lower, upper)` can override
+the thickness scaler interval.
 The complete pipeline is serialized into the package and applied by native
 inference, so callers continue to supply physical parameter values.
 

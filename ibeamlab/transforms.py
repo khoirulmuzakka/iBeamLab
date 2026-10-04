@@ -33,24 +33,20 @@ def build_lrn_input_transform(
 
     Concentrations are clipped at zero and normalized to sum to one within
     each layer.  They then pass through the scaler unchanged.  Layer thickness
-    uses a shared zero-based scale derived from the largest declared layer
-    thickness upper bound. An explicit ``thickness_bounds=(0, reference)``
-    overrides that scale. Zero remains zero for areal densities and padding;
-    all other parameters use their declared study bounds.
+    and setup parameters use their individual declared study bounds for min-max
+    scaling. Optional ``thickness_bounds`` overrides the thickness scaling
+    interval without changing the physical input parameters.
     """
     if high <= low:
         raise ValueError("high must be greater than low")
     parameters = tuple(study.parameters)
     if not parameters:
         raise ValueError("LRN input transform requires at least one parameter")
-    if thickness_bounds is None:
-        upper_bounds = [float(p.upper) for p in parameters
-                        if p.kind in {"thickness", "layer_thickness"}]
-        thickness_low, thickness_high = 0.0, max(upper_bounds, default=1.0)
-    else:
+    if thickness_bounds is not None:
         thickness_low, thickness_high = map(float, thickness_bounds)
-    if thickness_low != 0.0 or not math.isfinite(thickness_high) or thickness_high <= 0:
-        raise ValueError("thickness_bounds must be (0, a finite positive reference thickness)")
+        if (not math.isfinite(thickness_low) or not math.isfinite(thickness_high)
+                or thickness_high <= thickness_low):
+            raise ValueError("thickness_bounds must be finite with high > low")
     concentration_groups: dict[int, list[int]] = defaultdict(list)
     minimum: list[float] = []
     scale: list[float] = []
@@ -61,7 +57,7 @@ def build_lrn_input_transform(
             # Normalized concentrations already occupy the target interval.
             minimum.append(float(low))
             scale.append(float(high - low))
-        elif kind in {"thickness", "layer_thickness"}:
+        elif kind in {"thickness", "layer_thickness"} and thickness_bounds is not None:
             minimum.append(thickness_low)
             scale.append(thickness_high - thickness_low)
         else:

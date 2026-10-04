@@ -49,10 +49,10 @@ def test_lrn_input_transform_normalizes_each_layer_and_scales_thickness():
 
     transformed = transform.apply(values)
 
-    assert np.allclose(transformed, [[50_000 / 90_000, 0.25, 0.75]])
+    assert np.allclose(transformed, [[(50_000 - 1_000) / (90_000 - 1_000), 0.25, 0.75]])
 
 
-def test_lrn_thickness_reference_is_shared_and_preserves_zero():
+def test_lrn_thickness_uses_each_parameter_bounds():
     study = ibl.GenerationStudy(
         ibl.Experiment(
             ibl.Sample([ibl.Layer(1, {"Li": 1}), ibl.Layer(1, {"Li": 1})]),
@@ -63,13 +63,15 @@ def test_lrn_thickness_reference_is_shared_and_preserves_zero():
          ibl.vary.layer_thickness(layer=1, bounds=(5_000, 800_000)),
          ibl.vary.concentration("Li", layer=1, bounds=(0, 1))],
     )
-    rows = np.array([[200_000, 1, 200_000, 1], [0, 1, 0, 1]], dtype=np.float32)
+    rows = np.array([[200_000, 1, 200_000, 1], [1_000, 1, 5_000, 1]], dtype=np.float32)
     default = transforms.build_lrn_input_transform(study).apply(rows)
-    np.testing.assert_allclose(default, [[0.25, 1, 0.25, 1], [0, 1, 0, 1]])
+    np.testing.assert_allclose(default, [[1, 1, (200_000 - 5_000) / (800_000 - 5_000), 1], [0, 1, 0, 1]])
     override = transforms.build_lrn_input_transform(study, thickness_bounds=(0, 400_000)).apply(rows)
     np.testing.assert_allclose(override[0], [0.5, 1, 0.5, 1])
-    with pytest.raises(ValueError, match="finite positive"):
-        transforms.build_lrn_input_transform(study, thickness_bounds=(1_000, 400_000))
+    nonzero_min = transforms.build_lrn_input_transform(study, thickness_bounds=(1_000, 400_000)).apply(rows)
+    assert nonzero_min[1, 0] == pytest.approx(0)
+    with pytest.raises(ValueError, match="high > low"):
+        transforms.build_lrn_input_transform(study, thickness_bounds=(1_000, 1_000))
 
 
 def test_forward_correction_bindings_and_seconds():

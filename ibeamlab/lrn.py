@@ -156,12 +156,8 @@ class LRNModel(nn.Module):
     """Layerwise recurrent forward network for an iBeamLab generation study.
 
     Parameters are taken in the exact order of ``study.parameters``. A shared
-    GRU block receives elemental areal densities in place of thickness and
-    concentrations. The GRU learns state retention and updates; zero-thickness
-    layers preserve the state and contribute nothing.
-    Inputs must use normalized concentrations and thickness scaled as t/t_ref
-    (for example, build_lrn_input_transform with zero lower thickness bound).
-    The public input width retains the physical parameter schema for export.
+    GRU block receives separate scaled thickness and concentration features.
+    Entirely zero padded layers preserve the state and contribute nothing.
     Latent contributions are summed and
     decoded once into the concatenated output spectra. Train this module with
     ordinary PyTorch optimizers, then call :meth:`export` to create a package
@@ -189,18 +185,6 @@ class LRNModel(nn.Module):
         self.setup_param_size = self.layout.setup_size
         self.layer_param_size = self.layout.layer_size
         self.layer_count = self.layout.layer_count
-        self.thickness_index = None
-        self.concentration_indices = ()
-        if self.layer_count:
-            layer_parameters = [study.parameters[i] for i in self.layout.layer_indices[0]]
-            thickness_indices = [i for i, p in enumerate(layer_parameters)
-                                 if p.kind in {"thickness", "layer_thickness"}]
-            self.concentration_indices = tuple(i for i, p in enumerate(layer_parameters)
-                                               if p.kind == "concentration")
-            if len(thickness_indices) != 1 or not self.concentration_indices:
-                raise ValueError("LRN layers require one thickness and elemental concentrations.")
-            self.thickness_index = thickness_indices[0]
-        self.layer_feature_size = self.layer_param_size - int(self.thickness_index is not None)
         self.input_dimension = len(study.parameters)
         if self.input_dimension <= 0:
             raise ValueError("LRN requires at least one study parameter.")
@@ -219,7 +203,7 @@ class LRNModel(nn.Module):
             nn.Linear(setup_embedding_dim, setup_embedding_dim), nn.LeakyReLU(),
         )
         self.layer_block = _LayerwiseGRUBlock(
-            self.layer_feature_size, self.setup_param_size, hidden_size, contribution_size,
+            self.layer_param_size, self.setup_param_size, hidden_size, contribution_size,
             layer_embedding_dim, block_hidden_sizes,
         )
         decoder_layers: list[nn.Module] = []
@@ -273,19 +257,6 @@ class LRNModel(nn.Module):
             setup = setup.new_ones((setup.shape[0], 1))
         return self.setup_context_encoder(setup)
 
-    def layer_areal_features(self, layer: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Convert zero-based scaled thickness and fractions to scaled areal amounts.
-
-        The public input schema stays unchanged for datasets/native packages.
-        With t scaled by t_ref, each elemental feature is (t / t_ref) * c_e.
-        Other layer properties retain their existing representation.
-        """
-        thickness = layer[:, self.thickness_index:self.thickness_index + 1].clamp_min(0.0)
-        features = [layer[:, i:i + 1] * thickness if i in self.concentration_indices
-                    else layer[:, i:i + 1]
-                    for i in range(self.layer_param_size) if i != self.thickness_index]
-        return torch.cat(features, dim=1), thickness
-
     def encode_latent(self, inputs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         self.validate_input_shape(inputs)
         setup, layers = self.split_inputs(inputs)
@@ -293,9 +264,8 @@ class LRNModel(nn.Module):
         contributions = inputs.new_zeros((inputs.shape[0], self.contribution_size))
         setup_context = self._encode_setup(setup)
         for layer in layers:
-            features, thickness = self.layer_areal_features(layer)
-            mask = (thickness > 0).to(inputs.dtype)
-            contribution, next_hidden = self.layer_block(features, setup, hidden)
+            mask = (~(layer == 0).all(dim=1)).to(inputs.dtype).unsqueeze(1)
+            contribution, next_hidden = self.layer_block(layer, setup, hidden)
             contributions = contributions + contribution * mask
             hidden = hidden * (1.0 - mask) + next_hidden * mask
         return torch.cat((contributions, hidden, setup_context), dim=1), setup
