@@ -10,6 +10,7 @@ and materialize physical parameters from its package metadata.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import inspect
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Mapping, Sequence
@@ -442,16 +443,22 @@ class LRNModel(nn.Module):
             self.to("cpu")
             self.eval()
             try:
+                export_kwargs = {
+                    "input_names": ["inputs"],
+                    "output_names": ["outputs"],
+                    "dynamic_axes": {"inputs": {0: "batch"}, "outputs": {0: "batch"}},
+                    "opset_version": opset_version,
+                    "do_constant_folding": True,
+                }
+                # ``dynamo`` was added to torch.onnx.export after older
+                # PyTorch releases still supported by iBeamLab.
+                if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+                    export_kwargs["dynamo"] = False
                 torch.onnx.export(
                     self,
                     self.example_input(),
                     str(onnx_path),
-                    input_names=["inputs"],
-                    output_names=["outputs"],
-                    dynamic_axes={"inputs": {0: "batch"}, "outputs": {0: "batch"}},
-                    opset_version=opset_version,
-                    do_constant_folding=True,
-                    dynamo=False,
+                    **export_kwargs,
                 )
             finally:
                 self.to(original_device)
