@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -43,6 +44,54 @@ int main() {
     assert(std::abs(pu[1] - live / real * (4 - 2 * a * n * 4 + a * 16)) < 1e-12);
     assert(std::abs(pu[2] - live / real * a * 16) < 1e-12);
     assert(throws([] { spectrum::pileup({1}, 0, 1, 0.4e-6); }));
+    // Invert complete pileup spectra across support sizes and pileup strengths.
+    for (std::size_t size : {1U, 2U, 7U, 64U, 257U}) {
+        std::vector<double> original(size);
+        for (std::size_t i = 0; i < size; ++i)
+            original[i] = i % 5 == 0 && size > 1 ? 0 : 1 + (i * 17) % 101;
+        double count = 0;
+        for (double value : original)
+            count += value;
+        for (double rate : {0.0, 1e-9, 0.01, 0.5, 1.0, 2.0, 10.0, 1000.0}) {
+            const double factor = rate * real / count;
+            const auto measured = spectrum::pileup(original, real, live, factor);
+            const auto recovered = spectrum::removePileup(measured, real, live, factor);
+            assert(recovered.size() == size);
+            for (std::size_t i = 0; i < size; ++i)
+                assert(std::abs(recovered[i] - original[i]) < 1e-8);
+            // Counts are stored as float32 at inference boundaries.
+            auto rounded = measured;
+            for (auto &value : rounded)
+                value = static_cast<float>(value);
+            const auto floatRecovered = spectrum::removePileup(rounded, real, live, factor);
+            for (std::size_t i = 0; i < size; ++i)
+                assert(std::abs(floatRecovered[i] - original[i]) < 1e-3);
+        }
+    }
+    assert(spectrum::removePileup({}, real, live, tau).empty());
+    assert(spectrum::removePileup({0, 0, 0}, real, live, tau) == std::vector<double>({0, 0}));
+    assert(spectrum::removePileup({8, 16, 0}, 10, 8, 0) == std::vector<double>({10, 20}));
+    assert(throws([&] { spectrum::removePileup(pu, 0, live, tau); }));
+    assert(throws([&] { spectrum::removePileup(pu, real, 0, tau); }));
+    assert(throws([&] { spectrum::removePileup(pu, real, live, -1); }));
+    assert(throws([&] { spectrum::removePileup(pu, real, live, tau, 0); }));
+    assert(throws([&] { spectrum::removePileup(pu, real, live, tau, 1); }));
+    assert(throws([&] { spectrum::removePileup({1, 2}, real, live, tau); }));
+    assert(throws([&] { spectrum::removePileup({-1}, real, live, tau); }));
+    assert(throws([&] { spectrum::removePileup({NAN}, real, live, tau); }));
+    assert(throws([&] { spectrum::removePileup({INFINITY}, real, live, tau); }));
+    assert(throws([&] {
+        const auto maximum = std::numeric_limits<double>::max();
+        spectrum::removePileup({maximum, maximum, maximum}, real, live, tau);
+    }));
+    assert(throws([&] { spectrum::removePileup({1}, INFINITY, live, tau); }));
+    assert(throws([&] { spectrum::removePileup({1}, real, live, NAN); }));
+    assert(throws([&] { spectrum::removePileup({1}, real, live, tau, NAN); }));
+    assert(throws([&] { spectrum::removePileup({1, 2, 3}, real, live, 0); }));
+    // Cropping to another odd size must fail the model/tail check.
+    auto truncated = spectrum::pileup({10, 20, 30, 40}, real, live, 0.01);
+    truncated.resize(5);
+    assert(throws([&] { spectrum::removePileup(truncated, real, live, 0.01); }));
     preprocessing::StandardScaler scaler({1, 2}, {2, 4});
     const auto scaled = scaler.apply({{3, 6}});
     assert(scaled[0][0] == 1 && scaled[0][1] == 1);
@@ -165,8 +214,9 @@ int main() {
     inverseMetadata.inverse.sampleTemplate = model;
     inverseMetadata.inverse.setupTemplate = setup;
     inverseMetadata.inverse.inputSpectra = {{"RBS", 2}};
-    inverseMetadata.inverse.outputParameters = {
-        {"thickness", generation::LayerThickness{0}, 0, 100, std::nullopt, "arb"}};
+    inverseMetadata.inverse.outputEdp = {1, {"Si"}};
+    assert(!inverseMetadata.inverse.needPileupSubtraction);
+    inverseMetadata.inverse.needPileupSubtraction = true;
     auto invalidTransformMetadata = inverseMetadata;
     invalidTransformMetadata.inputTransform.type = "min_max_scaler";
     invalidTransformMetadata.inputTransform.minimum = {0};
@@ -183,12 +233,233 @@ int main() {
     inversePackage.write(writtenPackageZip);
     const auto inverseFromDirectory = ibeamlab::model::ModelPackage::open(writtenPackageDirectory);
     const auto inverseFromZip = ibeamlab::model::ModelPackage::open(writtenPackageZip);
+    assert(inverseFromDirectory.metadata().inverse.needPileupSubtraction);
+    assert(inverseFromZip.metadata().inverse.needPileupSubtraction);
+    // Older version 3 manifests omit this optional field; retain their behavior.
+    const auto manifestPath = writtenPackageDirectory / "package.toml";
+    std::ifstream manifestInput(manifestPath);
+    std::ostringstream manifestBuffer;
+    manifestBuffer << manifestInput.rdbuf();
+    manifestInput.close();
+    const auto originalManifest = manifestBuffer.str();
+    const std::string flag = "need_pileup_subtraction = true";
+    const auto flagOffset = originalManifest.find(flag);
+    assert(flagOffset != std::string::npos);
+    auto replaceFlag = [&](const std::string &replacement) {
+        auto text = originalManifest;
+        text.replace(flagOffset, flag.size(), replacement);
+        std::ofstream output(manifestPath);
+        output << text;
+    };
+    replaceFlag("");
+    assert(!model::ModelPackage::open(writtenPackageDirectory)
+                .metadata()
+                .inverse.needPileupSubtraction);
+    replaceFlag("need_pileup_subtraction = false");
+    assert(!model::ModelPackage::open(writtenPackageDirectory)
+                .metadata()
+                .inverse.needPileupSubtraction);
+    replaceFlag("need_pileup_subtraction = \"true\"");
+    assert(throws([&] { model::ModelPackage::open(writtenPackageDirectory); }));
+    replaceFlag(flag);
     assert(inverseFromZip.modelBytes() == inverseFromDirectory.modelBytes());
     inference::InverseModel inverse(inverseFromZip);
-    const auto inverseResults = inverse.predict({{{"RBS", {1.0F, 2.0F}}}});
-    assert(std::abs(inverseResults[0].sample.layers[0].thickness - 9.0) < 1e-5);
-    assert(inverseResults[0].parameters[0].name == "thickness");
-    assert(throws([&] { inverse.predict({{{"RBS", {1.0F}}}}); }));
+    assert(inverse.metadata().inverse.needPileupSubtraction);
+    const auto inverseResults = inverse.predictPrepared({{{"RBS", {1.0F, 2.0F}}}});
+    assert(std::abs(inverseResults[0].edp.values[0][0] - 9.0) < 1e-5);
+    assert(inverseResults[0].edp.elements == std::vector<std::string>{"Si"});
+    assert(std::abs(inverseResults[0].edp.toSample(model).layers[0].thickness - 9.0) < 1e-5);
+    assert(throws([&] { inverse.predictPrepared({{{"RBS", {1.0F}}}}); }));
+    std::filesystem::remove_all(writtenPackageDirectory);
+    std::filesystem::remove(writtenPackageZip);
+
+    // Multi-detector EDP: two active layers, two elements, one padded layer.
+    auto edpMetadata = inverseMetadata;
+    edpMetadata.inputDimension = 4;
+    edpMetadata.outputDimension = 6;
+    edpMetadata.inputTransform = {};
+    edpMetadata.inputTransform.type = "constant_factor";
+    edpMetadata.inputTransform.inputDimension = 4;
+    edpMetadata.inputTransform.factor = 2;
+    edpMetadata.outputTransform = {};
+    edpMetadata.outputTransform.type = "constant_factor";
+    edpMetadata.outputTransform.inputDimension = 6;
+    edpMetadata.outputTransform.factor = 4;
+    auto edpTemplate = model;
+    edpTemplate.layers[0].species = {{"O", 0.5, {}}, {"Si", 0.5, {}}};
+    edpTemplate.layers[0].roughness = 0.25;
+    edpTemplate.layers.resize(3, edpTemplate.layers[0]);
+    edpMetadata.inverse.sampleTemplate = edpTemplate;
+    auto secondDetector = setup.detectors[0];
+    secondDetector.label = "PIXE";
+    edpMetadata.inverse.setupTemplate.detectors.push_back(secondDetector);
+    edpMetadata.inverse.inputSpectra = {{"RBS", 2}, {"PIXE", 2}};
+    edpMetadata.inverse.outputEdp = {3, {"Si", "O"}};
+    edpMetadata.inverse.pileupFudgeFactorSeconds = 0.003;
+    const auto edpFile = std::filesystem::path(IBEAMLAB_TEST_DATA) / "edp.onnx";
+    auto edpPackage = model::ModelPackage::fromOnnx(edpFile, edpMetadata);
+    edpPackage.write(writtenPackageDirectory);
+    edpPackage.write(writtenPackageZip);
+    const auto edpDirectory = model::ModelPackage::open(writtenPackageDirectory);
+    const auto edpZip = model::ModelPackage::open(writtenPackageZip);
+    assert(edpZip.metadata().formatVersion == 3);
+    assert(edpZip.metadata().inverse.pileupFudgeFactorSeconds == 0.003);
+    assert(edpZip.metadata().inverse.outputEdp.maxLayers == 3);
+    assert(edpZip.metadata().inverse.outputEdp.elements == edpMetadata.inverse.outputEdp.elements);
+    assert(edpZip.metadata().inverse.outputEdp.unit == "1e15 atoms/cm2");
+    inference::InverseModel edpModel(edpZip);
+    const auto profiles = edpModel.predictPrepared(
+        {{{"PIXE", {6, 8}}, {"RBS", {2, 4}}}, {{"RBS", {4, 8}}, {"PIXE", {12, 16}}}});
+    const std::vector<std::vector<float>> expectedEdp{{1, 2}, {3, 4}, {0, 0}};
+    assert(profiles.size() == 2 && profiles[0].edp.values == expectedEdp);
+    assert(profiles[1].edp.values[1][1] == 8);
+    inference::InverseModel edpFromDirectory(edpDirectory);
+    assert(edpFromDirectory.predictPrepared({{{"RBS", {2, 4}}, {"PIXE", {6, 8}}}})[0].edp.values ==
+           expectedEdp);
+    // Full inverse pipeline: experimental exposure/calibration/pileup -> reference
+    // counts -> packaged input scaling -> ONNX -> physical output scaling.
+    inference::InverseInput measurement;
+    measurement.setup = edpMetadata.inverse.setupTemplate;
+    std::vector<simulator::Spectrum> bareExperimental;
+    for (auto &detector : measurement.setup.detectors) {
+        detector.calibrationLinear = 0.5;
+        const double exposure = detector.label == "RBS" ? 2 : 3;
+        detector.particlesSr *= exposure;
+        detector.realTime = 10;
+        detector.liveTime = 8;
+        const std::vector<double> referenceCounts =
+            detector.label == "RBS" ? std::vector<double>{2, 4} : std::vector<double>{6, 8};
+        const auto fine = spectrum::rebin({0, 1, 2}, {0, 0.5, 1, 1.5, 2}, referenceCounts);
+        auto exposed = fine;
+        for (auto &value : exposed)
+            value *= exposure;
+        bareExperimental.push_back(
+            {detector.label, std::vector<float>(exposed.begin(), exposed.end())});
+        const auto piled = spectrum::pileup(exposed, detector.realTime, detector.liveTime,
+                                            edpMetadata.inverse.pileupFudgeFactorSeconds);
+        measurement.spectra.insert(
+            measurement.spectra.begin(),
+            {detector.label, std::vector<float>(piled.begin(), piled.end())});
+    }
+    auto alreadyRemoved = measurement;
+    alreadyRemoved.spectra = bareExperimental;
+    alreadyRemoved.pileupAlreadyRemoved = true;
+    for (auto &detector : alreadyRemoved.setup.detectors)
+        detector.realTime = detector.liveTime = 0; // No timing needed when skipped.
+    const auto correctedProfiles = edpModel.predict({measurement, alreadyRemoved});
+    assert(correctedProfiles.size() == 2);
+    for (const auto &profile : correctedProfiles)
+        for (std::size_t l = 0; l < expectedEdp.size(); ++l)
+            for (std::size_t e = 0; e < expectedEdp[l].size(); ++e)
+                assert(std::abs(profile.edp.values[l][e] - expectedEdp[l][e]) < 1e-5);
+    assert(edpModel.predict({}).empty());
+    auto badMeasurement = measurement;
+    badMeasurement.setup.detectors[0].particlesSr = 0;
+    assert(throws([&] { edpModel.predict({badMeasurement}); }));
+    badMeasurement = measurement;
+    badMeasurement.setup.detectors[0].liveTime = 0;
+    assert(throws([&] { edpModel.predict({badMeasurement}); }));
+    badMeasurement = measurement;
+    badMeasurement.setup.detectors.erase(badMeasurement.setup.detectors.begin());
+    assert(throws([&] { edpModel.predict({badMeasurement}); }));
+    badMeasurement = measurement;
+    badMeasurement.spectra.push_back(badMeasurement.spectra[0]);
+    assert(throws([&] { edpModel.predict({badMeasurement}); }));
+    badMeasurement = alreadyRemoved;
+    badMeasurement.spectra[0].counts = {1}; // Insufficient reference coverage.
+    assert(throws([&] { edpModel.predict({badMeasurement}); }));
+    badMeasurement = alreadyRemoved;
+    badMeasurement.setup.detectors[0].calibrationLinear = -1;
+    assert(throws([&] { edpModel.predict({badMeasurement}); }));
+    badMeasurement = measurement;
+    badMeasurement.spectra[0].counts.pop_back(); // Cropped/even pileup support.
+    assert(throws([&] { edpModel.predict({badMeasurement}); }));
+    badMeasurement = alreadyRemoved;
+    badMeasurement.spectra[0].counts[0] = NAN;
+    assert(throws([&] { edpModel.predict({badMeasurement}); }));
+    // Quadratic calibration and offset on a constant spectral density.
+    auto nonlinear = alreadyRemoved;
+    for (auto &detector : nonlinear.setup.detectors) {
+        detector.calibrationOffset = -0.25;
+        detector.calibrationLinear = 0.75;
+        detector.calibrationQuadratic = 0.25;
+    }
+    nonlinear.spectra = {{"RBS", {4, 6}}, {"PIXE", {12, 18}}};
+    const auto nonlinearResult = edpModel.predict({nonlinear})[0].edp;
+    assert(std::abs(nonlinearResult.values[0][0] - 1) < 1e-5);
+    assert(std::abs(nonlinearResult.values[0][1] - 1) < 1e-5);
+    assert(std::abs(nonlinearResult.values[1][0] - 2) < 1e-5);
+    assert(std::abs(nonlinearResult.values[1][1] - 2) < 1e-5);
+    auto mismatched = alreadyRemoved;
+    mismatched.setup.detectors[0].beam.energy += 0.1;
+    std::ostringstream inverseWarnings;
+    auto *oldInverseWarnings = std::cerr.rdbuf(inverseWarnings.rdbuf());
+    edpModel.predict({mismatched});
+    const auto firstInverseWarnings = inverseWarnings.str();
+    edpModel.predict({mismatched});
+    std::cerr.rdbuf(oldInverseWarnings);
+    assert(firstInverseWarnings.find("no correction is available") != std::string::npos);
+    assert(inverseWarnings.str() == firstInverseWarnings);
+    // Packages not requiring subtraction skip it even with raw input flag false.
+    auto noSubtractionMetadata = edpMetadata;
+    noSubtractionMetadata.inverse.needPileupSubtraction = false;
+    inference::InverseModel noSubtraction(
+        model::ModelPackage::fromOnnx(edpFile, noSubtractionMetadata));
+    auto unpiled = alreadyRemoved;
+    unpiled.pileupAlreadyRemoved = false;
+    assert(noSubtraction.predict({unpiled})[0].edp.values == expectedEdp);
+    auto invalidFudge = edpMetadata;
+    invalidFudge.inverse.pileupFudgeFactorSeconds = -1;
+    assert(throws([&] { model::ModelPackage::fromOnnx(edpFile, invalidFudge); }));
+    invalidFudge.inverse.pileupFudgeFactorSeconds = NAN;
+    assert(throws([&] { model::ModelPackage::fromOnnx(edpFile, invalidFudge); }));
+    const auto reconstructed = profiles[0].edp.toSample(edpTemplate);
+    assert(reconstructed.layers.size() == 2);
+    assert(reconstructed.layers[0].thickness == 3);
+    assert(reconstructed.layers[1].thickness == 7);
+    assert(reconstructed.layers[0].species[0].element == "O");
+    assert(std::abs(reconstructed.layers[0].species[0].concentration - 2.0 / 3) < 1e-12);
+    assert(reconstructed.layers[0].roughness == 0.25);
+    assert(edpModel.predictPrepared({}).empty());
+    assert(throws([&] { edpModel.predictPrepared({{{"RBS", {2, 4}}}}); }));
+    assert(throws([&] { edpModel.predictPrepared({{{"RBS", {2}}, {"PIXE", {6, 8}}}}); }));
+    assert(throws([&] { edpModel.predictPrepared({{{"RBS", {2, 4}}, {"RBS", {6, 8}}}}); }));
+    assert(throws([&] { edpModel.predictPrepared({{{"RBS", {2, 4}}, {"extra", {6, 8}}}}); }));
+    assert(throws([&] { edpModel.predictPrepared({{{"RBS", {-2, 4}}, {"PIXE", {6, 8}}}}); }));
+    assert(throws([&] { edpModel.predictPrepared({{{"RBS", {0, 0}}, {"PIXE", {6, 8}}}}); }));
+    assert(throws([&] { edpModel.predictPrepared({{{"RBS", {NAN, 4}}, {"PIXE", {6, 8}}}}); }));
+    const auto emptyProfile =
+        edpModel.predictPrepared({{{"RBS", {0, 0}}, {"PIXE", {0, 0}}}})[0].edp;
+    assert(throws([&] { emptyProfile.toSample(edpTemplate); }));
+    for (int invalid = 0; invalid < 7; ++invalid) {
+        auto bad = edpMetadata;
+        switch (invalid) {
+        case 0:
+            bad.inverse.outputEdp.maxLayers = 0;
+            break;
+        case 1:
+            bad.inverse.outputEdp.elements = {"Si", "Si"};
+            break;
+        case 2:
+            bad.inverse.outputEdp.unit = "atoms/cm2";
+            break;
+        case 3:
+            bad.outputDimension = 5;
+            bad.outputTransform.inputDimension = 5;
+            break;
+        case 4:
+            bad.inverse.inputSpectra[1].label = "RBS";
+            break;
+        case 5:
+            bad.inverse.inputSpectra[1].label = "unknown";
+            break;
+        case 6:
+            bad.inverse.outputEdp.elements = {"Si", "C"};
+            break;
+        }
+        assert(throws([&] { model::ModelPackage::fromOnnx(edpFile, bad); }));
+    }
+    assert(throws([&] { inference::ForwardModel wrong(edpZip); }));
     std::filesystem::remove_all(writtenPackageDirectory);
     std::filesystem::remove(writtenPackageZip);
 

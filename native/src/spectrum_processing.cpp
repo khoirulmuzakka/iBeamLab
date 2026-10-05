@@ -94,6 +94,96 @@ std::vector<double> pileup(const std::vector<double> &spectrum, double realTime,
     return output;
 }
 
+std::vector<double> removePileup(const std::vector<double> &spectrum, double realTime,
+                                 double liveTime, double fudgeFactor, double relativeTolerance) {
+    if (!std::isfinite(realTime) || realTime <= 0 || !std::isfinite(liveTime) || liveTime <= 0)
+        throw std::invalid_argument("pileup removal requires positive finite real and live times");
+    if (!std::isfinite(fudgeFactor) || fudgeFactor < 0 || !std::isfinite(relativeTolerance) ||
+        relativeTolerance <= 0 || relativeTolerance >= 1)
+        throw std::invalid_argument("invalid pileup removal factor or tolerance");
+    if (spectrum.empty())
+        return {};
+    if (spectrum.size() % 2 == 0)
+        throw std::invalid_argument("pileup removal requires the full 2*N-1-channel spectrum");
+    const double liveRatio = liveTime / realTime;
+    if (!std::isfinite(liveRatio) || liveRatio <= 0)
+        throw std::invalid_argument("live/real time ratio is not representable");
+    std::vector<double> observed(spectrum.size());
+    double total = 0;
+    for (std::size_t i = 0; i < spectrum.size(); ++i) {
+        if (!std::isfinite(spectrum[i]) || spectrum[i] < 0)
+            throw std::invalid_argument("pileup spectrum must be finite and nonnegative");
+        observed[i] = spectrum[i] / liveRatio;
+        total += observed[i];
+    }
+    if (!std::isfinite(total))
+        throw std::invalid_argument("pileup spectrum total is not representable");
+    const std::size_t size = spectrum.size() / 2 + 1;
+    if (total == 0)
+        return std::vector<double>(size, 0);
+
+    // With complete convolution support, Z=sum(y/liveRatio)=N*(1-h),
+    // h=u*exp(-u), u=tau*N/realTime. 0<=h<=1/e; Z(N) is strictly
+    // increasing. Solve for N/Z in [1, 1/(1-1/e)] to avoid large bounds.
+    auto pileupFraction = [&](double count) {
+        if (fudgeFactor == 0)
+            return 0.0;
+        // Compute the rate in log space to avoid overflow in count/realTime
+        // when a tiny fudge factor would otherwise bring it back into range.
+        const double logRate = std::log(count) + std::log(fudgeFactor) - std::log(realTime);
+        if (logRate > std::log(745.0))
+            return 0.0;
+        const double u = std::exp(logRate);
+        // Beyond this point h is negligible; avoid inf*0 for extreme rates.
+        return u > 745 ? 0.0 : u * std::exp(-u);
+    };
+    double lower = 1, upper = 1 / (1 - std::exp(-1.0));
+    for (int iteration = 0; iteration < 100; ++iteration) {
+        const double ratio = lower + (upper - lower) / 2;
+        if (ratio * (1 - pileupFraction(total * ratio)) < 1)
+            lower = ratio;
+        else
+            upper = ratio;
+    }
+    const double count = total * (lower + (upper - lower) / 2);
+    if (!std::isfinite(count))
+        throw std::invalid_argument("original spectrum total is not representable");
+    const double h = fudgeFactor == 0 ? 0 : pileupFraction(count);
+    const double linear = 1 - 2 * h; // Always >= 1-2/e > 0.
+    for (auto &value : observed)
+        value /= count;
+    const double tolerance =
+        relativeTolerance * *std::max_element(observed.begin(), observed.end());
+    std::vector<double> probabilities(size);
+    // Stable positive root of h*p0^2 + linear*p0 = observed[0].
+    probabilities[0] =
+        2 * observed[0] / (linear + std::sqrt(linear * linear + 4 * h * observed[0]));
+    const double denominator = linear + 2 * h * probabilities[0];
+    for (std::size_t i = 1; i < size; ++i) {
+        double interior = 0;
+        for (std::size_t j = 1; j < i; ++j)
+            interior += probabilities[j] * probabilities[i - j];
+        const double residual = observed[i] - h * interior;
+        if (residual < -tolerance)
+            throw std::runtime_error("spectrum is inconsistent with nonnegative pileup removal");
+        probabilities[i] = std::max(0.0, residual) / denominator;
+    }
+    // The tail provides a model check: cropping or arbitrary spectra must not
+    // silently yield an allegedly recovered original.
+    std::vector<double> convolution(spectrum.size());
+    std::vector<fftconv::cplx> workspace;
+    fftconv::convolve_fft_self_workspace(probabilities.data(), size, convolution.data(), workspace);
+    for (std::size_t i = 0; i < spectrum.size(); ++i) {
+        const double reconstructed =
+            linear * (i < size ? probabilities[i] : 0) + h * convolution[i];
+        if (!std::isfinite(reconstructed) || std::abs(reconstructed - observed[i]) > tolerance)
+            throw std::runtime_error("spectrum does not contain a consistent full pileup tail");
+    }
+    for (auto &value : probabilities)
+        value *= count;
+    return probabilities;
+}
+
 std::vector<double> energyToChannelAndPileup(const std::vector<double> &energySpectrum,
                                              double offset, double linear, double quadratic,
                                              double realTime, double liveTime, double fudgeFactor,

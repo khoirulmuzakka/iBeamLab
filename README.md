@@ -60,6 +60,13 @@ absolute paths and reference-file checksums, per-dataset sampling audits, and a
 final generation summary. See
 [multilayer-generation.toml](examples/multilayer-generation.toml) for the full schema.
 
+## Inverse model training
+
+[IBAnet](docs/ibanet.md) uses detector-specific CNNs and an MLP to predict
+elemental presence probabilities, conditional areal densities, and uncertainties.
+Start with [train_ibanet.ipynb](examples/train_ibanet.ipynb) to train on generated
+multilayer datasets and export its posterior-mean EDP for native ONNX inference.
+
 ## Units
 
 - Beam energy, spread, and detector resolution: keV

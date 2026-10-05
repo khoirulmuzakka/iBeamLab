@@ -33,6 +33,19 @@ IBEAMLAB_API std::vector<double> pileup(const std::vector<double> &spectrum, dou
                                         double liveTime, double fudgeFactor,
                                         bool clipNegative = true);
 
+/** @brief Reverses pileup() including its live/real-time scaling.
+ * Requires the complete 2*N-1-channel spectrum, including the pileup tail;
+ * returns N original channels. Times and fudgeFactor are in seconds and both
+ * times must be positive. Empty spectra return empty. Input must be finite and
+ * nonnegative. relativeTolerance allows rounding noise, not a noisy-data fit.
+ * Rejects spectra inconsistent with this model; cropped tails cannot use this
+ * inversion. Small negative reconstruction roundoff is clamped to zero.
+ * Uses O(N^2) channel reconstruction and an FFT consistency check.
+ */
+IBEAMLAB_API std::vector<double> removePileup(const std::vector<double> &spectrum, double realTime,
+                                              double liveTime, double fudgeFactor,
+                                              double relativeTolerance = 1e-6);
+
 /** @brief Converts an energy spectrum to channels and applies detector pileup. */
 IBEAMLAB_API std::vector<double>
 energyToChannelAndPileup(const std::vector<double> &energySpectrum, double calibrationOffset,

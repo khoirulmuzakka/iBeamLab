@@ -16,6 +16,9 @@ void bindSpectrumProcessing(py::module_ &root) {
           py::arg("calibration_quadratic"), py::arg("real_time"), py::arg("live_time"),
           py::arg("fudge_factor"), py::arg("scale") = 1.0, py::arg("clip_negative") = true,
           py::call_guard<py::gil_scoped_release>());
+    m.def("remove_pileup", &ibeamlab::spectrum::removePileup, py::arg("spectrum"),
+          py::arg("real_time"), py::arg("live_time"), py::arg("fudge_factor"),
+          py::arg("relative_tolerance") = 1e-6, py::call_guard<py::gil_scoped_release>());
     m.def("crop_or_pad", &ibeamlab::spectrum::cropOrPad, py::arg("spectrum"), py::arg("size"),
           py::arg("padding") = 0.0, py::call_guard<py::gil_scoped_release>());
     m.def("concatenate", &ibeamlab::spectrum::concatenate,

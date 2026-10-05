@@ -31,11 +31,23 @@ struct SpectrumSpec {
     std::string label;
     std::size_t length{};
 };
+/** @brief Variable-thickness layers, surface to depth, with layer-major ONNX storage.
+ * All elements contributing to layer thickness must be included. Unused layers
+ * are trailing zero rows. Version 3 uses finite nonnegative 1e15 atoms/cm2 values.
+ */
+struct EdpSpec {
+    std::size_t maxLayers{};
+    std::vector<std::string> elements;
+    std::string unit{"1e15 atoms/cm2"};
+};
 struct InverseModelMetadata {
     sample::SampleModel sampleTemplate;
     sample::ExperimentalSetup setupTemplate;
     std::vector<SpectrumSpec> inputSpectra;
-    std::vector<generation::ParameterSpec> outputParameters;
+    EdpSpec outputEdp;
+    /** @brief Training spectra are pileup-free; predict() removes measured pileup. */
+    bool needPileupSubtraction{false};
+    double pileupFudgeFactorSeconds{0.4e-6};
 };
 struct ForwardModelMetadata {
     bool bareSpectrumCorrections{false}; // Legacy packages retain raw inference.

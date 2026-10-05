@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 from .exceptions import InferenceError, ModelPackageError
-from .sample import Experiment
+from .sample import Detector, Experiment, _to_native_setup
 from .simulator import SimulationResult, Spectrum, _input
 
 @dataclass(frozen=True, slots=True)
@@ -15,11 +15,36 @@ class NamedValue:
     unit: str = ""
 
 @dataclass(frozen=True, slots=True)
+class InverseInput:
+    """Measured spectra and their detector settings.
+
+    pileup_already_removed applies to every detector in this input and means
+    counts are pileup-free with live/real-time scaling already undone.
+    """
+    spectra: Mapping[str, Spectrum]
+    detectors: Sequence[Detector]
+    pileup_already_removed: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "detectors", tuple(self.detectors))
+        if not isinstance(self.pileup_already_removed, bool):
+            raise ValueError("pileup_already_removed must be a boolean")
+
+
+@dataclass(frozen=True, slots=True)
 class InversePrediction:
-    parameters: tuple[NamedValue, ...]
+    """Elemental areal-density matrix, ordered from surface to depth."""
+    edp: object
     @property
-    def values(self) -> dict[str, float]:
-        return {x.name: x.value for x in self.parameters}
+    def values(self):
+        import numpy as np
+        return np.asarray(self.edp.values, dtype=np.float32)
+    @property
+    def elements(self) -> tuple[str, ...]:
+        return tuple(self.edp.elements)
+    @property
+    def unit(self) -> str:
+        return self.edp.unit
 
 class Model:
     """Base type returned by :func:`load_model`."""
@@ -28,28 +53,58 @@ class Model:
         self.threads = threads
 
 class InverseModel(Model):
-    """A spectra-to-physical-parameters model."""
+    """A spectra-to-elemental-depth-profile model."""
     def __init__(self, path: str | Path, *, threads: int = 1):
         super().__init__(path, threads=threads)
         from ._native import native
         options = native.inference.InferenceOptions()
         options.intra_op_threads = threads
         self._native = native.inference.InverseModel(self.path, options)
-    def predict(self, spectra: Mapping[str, Spectrum] | Sequence[Mapping[str, Spectrum]]) -> InversePrediction | list[InversePrediction]:
+    @property
+    def metadata(self):
+        return self._native.metadata
+
+    @staticmethod
+    def _spectra(spectra):
+        from ._native import native
+        row = []
+        for label, spectrum in spectra.items():
+            if label != spectrum.label:
+                raise InferenceError("spectrum mapping key must match its label")
+            value = native.simulator.Spectrum()
+            value.label, value.counts = spectrum.label, spectrum.counts
+            row.append(value)
+        return row
+
+    def predict(self, inputs: InverseInput | Sequence[InverseInput]) -> InversePrediction | list[InversePrediction]:
+        """Prepare experimental spectra and return physical EDPs."""
+        from ._native import native
+        single = isinstance(inputs, InverseInput)
+        batches = [inputs] if single else inputs
+        if isinstance(inputs, Mapping):
+            raise InferenceError("predict requires InverseInput with detector settings; use predict_prepared for training-reference spectra")
+        try:
+            native_batch = []
+            for item in batches:
+                if not isinstance(item, InverseInput):
+                    raise ValueError("predict requires InverseInput values")
+                value = native.inference.InverseInput()
+                value.spectra = self._spectra(item.spectra)
+                value.setup = _to_native_setup(item.detectors)
+                value.pileup_already_removed = item.pileup_already_removed
+                native_batch.append(value)
+            results = [InversePrediction(result.edp) for result in self._native.predict(native_batch)]
+        except Exception as error:
+            raise InferenceError(str(error)) from error
+        return results[0] if single else results
+
+    def predict_prepared(self, spectra: Mapping[str, Spectrum] | Sequence[Mapping[str, Spectrum]]) -> InversePrediction | list[InversePrediction]:
+        """Skip physical corrections; packaged input transforms still run once."""
         single = isinstance(spectra, Mapping)
         batches = [spectra] if single else spectra
-        from ._native import native
-        native_batch = []
-        for item in batches:
-            row = []
-            for spectrum in item.values():
-                value = native.simulator.Spectrum()
-                value.label, value.counts = spectrum.label, spectrum.counts
-                row.append(value)
-            native_batch.append(row)
         try:
-            results = [InversePrediction(tuple(NamedValue(x.name, x.value, x.unit) for x in result.parameters))
-                       for result in self._native.predict(native_batch)]
+            results = [InversePrediction(result.edp) for result in
+                       self._native.predict_prepared([self._spectra(item) for item in batches])]
         except Exception as error:
             raise InferenceError(str(error)) from error
         return results[0] if single else results
@@ -95,4 +150,4 @@ def __getattr__(name: str):
         return LRNModel
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-__all__ = ["ForwardModel", "InverseModel", "InversePrediction", "LRNModel", "Model", "NamedValue", "load_model"]
+__all__ = ["ForwardModel", "InverseInput", "InverseModel", "InversePrediction", "LRNModel", "Model", "NamedValue", "load_model"]

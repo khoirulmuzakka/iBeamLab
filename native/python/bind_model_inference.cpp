@@ -28,12 +28,20 @@ void bindModel(py::module_ &root) {
         .def(py::init<>())
         .def_readwrite("label", &SpectrumSpec::label)
         .def_readwrite("length", &SpectrumSpec::length);
+    py::class_<EdpSpec>(m, "EdpSpec")
+        .def(py::init<>())
+        .def_readwrite("max_layers", &EdpSpec::maxLayers)
+        .def_readwrite("elements", &EdpSpec::elements)
+        .def_readwrite("unit", &EdpSpec::unit);
     py::class_<InverseModelMetadata>(m, "InverseModelMetadata")
         .def(py::init<>())
         .def_readwrite("sample_template", &InverseModelMetadata::sampleTemplate)
         .def_readwrite("setup_template", &InverseModelMetadata::setupTemplate)
         .def_readwrite("input_spectra", &InverseModelMetadata::inputSpectra)
-        .def_readwrite("output_parameters", &InverseModelMetadata::outputParameters);
+        .def_readwrite("need_pileup_subtraction", &InverseModelMetadata::needPileupSubtraction)
+        .def_readwrite("pileup_fudge_factor_seconds",
+                       &InverseModelMetadata::pileupFudgeFactorSeconds)
+        .def_readwrite("output_edp", &InverseModelMetadata::outputEdp);
     py::class_<ForwardModelMetadata>(m, "ForwardModelMetadata")
         .def(py::init<>())
         .def_readwrite("sample_template", &ForwardModelMetadata::sampleTemplate)
@@ -79,18 +87,25 @@ void bindInference(py::module_ &root) {
         .def_readwrite("inter_op_threads", &InferenceOptions::interOpThreads)
         .def_readwrite("execution_provider", &InferenceOptions::executionProvider)
         .def_readwrite("enable_graph_optimizations", &InferenceOptions::enableGraphOptimizations);
-    py::class_<NamedValue>(m, "NamedValue")
-        .def_readonly("name", &NamedValue::name)
-        .def_readonly("value", &NamedValue::value)
-        .def_readonly("unit", &NamedValue::unit);
-    py::class_<InverseResult>(m, "InverseResult")
-        .def_readonly("sample", &InverseResult::sample)
-        .def_readonly("parameters", &InverseResult::parameters);
+    py::class_<EdpMap>(m, "EdpMap")
+        .def(py::init<>())
+        .def_readwrite("elements", &EdpMap::elements)
+        .def_readwrite("unit", &EdpMap::unit)
+        .def_readwrite("values", &EdpMap::values)
+        .def("to_sample", &EdpMap::toSample, py::arg("sample_template"));
+    py::class_<InverseResult>(m, "InverseResult").def_readonly("edp", &InverseResult::edp);
+    py::class_<InverseInput>(m, "InverseInput")
+        .def(py::init<>())
+        .def_readwrite("spectra", &InverseInput::spectra)
+        .def_readwrite("setup", &InverseInput::setup)
+        .def_readwrite("pileup_already_removed", &InverseInput::pileupAlreadyRemoved);
     py::class_<ForwardResult>(m, "ForwardResult").def_readonly("spectra", &ForwardResult::spectra);
     py::class_<InverseModel>(m, "InverseModel")
         .def(py::init<const std::filesystem::path &, InferenceOptions>(), py::arg("package"),
              py::arg("options") = InferenceOptions{})
         .def("predict", &InverseModel::predict, py::call_guard<py::gil_scoped_release>())
+        .def("predict_prepared", &InverseModel::predictPrepared,
+             py::call_guard<py::gil_scoped_release>())
         .def_property_readonly("metadata", &InverseModel::metadata,
                                py::return_value_policy::reference_internal);
     py::class_<ForwardModel>(m, "ForwardModel")

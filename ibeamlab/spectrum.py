@@ -6,6 +6,7 @@ from ._ibeamlab_cpp.spectrum import (
     crop_or_pad,
     energy_to_channel_and_pileup,
     pileup,
+    remove_pileup,
     rebin,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "crop_or_pad",
     "energy_to_channel_and_pileup",
     "pileup",
+    "remove_pileup",
     "rebin",
 ]

@@ -1,5 +1,5 @@
 #pragma once
-/** @file inverse_model.h @brief Executes a trained spectra-to-sample ONNX model. */
+/** @file inverse_model.h @brief Executes a trained spectra-to-EDP ONNX model. */
 #include <filesystem>
 #include <ibeamlab/export.h>
 #include <ibeamlab/inference.h>
@@ -9,14 +9,27 @@
 #include <string>
 #include <vector>
 namespace ibeamlab::inference {
-struct NamedValue {
-    std::string name;
-    float value{};
-    std::string unit;
+/** @brief Elemental areal densities; values[layer][element] includes trailing padding. */
+struct IBEAMLAB_API EdpMap {
+    std::vector<std::string> elements;
+    std::string unit{"1e15 atoms/cm2"};
+    std::vector<std::vector<float>> values;
+    /** @brief Reconstructs thickness/composition, preserving template fixed properties.
+     * Removes trailing zero layers; rejects an entirely empty profile.
+     */
+    sample::SampleModel toSample(const sample::SampleModel &sampleTemplate) const;
 };
 struct InverseResult {
-    sample::SampleModel sample;
-    std::vector<NamedValue> parameters;
+    EdpMap edp;
+};
+/** @brief Spectra and the experimental settings under which they were measured. */
+struct InverseInput {
+    std::vector<simulator::Spectrum> spectra;
+    sample::ExperimentalSetup setup;
+    /** @brief All spectra are already pileup-free, with live-time scaling undone.
+     * Also set true for simulated spectra generated without pileup.
+     */
+    bool pileupAlreadyRemoved{false};
 };
 class IBEAMLAB_API InverseModel {
   public:
@@ -25,8 +38,19 @@ class IBEAMLAB_API InverseModel {
     ~InverseModel();
     InverseModel(InverseModel &&) noexcept;
     InverseModel &operator=(InverseModel &&) noexcept;
+    /** @brief Corrects experimental spectra and predicts physical EDPs in batch order.
+     * Removes pileup when required, rebins to the training grid, normalizes
+     * ParticlesSr, then applies packaged transforms and ONNX. Requires coverage
+     * of the training energy grid. Beam/resolution mismatches warn and are not
+     * corrected. Invalid input/output aborts the batch with an exception.
+     */
+    std::vector<InverseResult> predict(const std::vector<InverseInput> &batch) const;
+    /** @brief Skips physical corrections for spectra already at training conditions.
+     * Requires packaged labels/lengths. Packaged transforms still run, including
+     * normalization embedded in ONNX; callers must not apply them again.
+     */
     std::vector<InverseResult>
-    predict(const std::vector<std::vector<simulator::Spectrum>> &batch) const;
+    predictPrepared(const std::vector<std::vector<simulator::Spectrum>> &batch) const;
     /** @brief Returns the validated package metadata used by this model. */
     const model::ModelMetadata &metadata() const noexcept;
 

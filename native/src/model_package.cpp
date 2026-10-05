@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -5,12 +6,14 @@
 #include <ibeamlab/parameter.h>
 #include <ibeamlab/sample_toml.h>
 #include <iomanip>
+#include <limits>
 #include <memory>
 #include <miniz.h>
 #include <sstream>
 #include <stdexcept>
 #include <toml++/toml.hpp>
 #include <type_traits>
+#include <unordered_set>
 
 namespace ibeamlab::model {
 namespace {
@@ -364,15 +367,45 @@ void validateParams(const sample::SampleModel &s, const sample::ExperimentalSetu
     }
 }
 void validate(const ModelMetadata &m) {
-    if (m.formatVersion != 2 || !m.inputDimension || !m.outputDimension)
+    if ((m.formatVersion != 2 && m.formatVersion != 3) || !m.inputDimension || !m.outputDimension)
         throw std::invalid_argument("invalid model metadata");
     validateTransform(m.inputTransform, m.inputDimension);
     validateTransform(m.outputTransform, m.outputDimension);
     if (m.modelType == ModelType::Inverse) {
-        validateParams(m.inverse.sampleTemplate, m.inverse.setupTemplate,
-                       m.inverse.outputParameters);
+        if (m.formatVersion != 3)
+            throw std::invalid_argument("inverse EDP models require package format version 3");
+        m.inverse.sampleTemplate.validate();
+        m.inverse.setupTemplate.validate();
+        if (!std::isfinite(m.inverse.pileupFudgeFactorSeconds) ||
+            m.inverse.pileupFudgeFactorSeconds < 0)
+            throw std::invalid_argument("invalid inverse pileup fudge factor in seconds");
+        const auto &edp = m.inverse.outputEdp;
+        if (!edp.maxLayers || edp.elements.empty() || edp.unit != "1e15 atoms/cm2" ||
+            edp.maxLayers != m.inverse.sampleTemplate.layers.size() ||
+            edp.maxLayers > std::numeric_limits<std::size_t>::max() / edp.elements.size())
+            throw std::invalid_argument("invalid inverse EDP specification");
+        std::unordered_set<std::string> elements;
+        for (const auto &element : edp.elements)
+            if (element.empty() || !elements.insert(element).second)
+                throw std::invalid_argument("EDP elements must be nonempty and unique");
+        for (const auto &layer : m.inverse.sampleTemplate.layers) {
+            if (layer.species.size() != elements.size())
+                throw std::invalid_argument("EDP elements must cover template composition");
+            for (const auto &species : layer.species)
+                if (!elements.count(species.element))
+                    throw std::invalid_argument("template species missing from EDP elements");
+        }
+        std::unordered_set<std::string> labels;
+        for (const auto &spectrum : m.inverse.inputSpectra) {
+            if (!labels.insert(spectrum.label).second)
+                throw std::invalid_argument("duplicate inverse spectrum label");
+            const auto &detectors = m.inverse.setupTemplate.detectors;
+            if (std::none_of(detectors.begin(), detectors.end(),
+                             [&](const auto &d) { return d.label == spectrum.label; }))
+                throw std::invalid_argument("inverse spectrum missing reference detector");
+        }
         if (total(m.inverse.inputSpectra) != m.inputDimension ||
-            m.inverse.outputParameters.size() != m.outputDimension)
+            edp.maxLayers * edp.elements.size() != m.outputDimension)
             throw std::invalid_argument("inverse dimensions do not match metadata");
     } else {
         if (!std::isfinite(m.forward.pileupFudgeFactorSeconds) ||
@@ -402,7 +435,7 @@ void validate(const ModelMetadata &m) {
 }
 std::string manifest(const ModelMetadata &m) {
     toml::table r{{"format", "ibeamlab.onnx-package"},
-                  {"format_version", 2},
+                  {"format_version", static_cast<std::int64_t>(m.formatVersion)},
                   {"created_utc", m.createdUtc},
                   {"model_type", m.modelType == ModelType::Inverse ? "inverse" : "forward"}};
     r.insert("model",
@@ -419,10 +452,20 @@ std::string manifest(const ModelMetadata &m) {
                                        {"output", transform(m.outputTransform)}});
     if (m.modelType == ModelType::Inverse)
         r.insert("inverse",
-                 toml::table{{"sample_template", sampleTable(m.inverse.sampleTemplate)},
-                             {"setup_template", setupTable(m.inverse.setupTemplate)},
-                             {"input_spectra", spectra(m.inverse.inputSpectra)},
-                             {"output_parameters", parameters(m.inverse.outputParameters)}});
+                 toml::table{
+                     {"sample_template", sampleTable(m.inverse.sampleTemplate)},
+                     {"setup_template", setupTable(m.inverse.setupTemplate)},
+                     {"input_spectra", spectra(m.inverse.inputSpectra)},
+                     {"need_pileup_subtraction", m.inverse.needPileupSubtraction},
+                     {"pileup_fudge_factor_seconds", m.inverse.pileupFudgeFactorSeconds},
+                     {"output_edp", toml::table{{"max_layers", static_cast<std::int64_t>(
+                                                                   m.inverse.outputEdp.maxLayers)},
+                                                {"elements", array(m.inverse.outputEdp.elements)},
+                                                {"unit", m.inverse.outputEdp.unit},
+                                                {"layer_order", "surface_to_depth"},
+                                                {"layer_semantics", "variable_thickness"},
+                                                {"flattening", "layer_major"},
+                                                {"padding", "trailing_zero_rows"}}}});
     else
         r.insert("forward",
                  toml::table{{"bare_spectrum_corrections", m.forward.bareSpectrumCorrections},
@@ -458,10 +501,11 @@ ModelPackage ModelPackage::open(const std::filesystem::path &p) {
     const std::string text(reinterpret_cast<const char *>(b.data()), b.size());
     const auto r = toml::parse(text);
     if (r["format"].value_or<std::string>("") != "ibeamlab.onnx-package" ||
-        r["format_version"].value_or<int>(0) != 2)
+        (r["format_version"].value_or<int>(0) != 2 && r["format_version"].value_or<int>(0) != 3))
         throw std::runtime_error("unsupported model package");
     ModelPackage q;
     auto &m = q.metadata_;
+    m.formatVersion = r["format_version"].value_or<std::uint32_t>(0);
     m.createdUtc = r["created_utc"].value_or<std::string>("");
     const auto kind = r["model_type"].value_or<std::string>("");
     if (kind == "inverse")
@@ -491,7 +535,34 @@ ModelPackage ModelPackage::open(const std::filesystem::path &p) {
             throw std::runtime_error("missing inverse table");
         templates(*t, m.inverse);
         m.inverse.inputSpectra = spectra((*t)["input_spectra"].as_array());
-        m.inverse.outputParameters = parameters((*t)["output_parameters"].as_array());
+        if ((*t).contains("need_pileup_subtraction") &&
+            !(*t)["need_pileup_subtraction"].is_boolean())
+            throw std::runtime_error("need_pileup_subtraction must be a boolean");
+        m.inverse.needPileupSubtraction = (*t)["need_pileup_subtraction"].value_or(false);
+        if ((*t).contains("pileup_fudge_factor_seconds") &&
+            !(*t)["pileup_fudge_factor_seconds"].value<double>())
+            throw std::runtime_error("pileup_fudge_factor_seconds must be a number");
+        m.inverse.pileupFudgeFactorSeconds = (*t)["pileup_fudge_factor_seconds"].value_or(0.4e-6);
+        if (m.formatVersion != 3)
+            throw std::runtime_error(
+                "legacy inverse parameter packages must be re-exported as EDP version 3");
+        auto *edp = (*t)["output_edp"].as_table();
+        if (!edp || (*edp)["layer_order"].value_or<std::string>("") != "surface_to_depth" ||
+            (*edp)["layer_semantics"].value_or<std::string>("") != "variable_thickness" ||
+            (*edp)["flattening"].value_or<std::string>("") != "layer_major" ||
+            (*edp)["padding"].value_or<std::string>("") != "trailing_zero_rows")
+            throw std::runtime_error("missing or unsupported EDP layout");
+        m.inverse.outputEdp.maxLayers = (*edp)["max_layers"].value_or<std::size_t>(0);
+        m.inverse.outputEdp.unit = (*edp)["unit"].value_or<std::string>("");
+        auto *elements = (*edp)["elements"].as_array();
+        if (!elements)
+            throw std::runtime_error("missing EDP elements");
+        for (const auto &element : *elements) {
+            auto name = element.value<std::string>();
+            if (!name)
+                throw std::runtime_error("invalid EDP element");
+            m.inverse.outputEdp.elements.push_back(*name);
+        }
     } else {
         auto *t = r["forward"].as_table();
         if (!t)
@@ -515,7 +586,7 @@ ModelPackage ModelPackage::open(const std::filesystem::path &p) {
 ModelPackage ModelPackage::fromOnnx(const std::filesystem::path &p, ModelMetadata m) {
     ModelPackage q;
     q.modelBytes_ = readFile(p, MaxModel);
-    m.formatVersion = 2;
+    m.formatVersion = m.modelType == ModelType::Inverse ? 3 : 2;
     if (m.createdUtc.empty())
         m.createdUtc = now();
     m.modelSize = q.modelBytes_.size();

@@ -1,0 +1,466 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage{microtype}
+\usepackage{hyperref}
+
+\title{Comparison of Inverse, Forward, and Physics-Based Fitting Methods for Ion Beam Analysis}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This study compares three approaches for the analysis of ion beam analysis (IBA) spectra:
+(1) a direct inverse model that predicts an elemental depth profile from a measured spectrum,
+(2) fitting based on a learned forward model, and
+(3) conventional fitting using SIMNRA.
+The present document describes the probabilistic formulation of the inverse model.
+The forward-model and SIMNRA-based fitting approaches are included as placeholders and will be described separately.
+\end{abstract}
+
+\section{Problem formulation}
+
+Let
+\[
+\bm{S}
+\]
+denote an experimental or simulated IBA spectrum. The quantity to be inferred is the elemental areal-density map
+\[
+\bm{A}
+\in
+\mathbb{R}_{+}^{N_{\mathrm{lay}}\times N_{\mathrm{el}}},
+\]
+where $N_{\mathrm{lay}}$ is the maximum number of layers and
+$N_{\mathrm{el}}$ is the maximum number of elements.
+
+The entry
+\[
+A_{l,e}
+\]
+denotes the areal density of element $e$ in layer $l$. A value of zero indicates that the corresponding element is absent from that layer.
+
+The goal of the inverse model is therefore to approximate the posterior distribution
+\[
+p(\bm{A}\mid\bm{S}).
+\]
+
+Rather than predicting only a single deterministic elemental depth profile, the model predicts both the probability that a given element is present and the conditional probability distribution of its areal density.
+
+\section{Method 1: Probabilistic inverse model}
+
+\subsection{Latent elemental-existence mask}
+
+We introduce a binary elemental-existence matrix
+\[
+\bm{M}
+\in
+\{0,1\}^{N_{\mathrm{lay}}\times N_{\mathrm{el}}},
+\]
+with
+\[
+M_{l,e}
+=
+\begin{cases}
+1, & \text{if element $e$ is present in layer $l$},\\
+0, & \text{otherwise}.
+\end{cases}
+\]
+
+The posterior distribution of the areal-density map can then be written by marginalizing over all possible elemental-existence configurations:
+\[
+\boxed{
+p(\bm{A}\mid\bm{S})
+=
+\sum_{\bm{M}}
+p(\bm{A}\mid\bm{M},\bm{S})\,
+p(\bm{M}\mid\bm{S})
+}
+\label{eq:posterior_decomposition}
+\]
+
+This decomposition separates the inverse problem into two related tasks:
+\begin{enumerate}
+    \item determining which elements are present in each layer, and
+    \item determining their areal densities conditional on their presence.
+\end{enumerate}
+
+\subsection{Element-existence probabilities}
+
+The neural network predicts an elemental-existence probability matrix
+\[
+\bm{P}
+\in
+[0,1]^{N_{\mathrm{lay}}\times N_{\mathrm{el}}},
+\]
+where
+\[
+P_{l,e}
+=
+p(M_{l,e}=1\mid\bm{S}).
+\]
+
+Under the simplifying assumption that the individual existence variables are conditionally independent given the spectrum,
+\[
+\boxed{
+p(\bm{M}\mid\bm{S})
+=
+\prod_{l=1}^{N_{\mathrm{lay}}}
+\prod_{e=1}^{N_{\mathrm{el}}}
+P_{l,e}^{M_{l,e}}
+(1-P_{l,e})^{1-M_{l,e}}
+}
+\label{eq:mask_probability}
+\]
+
+Thus, the network does not need to predict probabilities for all
+$2^{N_{\mathrm{lay}}N_{\mathrm{el}}}$ possible elemental configurations explicitly.
+Instead, it predicts one Bernoulli probability for each layer--element pair.
+
+\subsection{Conditional areal-density distribution}
+
+Conditional on the existence of an element, its areal density is modeled by a Gaussian distribution.
+
+The network predicts two additional matrices:
+\[
+\bm{Y}
+\in
+\mathbb{R}^{N_{\mathrm{lay}}\times N_{\mathrm{el}}},
+\]
+and
+\[
+\bm{R}
+\in
+\mathbb{R}_{+}^{N_{\mathrm{lay}}\times N_{\mathrm{el}}},
+\]
+where $Y_{l,e}$ is the predicted mean areal density and $R_{l,e}$ is the predicted standard deviation.
+
+For a present element,
+\[
+A_{l,e}\mid M_{l,e}=1,\bm{S}
+\sim
+\mathcal{N}
+\left(
+Y_{l,e},
+R_{l,e}^{2}
+\right).
+\]
+
+For an absent element, the areal density is exactly zero. Therefore,
+\[
+p(A_{l,e}\mid M_{l,e},\bm{S})
+=
+\begin{cases}
+\delta(A_{l,e}),
+&
+M_{l,e}=0,
+\\[4pt]
+\mathcal{N}
+\left(
+A_{l,e};
+Y_{l,e},
+R_{l,e}^{2}
+\right),
+&
+M_{l,e}=1,
+\end{cases}
+\]
+where $\delta(\cdot)$ denotes a Dirac point mass at zero.
+
+Assuming conditional independence between layer--element entries,
+\[
+\boxed{
+p(\bm{A}\mid\bm{M},\bm{S})
+=
+\prod_{l,e}
+\left[
+\mathcal{N}
+\left(
+A_{l,e};
+Y_{l,e},
+R_{l,e}^{2}
+\right)
+\right]^{M_{l,e}}
+\left[
+\delta(A_{l,e})
+\right]^{1-M_{l,e}}
+}
+\label{eq:conditional_density}
+\]
+
+\subsection{Resulting predictive posterior}
+
+Substituting Eqs.~\eqref{eq:mask_probability} and
+\eqref{eq:conditional_density} into Eq.~\eqref{eq:posterior_decomposition}
+and marginalizing the binary existence variables yields
+\[
+\boxed{
+p(\bm{A}\mid\bm{S})
+=
+\prod_{l,e}
+\left[
+(1-P_{l,e})\,\delta(A_{l,e})
++
+P_{l,e}\,
+\mathcal{N}
+\left(
+A_{l,e};
+Y_{l,e},
+R_{l,e}^{2}
+\right)
+\right].
+}
+\label{eq:final_posterior}
+\]
+
+Hence, for every layer--element pair, the predictive distribution consists of
+\begin{itemize}
+    \item a point mass at zero with probability $1-P_{l,e}$, representing absence of the element, and
+    \item one Gaussian component with probability $P_{l,e}$, representing the areal-density distribution conditional on presence.
+\end{itemize}
+
+This can be interpreted as a spike-and-slab form of a mixture-density model. The continuous part contains a single Gaussian mixture component, while the additional discrete component represents elemental absence.
+
+\subsection{Neural-network outputs}
+
+For an input spectrum $\bm{S}$, the inverse network therefore produces three matrices:
+\[
+\boxed{
+\bm{Y},\qquad
+\bm{R},\qquad
+\bm{P}
+}
+\]
+all of shape
+\[
+N_{\mathrm{lay}}\times N_{\mathrm{el}}.
+\]
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\toprule
+Output & Shape & Interpretation \\
+\midrule
+$\bm{Y}$ &
+$N_{\mathrm{lay}}\times N_{\mathrm{el}}$ &
+Mean areal density conditional on presence \\
+$\bm{R}$ &
+$N_{\mathrm{lay}}\times N_{\mathrm{el}}$ &
+Predicted standard deviation \\
+$\bm{P}$ &
+$N_{\mathrm{lay}}\times N_{\mathrm{el}}$ &
+Probability of elemental presence \\
+\bottomrule
+\end{tabular}
+\caption{Outputs of the probabilistic inverse model.}
+\label{tab:outputs}
+\end{table}
+
+In practice, the network may predict an unconstrained quantity
+$r_{l,e}$ and transform it into a positive standard deviation using, for example,
+\[
+R_{l,e}
+=
+\operatorname{softplus}(r_{l,e})+\epsilon,
+\]
+where $\epsilon>0$ is a small numerical constant.
+
+Similarly, elemental-existence probabilities can be obtained from logits $q_{l,e}$ using
+\[
+P_{l,e}
+=
+\operatorname{sigmoid}(q_{l,e}).
+\]
+
+\subsection{Training objective}
+
+For supervised training, the true areal-density matrix
+$\bm{A}^{\mathrm{true}}$ is known. The corresponding true existence mask is
+\[
+M_{l,e}^{\mathrm{true}}
+=
+\begin{cases}
+1, & A_{l,e}^{\mathrm{true}}>0,\\
+0, & A_{l,e}^{\mathrm{true}}=0.
+\end{cases}
+\]
+
+The network is trained by minimizing the negative log-likelihood
+\[
+\mathcal{L}
+=
+-\log
+p\left(
+\bm{A}^{\mathrm{true}}
+\mid
+\bm{S}
+\right).
+\]
+
+For an absent element,
+\[
+M_{l,e}^{\mathrm{true}}=0,
+\]
+the contribution to the loss is
+\[
+\boxed{
+\mathcal{L}_{l,e}^{\mathrm{absent}}
+=
+-\log(1-P_{l,e}).
+}
+\]
+
+For a present element,
+\[
+M_{l,e}^{\mathrm{true}}=1,
+\]
+the contribution is
+\[
+\mathcal{L}_{l,e}^{\mathrm{present}}
+=
+-\log P_{l,e}
+-
+\log
+\mathcal{N}
+\left(
+A_{l,e}^{\mathrm{true}};
+Y_{l,e},
+R_{l,e}^{2}
+\right).
+\]
+
+Expanding the Gaussian term gives
+\[
+\boxed{
+\mathcal{L}_{l,e}^{\mathrm{present}}
+=
+-\log P_{l,e}
++
+\log R_{l,e}
++
+\frac{
+\left(
+A_{l,e}^{\mathrm{true}}-Y_{l,e}
+\right)^2
+}{
+2R_{l,e}^{2}
+}
++
+\frac{1}{2}\log(2\pi).
+}
+\]
+
+The complete loss can therefore be written as
+\[
+\boxed{
+\begin{aligned}
+\mathcal{L}
+=
+\sum_{l,e}
+\Bigg[
+&
+-\left(1-M_{l,e}^{\mathrm{true}}\right)
+\log\left(1-P_{l,e}\right)
+-M_{l,e}^{\mathrm{true}}\log P_{l,e}
+\\
+&
++
+M_{l,e}^{\mathrm{true}}
+\left(
+\log R_{l,e}
++
+\frac{
+\left(
+A_{l,e}^{\mathrm{true}}-Y_{l,e}
+\right)^2
+}{
+2R_{l,e}^{2}
+}
++
+\frac{1}{2}\log(2\pi)
+\right)
+\Bigg].
+\end{aligned}
+}
+\label{eq:loss}
+\]
+
+Thus, elemental classification, areal-density regression, and uncertainty estimation are optimized jointly through a single probabilistically defined likelihood.
+
+\subsection{Relation to mixture-density networks}
+
+A conventional mixture-density network represents a conditional density as
+\[
+p(y\mid x)
+=
+\sum_{k=1}^{K}
+\pi_k(x)
+\,
+\mathcal{N}
+\left(
+y;
+\mu_k(x),
+\sigma_k^2(x)
+\right).
+\]
+
+In the present formulation, the number of continuous Gaussian components is $K=1$. Each layer--element pair additionally contains a discrete zero component describing elemental absence:
+\[
+p(A_{l,e}\mid\bm{S})
+=
+(1-P_{l,e})\delta(A_{l,e})
++
+P_{l,e}
+\mathcal{N}
+\left(
+A_{l,e};
+Y_{l,e},
+R_{l,e}^{2}
+\right).
+\]
+
+The model can therefore be regarded as a single-component MDN augmented with an explicit sparse structural component.
+
+\subsection{Use for direct inference and optimizer initialization}
+
+The probabilistic output can be used directly to obtain an estimated elemental depth profile. It can also be used to generate multiple plausible initial solutions for subsequent numerical fitting.
+
+In particular, samples can be drawn from
+\[
+p(\bm{A}\mid\bm{S})
+\]
+and passed as multiple initial guesses to an optimizer. This allows the inverse network to act either as a standalone predictor or as an informed initializer for physics-based refinement.
+
+\section{Method 2: Learned forward model}
+
+\textit{Placeholder.}
+
+This section will describe fitting in which the computationally expensive physics-based forward calculation is replaced by a learned surrogate forward model. The surrogate predicts an IBA spectrum for a given elemental depth profile, while numerical optimization is used to solve the inverse problem.
+
+\section{Method 3: SIMNRA-based fitting}
+
+\textit{Placeholder.}
+
+This section will describe conventional fitting in which SIMNRA is used directly as the forward model and the elemental depth profile is determined by numerical optimization.
+
+\section{Comparison strategy}
+
+The three approaches will ultimately be compared in terms of quantities such as:
+\begin{itemize}
+    \item accuracy of the recovered elemental depth profile,
+    \item agreement between measured and reconstructed spectra,
+    \item computational cost,
+    \item number of forward evaluations required,
+    \item robustness as the number of layers and elements increases,
+    \item sensitivity to weak or ambiguous elemental signals, and
+    \item uncertainty or repeatability of the inferred solution.
+\end{itemize}
+
+The precise evaluation protocol and benchmark metrics will be defined separately.
+
+\end{document}

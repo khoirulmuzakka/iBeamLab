@@ -9,7 +9,7 @@ from .exceptions import (
     SimulationError, ValidationError,
 )
 from .generation import FailurePolicy, GenerationProgress, GenerationStudy, GenerationSummary, Parameter, vary
-from .models import ForwardModel, InverseModel, InversePrediction, Model, NamedValue, load_model
+from .models import ForwardModel, InverseInput, InverseModel, InversePrediction, Model, NamedValue, load_model
 from .sample import Beam, Detector, Experiment, Isotope, Layer, LinearCalibration, Sample, Species
 from .simulator import DummySimulator, SimnraMethod, SimnraSimulator, SimulationFailure, SimulationResult, Simulator, Spectrum
 
@@ -22,8 +22,8 @@ __all__ = [
     "Beam", "ConfigurationError", "Dataset", "DatasetError", "DatasetMetadata",
     "DatasetRecord", "Detector", "DummySimulator", "Experiment", "FailurePolicy",
     "FailureRecord", "ForwardModel", "GenerationConfiguration", "GenerationProgress", "GenerationStudy",
-    "GenerationSummary", "IBeamLabError", "InferenceError", "InverseModel",
-    "InversePrediction", "Isotope", "Layer", "LinearCalibration", "LRNModel", "Model",
+    "GenerationSummary", "IBAnet", "IBAnetLoss", "IBAnetPrediction", "IBeamLabError", "InferenceError", "InverseModel",
+    "InverseInput", "InversePrediction", "Isotope", "Layer", "LinearCalibration", "LRNModel", "Model",
     "ModelPackageError", "NamedValue", "NativeExtensionError", "Parameter", "Sample",
     "SimnraMethod", "SimnraSimulator", "SimnraUnavailableError", "SimulationError",
     "SimulationFailure", "SimulationResult", "Simulator", "Species", "Spectrum",
@@ -32,7 +32,10 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    """Load the optional PyTorch LRN model only when explicitly requested."""
+    """Load optional PyTorch models only when explicitly requested."""
+    if name in {"IBAnet", "IBAnetLoss", "IBAnetPrediction"}:
+        from . import ibanet
+        return getattr(ibanet, name)
     if name == "LRNModel":
         from .lrn import LRNModel
         return LRNModel

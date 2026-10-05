@@ -14,7 +14,12 @@ CTestTestfile.cmake
 Testing/
 compile_commands.json
 CMakeUserPresets.json
+build.ninja
+rules.ninja
+.ninja_deps
+.ninja_log
 *.sln
+*.slnx
 *.vcxproj
 *.vcxproj.filters
 *.vcxproj.user
@@ -28,6 +33,7 @@ CMakeUserPresets.json
 *.lib
 *.dll
 *.so
+*.so.*
 *.dylib
 *.pyd
 *.exe
@@ -66,6 +72,9 @@ wheelhouse/
 .hypothesis/
 .pytype/
 .pyre/
+.cache/clangd/
+.clangd/
+coverage.xml
 
 # Local Python environments
 .venv/
@@ -77,6 +86,7 @@ env/
 
 # Generated datasets and exported models
 /examples/datasets/
+/examples/artifacts/
 *.ibd
 dataset.toml
 failures.ibd
@@ -122,5 +132,5 @@ ehthumbs.db
 *~
 examples/datasets*
 xnra/backup.xnra
-autonra/* 
-ibamlkit/*
+/autonra/
+/ibamlkit/
