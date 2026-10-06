@@ -309,11 +309,13 @@ class IBAnet(nn.Module):
                       opset_version=opset_version, do_constant_folding=True)
         if "dynamo" in inspect.signature(torch.onnx.export).parameters:
             kwargs["dynamo"] = False
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
         with TemporaryDirectory(prefix="ibeamlab-ibanet-") as directory:
             onnx_path = Path(directory) / "model.onnx"
             torch.onnx.export(exported, torch.zeros(1, self.input_dimension), str(onnx_path), **kwargs)
-            native.model.ModelPackage.from_onnx(onnx_path, metadata).write(Path(path))
-        return Path(path)
+            native.model.ModelPackage.from_onnx(onnx_path, metadata).write(destination)
+        return destination
 
 
 __all__ = ["IBAnet", "IBAnetPrediction", "IBAnetLoss"]
