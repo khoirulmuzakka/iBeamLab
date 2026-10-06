@@ -8,9 +8,15 @@ their generation metadata against the selected configuration.
 
 `from ibeamlab import IBAnet, IBAnetLoss` loads the optional PyTorch module.
 IBAnet takes a `GenerationStudy` and a mapping of detector labels to channel
-counts. Every detector has a separate strided 1D CNN. Their features are
-concatenated and passed to an MLP with mean, standard-deviation, and presence
-heads. Detector order follows the study; element order is explicit or follows
+counts. Every detector has a separate residual strided 1D CNN with GroupNorm.
+Flattened features retain absolute energy position and are fused into a
+LayerNorm-normalized spectrum context. A unidirectional GRU decodes layers
+from the surface toward the bottom, with spectrum context and a learned
+layer-position embedding at every step. Its initial hidden state also comes
+from spectrum context. Shared mean, standard-deviation, and presence heads
+operate on each layer state. There is one Gaussian slab per cell, without
+mixture components, teacher forcing, or feedback of sampled predictions.
+Detector order follows the study; element order is explicit or follows
 the first template layer. Every template layer must contain those elements.
 
 ```python
@@ -27,6 +33,18 @@ posterior_variance = prediction.variance
 draws = prediction.sample(count=16)
 ```
 
+Defaults are `cnn_channels=(32, 64, 128, 128)`, `kernel_size=7`,
+`decoder_hidden_size=256`, `decoder_layers=2`, `layer_embedding_size=32`,
+`head_hidden_sizes=(128,)`, and `dropout=0.1`. Dropout is applied between GRU
+layers and in the shared output MLP; it is disabled by `predict()` and export.
+`head_hidden_sizes` configures the shared MLP **after** the GRU. GroupNorm and
+LayerNorm use no running batch statistics. The constructor's `architecture`
+dictionary contains all network options needed to reconstruct a checkpoint.
+
+The architecture replaces the former CNN/MLP, so its PyTorch weights cannot
+be loaded into the new model. Retrain into a new output directory. Existing
+exported ONNX packages remain usable with the inference API.
+
 All prediction matrices have shape `[batch, max_layers, elements]`; draws have
 shape `[draw, batch, max_layers, elements]`. Input spectra are raw finite,
 nonnegative counts. `log1p` and per-channel standardization run inside the model.
@@ -37,6 +55,18 @@ The targets are `layer_thickness * elemental_concentration` in each cell.
 Unoccupied deeper layers are zero padded. The notebook multiplies densities by
 `TARGET_SCALE`. Both `Y` and `R` use these scaled units; divide by that factor
 for physical units and divide variance by its square.
+Use one global target scale, with typical positive entries preferably around
+0.1–1; keep it fixed across NLL comparisons. The notebook retains `1e-5` for
+comparison with earlier runs. Scaling does not normalize each sample's total.
+
+The notebook enables `POISSON_NOISE=True` for datasets of noise-free expected
+counts. Each raw training batch receives a fresh `torch.poisson` draw before
+the model's embedded log1p and standardization. Targets are not perturbed.
+Validation and test spectra receive fixed CPU draws with seeds `SEED + 1` and
+`SEED + 2`; those same test inputs are used for metrics and native export parity.
+Normalization is still fitted on clean training expected counts. Disable the
+option for already noisy data and rerun the split/build section when changing
+it. Inference does not add noise to measured counts.
 
 The loss implements the spike-and-slab likelihood in [draft.tex](draft.tex):
 binary cross entropy on presence logits plus a Gaussian NLL only for positive
@@ -50,8 +80,10 @@ Gaussian means use softplus, restricting the draft's
 mean to positive values; standard deviations use softplus plus a positive floor.
 The Gaussian distribution remains untruncated, so raw draws can be negative.
 Projection or rejection for physical optimizer initialization must be explicit
-and changes that distribution. Independent cells do not impose a contiguous
-layer mask or correlations between compositions.
+and changes that distribution. Recurrent states make deeper parameters depend
+on earlier layer states, but the likelihood and samples still factorize over
+cells given the spectrum. They do not impose a contiguous layer mask or joint
+covariance between compositions.
 
 `model.export(path, output_inverse_factor=TARGET_SCALE)` writes a native format
 version 3 package whose point estimate is `P * Y`. Input preprocessing is in the
@@ -94,7 +126,14 @@ densities in absent elements and padded layers. It does not expose `Y`, `R`, or
 `P`. Keep the PyTorch checkpoint for probabilistic predictions and sampling.
 The notebook saves architecture, layout, target scale, configuration, split
 indices, normalization buffers, and best validation weights together. Its
-checkpoint reload option fine-tunes the best weights with a fresh optimizer.
+checkpoint reload option is enabled by default: rerunning the training cell
+after interruption loads compatible best weights automatically. It fine-tunes
+with a fresh optimizer and restarts the configured schedule, rather than
+resuming the exact interrupted epoch. For a fresh run, rebuild the model and
+select a new output directory. Incompatible checkpoints are still rejected.
+Noise settings are recorded in checkpoint signatures. When only the noise
+policy changes, compatible weights can be reused; the notebook clears the old
+loss history and recomputes baseline validation NLL on the current fixed inputs.
 
 The notebook evaluates held-out NLL, physical posterior-mean MAE, presence Brier
 score, and conditional Gaussian coverage. Its final cell compares batched native

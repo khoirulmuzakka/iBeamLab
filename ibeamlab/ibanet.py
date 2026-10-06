@@ -1,4 +1,4 @@
-"""Optional PyTorch CNN/MLP spike-and-slab inverse model from docs/draft.tex."""
+"""Optional PyTorch CNN/GRU inverse model with a single Gaussian slab."""
 
 from __future__ import annotations
 
@@ -83,19 +83,49 @@ class IBAnetLoss(nn.Module):
         return (classification + gaussian).flatten(1).sum(1).mean()
 
 
+def _normalization_groups(channels: int) -> int:
+    return next(groups for groups in range(min(8, max(1, channels // 2)), 0, -1)
+                if channels % groups == 0)
+
+
+class _ResidualSpectrumBlock(nn.Module):
+    """Downsample energy channels while retaining a learned residual path."""
+
+    def __init__(self, inputs: int, outputs: int, kernel_size: int):
+        super().__init__()
+        self.conv1 = nn.Conv1d(inputs, outputs, kernel_size, stride=2,
+                               padding=kernel_size // 2)
+        self.norm1 = (nn.GroupNorm(_normalization_groups(outputs), outputs)
+                      if outputs > 1 else nn.Identity())
+        self.conv2 = nn.Conv1d(outputs, outputs, kernel_size,
+                               padding=kernel_size // 2)
+        self.norm2 = (nn.GroupNorm(_normalization_groups(outputs), outputs)
+                      if outputs > 1 else nn.Identity())
+        self.skip = nn.Conv1d(inputs, outputs, 1, stride=2)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        hidden = F.silu(self.norm1(self.conv1(inputs)))
+        return F.silu(self.norm2(self.conv2(hidden)) + self.skip(inputs))
+
+
 class IBAnet(nn.Module):
-    """One 1D CNN per detector, fused MLP, and three layer/element heads.
+    """Residual spectral CNNs and a unidirectional surface-to-depth GRU.
 
     Inputs are raw nonnegative counts concatenated in ``spectrum_labels`` order.
     Log1p preprocessing and fitted per-channel standardization are embedded in
     the graph/state dict. Y uses softplus (a positive-mean restriction on the
     draft's Gaussian); R uses softplus + minimum_std; P uses sigmoid logits.
+    Shared output heads predict one Gaussian slab per layer/element. Recurrent
+    states carry context toward deeper layers, without previous sampled outputs
+    or teacher forcing. The likelihood remains conditionally independent cells.
     """
 
     def __init__(self, study: GenerationStudy, input_spectra_lengths: Mapping[str, int], *,
                  elements: Sequence[str] | None = None,
-                 cnn_channels: Sequence[int] = (16, 32, 64, 64), kernel_size: int = 7,
-                 head_hidden_sizes: Sequence[int] = (512, 256), minimum_std: float = 1e-3,
+                 cnn_channels: Sequence[int] = (32, 64, 128, 128), kernel_size: int = 7,
+                 head_hidden_sizes: Sequence[int] = (128,), minimum_std: float = 1e-3,
+                 decoder_hidden_size: int = 256, decoder_layers: int = 2,
+                 layer_embedding_size: int = 32, dropout: float = 0.1,
                  input_mean=None, input_std=None) -> None:
         super().__init__()
         labels = tuple(d.label for d in study.experiment.detectors)
@@ -117,8 +147,12 @@ class IBAnet(nn.Module):
             raise ValueError("Spectra-only IBAnet requires fixed experimental settings")
         if kernel_size < 1 or kernel_size % 2 != 1 or not cnn_channels:
             raise ValueError("Use a positive odd CNN kernel and nonempty channels")
-        if any(n < 1 for n in (*cnn_channels, *head_hidden_sizes)):
-            raise ValueError("Network widths must be positive")
+        if any(not isinstance(n, int) or isinstance(n, bool) or n < 1
+               for n in (*cnn_channels, *head_hidden_sizes, decoder_hidden_size,
+                         decoder_layers, layer_embedding_size)):
+            raise ValueError("Network widths and decoder dimensions must be positive integers")
+        if not math.isfinite(dropout) or not 0 <= dropout < 1:
+            raise ValueError("dropout must be finite and in [0, 1)")
         if not math.isfinite(minimum_std) or minimum_std <= 0:
             raise ValueError("minimum_std must be finite and positive")
         self.study = study
@@ -128,8 +162,12 @@ class IBAnet(nn.Module):
         self.input_dimension = sum(self.input_spectra_lengths.values())
         self.output_size = self.max_layers * len(self.elements)
         self.minimum_std = minimum_std
+        self.decoder_hidden_size = decoder_hidden_size
+        self.decoder_layers = decoder_layers
         self.architecture = dict(cnn_channels=tuple(cnn_channels), kernel_size=kernel_size,
-                                 head_hidden_sizes=tuple(head_hidden_sizes), minimum_std=minimum_std)
+                                 head_hidden_sizes=tuple(head_hidden_sizes), minimum_std=minimum_std,
+                                 decoder_hidden_size=decoder_hidden_size, decoder_layers=decoder_layers,
+                                 layer_embedding_size=layer_embedding_size, dropout=dropout)
         mean = torch.zeros(self.input_dimension) if input_mean is None else torch.as_tensor(input_mean, dtype=torch.float32).clone()
         std = torch.ones(self.input_dimension) if input_std is None else torch.as_tensor(input_std, dtype=torch.float32).clone()
         if mean.shape != (self.input_dimension,) or std.shape != mean.shape:
@@ -144,21 +182,32 @@ class IBAnet(nn.Module):
             blocks = []
             previous = 1
             for channels in cnn_channels:
-                blocks.extend([nn.Conv1d(previous, channels, kernel_size, stride=2,
-                                         padding=kernel_size // 2), nn.SiLU()])
+                blocks.append(_ResidualSpectrumBlock(previous, channels, kernel_size))
                 previous = channels
                 length = (length + 1) // 2
             blocks.append(nn.Flatten())
             self.encoders.append(nn.Sequential(*blocks))
             feature_count += previous * length
+        # Flattening preserves absolute energy position; global average pooling
+        # would discard the peak positions needed by the inverse problem.
+        self.context = nn.Sequential(nn.Linear(feature_count, decoder_hidden_size),
+                                     nn.LayerNorm(decoder_hidden_size), nn.SiLU())
+        self.layer_embedding = nn.Embedding(self.max_layers, layer_embedding_size)
+        self.decoder_input_norm = nn.LayerNorm(decoder_hidden_size + layer_embedding_size)
+        self.initial_hidden = nn.Linear(decoder_hidden_size, decoder_layers * decoder_hidden_size)
+        self.decoder = nn.GRU(decoder_hidden_size + layer_embedding_size,
+                              decoder_hidden_size, num_layers=decoder_layers,
+                              batch_first=True, bidirectional=False,
+                              dropout=dropout if decoder_layers > 1 else 0.0)
+        feature_count = decoder_hidden_size
         head = []
         for width in head_hidden_sizes:
-            head.extend([nn.Linear(feature_count, width), nn.SiLU()])
+            head.extend([nn.Linear(feature_count, width), nn.SiLU(), nn.Dropout(dropout)])
             feature_count = width
         self.head = nn.Sequential(*head)
-        self.mean_head = nn.Linear(feature_count, self.output_size)
-        self.std_head = nn.Linear(feature_count, self.output_size)
-        self.presence_head = nn.Linear(feature_count, self.output_size)
+        self.mean_head = nn.Linear(feature_count, len(self.elements))
+        self.std_head = nn.Linear(feature_count, len(self.elements))
+        self.presence_head = nn.Linear(feature_count, len(self.elements))
 
     def forward(self, spectra: torch.Tensor) -> IBAnetPrediction:
         if not torch.onnx.is_in_onnx_export():
@@ -172,11 +221,19 @@ class IBAnet(nn.Module):
         for encoder, length in zip(self.encoders, self.input_spectra_lengths.values()):
             features.append(encoder(x[:, offset:offset + length].unsqueeze(1)))
             offset += length
-        hidden = self.head(torch.cat(features, dim=1))
-        shape = (-1, self.max_layers, len(self.elements))
-        return IBAnetPrediction(F.softplus(self.mean_head(hidden)).reshape(shape),
-                                (F.softplus(self.std_head(hidden)) + self.minimum_std).reshape(shape),
-                                self.presence_head(hidden).reshape(shape))
+        context = self.context(torch.cat(features, dim=1))
+        batch_size = spectra.shape[0]
+        positions = self.layer_embedding(torch.arange(self.max_layers, device=spectra.device))
+        decoder_inputs = self.decoder_input_norm(torch.cat([
+            context.unsqueeze(1).expand(-1, self.max_layers, -1),
+            positions.unsqueeze(0).expand(batch_size, -1, -1)], dim=-1))
+        initial = torch.tanh(self.initial_hidden(context)).reshape(
+            batch_size, self.decoder_layers, self.decoder_hidden_size).transpose(0, 1).contiguous()
+        decoded, _ = self.decoder(decoder_inputs, initial)
+        hidden = self.head(decoded)
+        return IBAnetPrediction(F.softplus(self.mean_head(hidden)),
+                                F.softplus(self.std_head(hidden)) + self.minimum_std,
+                                self.presence_head(hidden))
 
     def predict(self, spectra: torch.Tensor) -> IBAnetPrediction:
         was_training = self.training

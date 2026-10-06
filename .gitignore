@@ -134,3 +134,12 @@ examples/datasets*
 xnra/backup.xnra
 /autonra/
 /ibamlkit/
+
+# Keep the IBAnet evaluation notebook; scan data and generated results stay ignored.
+!/examples/datasets/
+/examples/datasets/*
+!/examples/datasets/NMC_simulated/
+/examples/datasets/NMC_simulated/*
+!/examples/datasets/NMC_simulated/model_test/
+/examples/datasets/NMC_simulated/model_test/*
+!/examples/datasets/NMC_simulated/model_test/ibanet_test.ipynb
