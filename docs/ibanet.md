@@ -147,5 +147,9 @@ loss history and recomputes baseline validation NLL on the current fixed inputs.
 
 The notebook evaluates held-out NLL, physical posterior-mean MAE, presence Brier
 score, and conditional Gaussian coverage. Its final cell compares batched native
-ONNX predictions with PyTorch posterior means. It loads data eagerly; use a
+ONNX predictions with freshly computed CPU/eval PyTorch posterior means from
+the current export weights and identical inputs, rather than cached device
+predictions from an earlier evaluation cell. It loads data eagerly; use a
 streaming training dataset for collections that exceed available memory.
+Rerunning the export cell preserves existing ZIPs and selects a numbered new
+filename, including after a previous parity check failed or was interrupted.

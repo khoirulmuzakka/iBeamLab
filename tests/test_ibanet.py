@@ -294,12 +294,25 @@ def test_notebook_end_to_end_on_small_generated_dataset(tmp_path, monkeypatch):
             source = source.replace("LAYER_EMBEDDING_SIZE = 32", "LAYER_EMBEDDING_SIZE = 4")
         if index == 9:
             source = re.sub(r'("epochs"\s*:\s*)\d+', r'\g<1>1', source)
+        if index == 13:
+            # Export parity must use current CPU/eval weights rather than cached
+            # predictions or an accidentally enabled training/dropout mode.
+            context["estimate"] = np.full_like(context["estimate"], -12345.)
+            context["model"].train()
         exec(compile(source, f"train_ibanet.ipynb cell {index}", "exec"), context)
         if index == 5:
             # This short DummySimulator grid has no spectral support. Supply a
             # count pedestal so the integration test exercises nonzero noise.
             context["x_raw"] += np.linspace(5, 30, context["x_raw"].shape[1], dtype=np.float32)
     assert context["native_edp"].shape[1:] == (2, len(configuration.elements))
+    np.testing.assert_allclose(context["native_edp"], context["export_reference"],
+                               rtol=2e-4, atol=1e-3)
+    assert context["model"].training  # Export did not mutate the live model.
+    first_package = context["package_path"]
+    export_source = "".join(notebook["cells"][13]["source"])
+    exec(compile(export_source, "train_ibanet.ipynb repeated export", "exec"), context)
+    assert first_package.is_file() and context["package_path"].is_file()
+    assert context["package_path"] != first_package
     assert context["weights_path"].is_file()
     checkpoint = torch.load(context["weights_path"], weights_only=True)
     assert "input_mean" in checkpoint["model_state_dict"]
