@@ -1,5 +1,6 @@
 import math
 import json
+import re
 from pathlib import Path
 from dataclasses import replace
 
@@ -264,7 +265,7 @@ def test_notebook_end_to_end_on_small_generated_dataset(tmp_path, monkeypatch):
             source = source.replace("DECODER_HIDDEN_SIZE = 256", "DECODER_HIDDEN_SIZE = 16")
             source = source.replace("LAYER_EMBEDDING_SIZE = 32", "LAYER_EMBEDDING_SIZE = 4")
         if index == 9:
-            source = source.replace('"epochs": 20', '"epochs": 1').replace('"epochs": 10', '"epochs": 1')
+            source = re.sub(r'("epochs"\s*:\s*)\d+', r'\g<1>1', source)
         exec(compile(source, f"train_ibanet.ipynb cell {index}", "exec"), context)
         if index == 5:
             # This short DummySimulator grid has no spectral support. Supply a
