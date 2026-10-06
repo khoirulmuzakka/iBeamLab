@@ -22,6 +22,7 @@ def make_model(layers=2, elements=("Si", "O")):
         ), [],
     )
     model = IBAnet(study, {"PIXE": 13, "RBS": 17}, cnn_channels=(4, 8),
+                   compression_channels=4,
                    head_hidden_sizes=(12,), kernel_size=3,
                    decoder_hidden_size=16, decoder_layers=2, layer_embedding_size=4,
                    input_mean=np.linspace(0, 1, 30), input_std=np.linspace(1, 2, 30))
@@ -41,6 +42,7 @@ def test_shapes_moments_and_gradients():
         assert head.weight.grad is not None and torch.isfinite(head.weight.grad).all()
     for encoder in model.encoders:
         assert encoder[0].conv1.weight.grad.abs().sum() > 0
+        assert encoder[-2].weight.grad.abs().sum() > 0
     assert model.decoder.weight_hh_l0.grad.abs().sum() > 0
     assert model.layer_embedding.weight.grad.abs().sum() > 0
     torch.testing.assert_close(result.mean, result.P * result.Y)
@@ -88,10 +90,36 @@ def test_checkpoint_reconstruction_and_eval_dropout():
     assert not torch.allclose(model(counts).Y, model(counts).Y)
 
 
+def test_channel_compression_preserves_energy_positions_and_reduces_projection():
+    study, _ = make_model()
+    lengths = {"RBS": 2997, "PIXE": 17}
+    compressed = IBAnet(study, lengths)
+    uncompressed = IBAnet(study, lengths, compression_channels=None)
+    for encoder, length in zip(compressed.encoders, compressed.input_spectra_lengths.values()):
+        reduced_length = (length + 15) // 16
+        with torch.no_grad():
+            before = encoder[:-2](torch.rand(1, 1, length))
+            after = encoder[-2](before)
+        assert before.shape == (1, 128, reduced_length)
+        assert after.shape == (1, 16, reduced_length)
+        assert encoder[-2].kernel_size == (1,)
+    assert compressed.context[0].in_features == 16 * (188 + 2)
+    assert uncompressed.context[0].weight.numel() == 8 * compressed.context[0].weight.numel()
+    # An earlier GRU checkpoint has no compression option in its architecture.
+    old_architecture = dict(uncompressed.architecture)
+    old_architecture.pop("compression_channels")
+    restored = IBAnet(study, lengths, compression_channels=None, **old_architecture)
+    restored.load_state_dict(uncompressed.state_dict())
+    inputs = torch.rand(1, sum(lengths.values()))
+    torch.testing.assert_close(restored.predict(inputs).mean, uncompressed.predict(inputs).mean)
+
+
 @pytest.mark.parametrize("kwargs", [
     {"decoder_hidden_size": 0}, {"decoder_layers": 0},
     {"layer_embedding_size": 0}, {"decoder_layers": 1.5},
     {"dropout": -0.1}, {"dropout": 1.0}, {"dropout": float("nan")},
+    {"compression_channels": 0}, {"compression_channels": 1.5},
+    {"compression_channels": True},
 ])
 def test_invalid_decoder_configuration(kwargs):
     study, model = make_model()
@@ -257,7 +285,7 @@ def test_notebook_end_to_end_on_small_generated_dataset(tmp_path, monkeypatch):
             source = source.replace('DATASET_ROOT = EXAMPLES / "datasets"',
                                     f"DATASET_ROOT = Path({str(tmp_path / 'datasets')!r})")
             source = source.replace("MAX_LAYERS = 10", "MAX_LAYERS = 2")
-            source = source.replace('OUTPUT_DIR = EXAMPLES / "artifacts" / "ibanet_multilayer"',
+            source = source.replace('OUTPUT_DIR = EXAMPLES / "artifacts" / "ibanet_multilayer_compressed16"',
                                     f"OUTPUT_DIR = Path({str(tmp_path / 'artifacts')!r})")
         if index == 7:
             source = source.replace("CNN_CHANNELS = (32, 64, 128, 128)", "CNN_CHANNELS = (4, 8)")

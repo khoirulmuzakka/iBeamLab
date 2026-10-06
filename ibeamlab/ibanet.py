@@ -123,6 +123,7 @@ class IBAnet(nn.Module):
     def __init__(self, study: GenerationStudy, input_spectra_lengths: Mapping[str, int], *,
                  elements: Sequence[str] | None = None,
                  cnn_channels: Sequence[int] = (32, 64, 128, 128), kernel_size: int = 7,
+                 compression_channels: int | None = 16,
                  head_hidden_sizes: Sequence[int] = (128,), minimum_std: float = 1e-3,
                  decoder_hidden_size: int = 256, decoder_layers: int = 2,
                  layer_embedding_size: int = 32, dropout: float = 0.1,
@@ -153,6 +154,10 @@ class IBAnet(nn.Module):
             raise ValueError("Network widths and decoder dimensions must be positive integers")
         if not math.isfinite(dropout) or not 0 <= dropout < 1:
             raise ValueError("dropout must be finite and in [0, 1)")
+        if compression_channels is not None and (
+                not isinstance(compression_channels, int) or isinstance(compression_channels, bool)
+                or compression_channels < 1):
+            raise ValueError("compression_channels must be a positive integer or None")
         if not math.isfinite(minimum_std) or minimum_std <= 0:
             raise ValueError("minimum_std must be finite and positive")
         self.study = study
@@ -165,6 +170,7 @@ class IBAnet(nn.Module):
         self.decoder_hidden_size = decoder_hidden_size
         self.decoder_layers = decoder_layers
         self.architecture = dict(cnn_channels=tuple(cnn_channels), kernel_size=kernel_size,
+                                 compression_channels=compression_channels,
                                  head_hidden_sizes=tuple(head_hidden_sizes), minimum_std=minimum_std,
                                  decoder_hidden_size=decoder_hidden_size, decoder_layers=decoder_layers,
                                  layer_embedding_size=layer_embedding_size, dropout=dropout)
@@ -185,6 +191,11 @@ class IBAnet(nn.Module):
                 blocks.append(_ResidualSpectrumBlock(previous, channels, kernel_size))
                 previous = channels
                 length = (length + 1) // 2
+            # Mix feature channels independently at each energy position.
+            # None preserves the uncompressed CNN/GRU checkpoint layout.
+            if compression_channels is not None:
+                blocks.append(nn.Conv1d(previous, compression_channels, kernel_size=1))
+                previous = compression_channels
             blocks.append(nn.Flatten())
             self.encoders.append(nn.Sequential(*blocks))
             feature_count += previous * length

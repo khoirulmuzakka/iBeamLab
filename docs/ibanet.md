@@ -9,7 +9,8 @@ their generation metadata against the selected configuration.
 `from ibeamlab import IBAnet, IBAnetLoss` loads the optional PyTorch module.
 IBAnet takes a `GenerationStudy` and a mapping of detector labels to channel
 counts. Every detector has a separate residual strided 1D CNN with GroupNorm.
-Flattened features retain absolute energy position and are fused into a
+A 1×1 convolution compresses its final feature channels to 16 before flattening,
+without changing energy positions. Flattened features retain absolute energy position and are fused into a
 LayerNorm-normalized spectrum context. A unidirectional GRU decodes layers
 from the surface toward the bottom, with spectrum context and a learned
 layer-position embedding at every step. Its initial hidden state also comes
@@ -34,12 +35,21 @@ draws = prediction.sample(count=16)
 ```
 
 Defaults are `cnn_channels=(32, 64, 128, 128)`, `kernel_size=7`,
+`compression_channels=16`,
 `decoder_hidden_size=256`, `decoder_layers=2`, `layer_embedding_size=32`,
 `head_hidden_sizes=(128,)`, and `dropout=0.1`. Dropout is applied between GRU
 layers and in the shared output MLP; it is disabled by `predict()` and export.
 `head_hidden_sizes` configures the shared MLP **after** the GRU. GroupNorm and
 LayerNorm use no running batch statistics. The constructor's `architecture`
 dictionary contains all network options needed to reconstruct a checkpoint.
+
+For a 2997-bin spectrum, the final CNN produces `[batch, 128, 188]`.
+Compression produces `[batch, 16, 188]`, then flattening gives 3008 features.
+The `3008 → 256` context projection has 770,048 weights rather than 6,160,384.
+Use `compression_channels=32` for a wider bottleneck, or `None` to disable
+compression and load an earlier uncompressed CNN/GRU state dict. Compressed
+models require new training; the notebook uses a separate output directory
+to preserve previous weights. Existing ONNX packages remain usable.
 
 The architecture replaces the former CNN/MLP, so its PyTorch weights cannot
 be loaded into the new model. Retrain into a new output directory. Existing
