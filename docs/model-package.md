@@ -34,3 +34,21 @@ outputs, and writes directory and ZIP packages. Python exposes the same API.
 
 For the trainable PyTorch layerwise recurrent forward model and package export
 workflow, see [LRN](lrn.md).
+
+
+Inverse EDP format version 4 adds two named ONNX float32 outputs alongside the
+posterior mean. All outputs are `[batch, max_layers * number_of_elements]` in
+layer-major order. The inverse table requires `presence_probability_output_name`,
+`posterior_std_output_name`, `posterior_std_inverse_factor` (finite and positive),
+and `uncertainty_predicted` (boolean). The runtime applies the existing output
+inverse transform to the mean, leaves probabilities unchanged, and divides
+standard deviations by the independent std factor. Standard deviations must
+already describe the full posterior, including presence uncertainty.
+
+Every `EdpMap` has matching `values`, `presenceProbability`, and `posteriorStd`
+matrices (Python: `values`, `presence_probability`, `posterior_std`). Validation
+requires finite nonnegative means/std and probabilities in [0, 1]. Deterministic
+models may emit probability 1 and std 0 and set `uncertainty_predicted=false`.
+Version 3 inverse packages remain supported with deterministic defaults; version
+2 forward packages are unchanged. Adding fields changes the C++ ABI: rebuild
+native consumers and restart Python kernels after updating the extension.

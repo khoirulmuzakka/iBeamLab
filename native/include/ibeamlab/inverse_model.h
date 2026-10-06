@@ -11,9 +11,15 @@
 namespace ibeamlab::inference {
 /** @brief Elemental areal densities; values[layer][element] includes trailing padding. */
 struct IBEAMLAB_API EdpMap {
+    using Matrix = std::vector<std::vector<float>>;
     std::vector<std::string> elements;
     std::string unit{"1e15 atoms/cm2"};
-    std::vector<std::vector<float>> values;
+    Matrix values;
+    Matrix presenceProbability; // Dimensionless [0, 1], same layout as values.
+    Matrix posteriorStd; // Full posterior standard deviation, in unit.
+    bool uncertaintyPredicted{false}; // False means a deterministic convention.
+    /** @brief Validates all three mandatory matrices and their shared layout. */
+    void validate() const;
     /** @brief Reconstructs thickness/composition, preserving template fixed properties.
      * Removes trailing zero layers; rejects an entirely empty profile.
      */

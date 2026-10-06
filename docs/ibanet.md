@@ -96,7 +96,8 @@ cells given the spectrum. They do not impose a contiguous layer mask or joint
 covariance between compositions.
 
 `model.export(path, output_inverse_factor=TARGET_SCALE)` writes a native format
-version 3 package whose point estimate is `P * Y`. Input preprocessing is in the
+version 4 package with posterior mean `P * Y`, presence probability `P`, and
+posterior standard deviation `sqrt(P * R**2 + P * (1-P) * Y**2)`. Input preprocessing is in the
 ONNX graph; the package's output transform reverses target scaling. The package
 contains the reference sample/setup, detector lengths, element order, and EDP
 layout. It requires all declared spectra under the reference conditions.
@@ -123,6 +124,8 @@ measurement = InverseInput(
 )
 result = deployed.predict(measurement)
 physical_edp = result.values
+probability = result.presence_probability
+physical_std = result.posterior_std
 ```
 
 For already pileup-free experimental spectra, pass
@@ -132,8 +135,13 @@ corrections. For dataset spectra already at training conditions use
 `deployed.predict_prepared(spectra)`; embedded input normalization still runs.
 
 The native package exposes the posterior mean, which can retain small positive
-densities in absent elements and padded layers. It does not expose `Y`, `R`, or
-`P`. Keep the PyTorch checkpoint for probabilistic predictions and sampling.
+densities in absent elements and padded layers. All three matrices have shape
+`[layer, element]`; mean and standard deviation use `1e15 atoms/cm2`. Probability
+is dimensionless and never target-scaled. `uncertainty_predicted` is true for
+IBAnet exports. Legacy version 3 packages remain readable, with probability 1
+for positive densities (0 for exact zeros), standard deviation 0, and
+`uncertainty_predicted=False`. Re-export a trained checkpoint to obtain actual
+probabilities and uncertainty. Keep the PyTorch checkpoint for sampling.
 The notebook saves architecture, layout, target scale, configuration, split
 indices, normalization buffers, and best validation weights together. Its
 checkpoint reload option is enabled by default: rerunning the training cell

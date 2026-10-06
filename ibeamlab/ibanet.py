@@ -258,9 +258,9 @@ class IBAnet(nn.Module):
     def export(self, path: str | Path, *, output_inverse_factor: float = 1.0,
                opset_version: int = 17, need_pileup_subtraction: bool = True,
                pileup_fudge_factor_seconds: float = 0.4e-6) -> Path:
-        """Export posterior mean P*Y as a native version 3 EDP package.
+        """Export posterior mean, presence probability and posterior std (version 4).
 
-        Native EDP packages hold a point estimate, not R/P or posterior samples.
+        Posterior std includes both Gaussian variance and presence uncertainty.
         Input normalization is inside ONNX; metadata input transform is identity.
         The runtime divides the graph output by output_inverse_factor.
         need_pileup_subtraction declares pileup-free training inputs. Experimental
@@ -292,6 +292,10 @@ class IBAnet(nn.Module):
         inverse = native.model.InverseModelMetadata()
         inverse.need_pileup_subtraction = need_pileup_subtraction
         inverse.pileup_fudge_factor_seconds = pileup_fudge_factor_seconds
+        inverse.presence_probability_output_name = "presence_probability"
+        inverse.posterior_std_output_name = "posterior_std"
+        inverse.posterior_std_inverse_factor = output_inverse_factor
+        inverse.uncertainty_predicted = True
         inverse.sample_template, inverse.setup_template = config.sample, config.setup
         specs = []
         for label, length in self.input_spectra_lengths.items():
@@ -310,13 +314,16 @@ class IBAnet(nn.Module):
                 self.model = model
 
             def forward(self, inputs):
-                return self.model(inputs).mean.flatten(1)
+                prediction = self.model(inputs)
+                return (prediction.mean.flatten(1), prediction.P.flatten(1),
+                        prediction.variance.clamp_min(0).sqrt().flatten(1))
 
         # Export a CPU copy so a failed export never moves or changes the live model.
         import copy
         exported = PointEstimate(copy.deepcopy(self).cpu().eval())
-        kwargs = dict(input_names=["inputs"], output_names=["outputs"],
-                      dynamic_axes={"inputs": {0: "batch"}, "outputs": {0: "batch"}},
+        kwargs = dict(input_names=["inputs"], output_names=["outputs", "presence_probability", "posterior_std"],
+                      dynamic_axes={"inputs": {0: "batch"}, "outputs": {0: "batch"},
+                                    "presence_probability": {0: "batch"}, "posterior_std": {0: "batch"}},
                       opset_version=opset_version, do_constant_folding=True)
         if "dynamo" in inspect.signature(torch.onnx.export).parameters:
             kwargs["dynamo"] = False

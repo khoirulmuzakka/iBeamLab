@@ -33,7 +33,7 @@ class InverseInput:
 
 @dataclass(frozen=True, slots=True)
 class InversePrediction:
-    """Elemental areal-density matrix, ordered from surface to depth."""
+    """Mean densities, presence probabilities, and posterior std from surface to depth."""
     edp: object
     @property
     def values(self):
@@ -42,6 +42,17 @@ class InversePrediction:
     @property
     def elements(self) -> tuple[str, ...]:
         return tuple(self.edp.elements)
+    @property
+    def presence_probability(self):
+        import numpy as np
+        return np.asarray(self.edp.presence_probability, dtype=np.float32)
+    @property
+    def posterior_std(self):
+        import numpy as np
+        return np.asarray(self.edp.posterior_std, dtype=np.float32)
+    @property
+    def uncertainty_predicted(self) -> bool:
+        return self.edp.uncertainty_predicted
     @property
     def unit(self) -> str:
         return self.edp.unit

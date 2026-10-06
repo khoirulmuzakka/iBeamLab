@@ -367,13 +367,24 @@ void validateParams(const sample::SampleModel &s, const sample::ExperimentalSetu
     }
 }
 void validate(const ModelMetadata &m) {
-    if ((m.formatVersion != 2 && m.formatVersion != 3) || !m.inputDimension || !m.outputDimension)
+    if ((m.formatVersion != 2 && m.formatVersion != 3 && m.formatVersion != 4) || !m.inputDimension || !m.outputDimension)
         throw std::invalid_argument("invalid model metadata");
     validateTransform(m.inputTransform, m.inputDimension);
     validateTransform(m.outputTransform, m.outputDimension);
     if (m.modelType == ModelType::Inverse) {
-        if (m.formatVersion != 3)
+        if (m.formatVersion != 3 && m.formatVersion != 4)
             throw std::invalid_argument("inverse EDP models require package format version 3");
+        const auto &inverse = m.inverse;
+        if (m.formatVersion == 4) {
+            if (inverse.presenceProbabilityOutputName.empty() || inverse.posteriorStdOutputName.empty() ||
+                inverse.presenceProbabilityOutputName == inverse.posteriorStdOutputName ||
+                inverse.presenceProbabilityOutputName == m.outputName || inverse.posteriorStdOutputName == m.outputName ||
+                !std::isfinite(inverse.posteriorStdInverseFactor) || inverse.posteriorStdInverseFactor <= 0)
+                throw std::invalid_argument("invalid inverse posterior output metadata");
+        } else if (!inverse.presenceProbabilityOutputName.empty() || !inverse.posteriorStdOutputName.empty() ||
+                   inverse.uncertaintyPredicted) {
+            throw std::invalid_argument("posterior outputs require package format version 4");
+        }
         m.inverse.sampleTemplate.validate();
         m.inverse.setupTemplate.validate();
         if (!std::isfinite(m.inverse.pileupFudgeFactorSeconds) ||
@@ -476,6 +487,13 @@ std::string manifest(const ModelMetadata &m) {
                              {"input_parameters", parameters(m.forward.inputParameters)},
                              {"output_spectra", spectra(m.forward.outputSpectra)}});
     std::ostringstream s;
+    if (m.modelType == ModelType::Inverse && m.formatVersion == 4) {
+        auto &t = *r["inverse"].as_table();
+        t.insert("presence_probability_output_name", m.inverse.presenceProbabilityOutputName);
+        t.insert("posterior_std_output_name", m.inverse.posteriorStdOutputName);
+        t.insert("posterior_std_inverse_factor", m.inverse.posteriorStdInverseFactor);
+        t.insert("uncertainty_predicted", m.inverse.uncertaintyPredicted);
+    }
     s << r;
     return s.str();
 }
@@ -501,7 +519,7 @@ ModelPackage ModelPackage::open(const std::filesystem::path &p) {
     const std::string text(reinterpret_cast<const char *>(b.data()), b.size());
     const auto r = toml::parse(text);
     if (r["format"].value_or<std::string>("") != "ibeamlab.onnx-package" ||
-        (r["format_version"].value_or<int>(0) != 2 && r["format_version"].value_or<int>(0) != 3))
+        (r["format_version"].value_or<int>(0) != 2 && r["format_version"].value_or<int>(0) != 3 && r["format_version"].value_or<int>(0) != 4))
         throw std::runtime_error("unsupported model package");
     ModelPackage q;
     auto &m = q.metadata_;
@@ -543,9 +561,21 @@ ModelPackage ModelPackage::open(const std::filesystem::path &p) {
             !(*t)["pileup_fudge_factor_seconds"].value<double>())
             throw std::runtime_error("pileup_fudge_factor_seconds must be a number");
         m.inverse.pileupFudgeFactorSeconds = (*t)["pileup_fudge_factor_seconds"].value_or(0.4e-6);
-        if (m.formatVersion != 3)
+        if (m.formatVersion != 3 && m.formatVersion != 4)
             throw std::runtime_error(
                 "legacy inverse parameter packages must be re-exported as EDP version 3");
+        if (m.formatVersion == 4) {
+            auto probability = (*t)["presence_probability_output_name"].value<std::string>();
+            auto deviation = (*t)["posterior_std_output_name"].value<std::string>();
+            auto factor = (*t)["posterior_std_inverse_factor"].value<double>();
+            auto predicted = (*t)["uncertainty_predicted"].value<bool>();
+            if (!probability || !deviation || !factor || !predicted)
+                throw std::runtime_error("missing or invalid inverse posterior output metadata");
+            m.inverse.presenceProbabilityOutputName = *probability;
+            m.inverse.posteriorStdOutputName = *deviation;
+            m.inverse.posteriorStdInverseFactor = *factor;
+            m.inverse.uncertaintyPredicted = *predicted;
+        }
         auto *edp = (*t)["output_edp"].as_table();
         if (!edp || (*edp)["layer_order"].value_or<std::string>("") != "surface_to_depth" ||
             (*edp)["layer_semantics"].value_or<std::string>("") != "variable_thickness" ||
@@ -586,7 +616,9 @@ ModelPackage ModelPackage::open(const std::filesystem::path &p) {
 ModelPackage ModelPackage::fromOnnx(const std::filesystem::path &p, ModelMetadata m) {
     ModelPackage q;
     q.modelBytes_ = readFile(p, MaxModel);
-    m.formatVersion = m.modelType == ModelType::Inverse ? 3 : 2;
+    m.formatVersion = m.modelType == ModelType::Inverse
+        ? ((!m.inverse.presenceProbabilityOutputName.empty() || !m.inverse.posteriorStdOutputName.empty()) ? 4 : 3)
+        : 2;
     if (m.createdUtc.empty())
         m.createdUtc = now();
     m.modelSize = q.modelBytes_.size();

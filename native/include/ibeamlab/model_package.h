@@ -48,6 +48,10 @@ struct InverseModelMetadata {
     /** @brief Training spectra are pileup-free; predict() removes measured pileup. */
     bool needPileupSubtraction{false};
     double pileupFudgeFactorSeconds{0.4e-6};
+    // Version 4 inverse packages have three named [batch, layer-major cells] outputs.
+    std::string presenceProbabilityOutputName, posteriorStdOutputName;
+    double posteriorStdInverseFactor{1}; // Divide graph std by this positive factor.
+    bool uncertaintyPredicted{false};
 };
 struct ForwardModelMetadata {
     bool bareSpectrumCorrections{false}; // Legacy packages retain raw inference.

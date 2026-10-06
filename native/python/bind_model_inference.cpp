@@ -41,6 +41,10 @@ void bindModel(py::module_ &root) {
         .def_readwrite("need_pileup_subtraction", &InverseModelMetadata::needPileupSubtraction)
         .def_readwrite("pileup_fudge_factor_seconds",
                        &InverseModelMetadata::pileupFudgeFactorSeconds)
+        .def_readwrite("presence_probability_output_name", &InverseModelMetadata::presenceProbabilityOutputName)
+        .def_readwrite("posterior_std_output_name", &InverseModelMetadata::posteriorStdOutputName)
+        .def_readwrite("posterior_std_inverse_factor", &InverseModelMetadata::posteriorStdInverseFactor)
+        .def_readwrite("uncertainty_predicted", &InverseModelMetadata::uncertaintyPredicted)
         .def_readwrite("output_edp", &InverseModelMetadata::outputEdp);
     py::class_<ForwardModelMetadata>(m, "ForwardModelMetadata")
         .def(py::init<>())
@@ -92,6 +96,10 @@ void bindInference(py::module_ &root) {
         .def_readwrite("elements", &EdpMap::elements)
         .def_readwrite("unit", &EdpMap::unit)
         .def_readwrite("values", &EdpMap::values)
+        .def_readwrite("presence_probability", &EdpMap::presenceProbability)
+        .def_readwrite("posterior_std", &EdpMap::posteriorStd)
+        .def_readwrite("uncertainty_predicted", &EdpMap::uncertaintyPredicted)
+        .def("validate", &EdpMap::validate)
         .def("to_sample", &EdpMap::toSample, py::arg("sample_template"));
     py::class_<InverseResult>(m, "InverseResult").def_readonly("edp", &InverseResult::edp);
     py::class_<InverseInput>(m, "InverseInput")

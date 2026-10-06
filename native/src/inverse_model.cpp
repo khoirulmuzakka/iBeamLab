@@ -141,11 +141,14 @@ InverseModel::predictPrepared(const std::vector<std::vector<simulator::Spectrum>
         }
         rows.push_back(std::move(row));
     }
-    const auto values = impl_->model.run(rows);
+    const auto prediction = impl_->model.runPrediction(rows);
+    const auto &values = prediction.values;
     std::vector<InverseResult> results;
     results.reserve(values.size());
-    for (const auto &row : values) {
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        const auto &row = values[index];
         EdpMap edp{m.outputEdp.elements, m.outputEdp.unit, {}};
+        edp.uncertaintyPredicted = m.uncertaintyPredicted;
         bool padding = false;
         for (std::size_t layer = 0; layer < m.outputEdp.maxLayers; ++layer) {
             auto first = row.begin() + layer * edp.elements.size();
@@ -158,14 +161,48 @@ InverseModel::predictPrepared(const std::vector<std::vector<simulator::Spectrum>
             if (padding && !zero)
                 throw std::runtime_error("inverse EDP zero layers must be trailing padding");
             padding = padding || zero;
+            std::vector<float> probability(edp.elements.size()), deviation(edp.elements.size(), 0);
+            const auto offset = layer * edp.elements.size();
+            for (std::size_t j = 0; j < edp.elements.size(); ++j) {
+                probability[j] = prediction.presenceProbability.empty()
+                    ? (densities[j] > 0 ? 1.0f : 0.0f)
+                    : prediction.presenceProbability[index][offset + j];
+                if (!prediction.posteriorStd.empty())
+                    deviation[j] = prediction.posteriorStd[index][offset + j];
+            }
             edp.values.push_back(std::move(densities));
+            edp.presenceProbability.push_back(std::move(probability));
+            edp.posteriorStd.push_back(std::move(deviation));
         }
+        edp.validate();
         results.push_back({std::move(edp)});
     }
     return results;
 }
 
+void EdpMap::validate() const {
+    if (unit != "1e15 atoms/cm2" || elements.empty() || values.empty() ||
+        presenceProbability.size() != values.size() || posteriorStd.size() != values.size())
+        throw std::invalid_argument("EDP requires three matrices with matching dimensions");
+    std::unordered_set<std::string> names;
+    for (const auto &element : elements)
+        if (element.empty() || !names.insert(element).second)
+            throw std::invalid_argument("EDP elements must be nonempty and unique");
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (values[i].size() != elements.size() || presenceProbability[i].size() != elements.size() ||
+            posteriorStd[i].size() != elements.size())
+            throw std::invalid_argument("EDP matrix dimensions do not match elements");
+        for (std::size_t j = 0; j < elements.size(); ++j) {
+            const auto mean = values[i][j], probability = presenceProbability[i][j], std = posteriorStd[i][j];
+            if (!std::isfinite(mean) || mean < 0 || !std::isfinite(probability) ||
+                probability < 0 || probability > 1 || !std::isfinite(std) || std < 0)
+                throw std::invalid_argument("invalid EDP density, probability, or standard deviation");
+        }
+    }
+}
+
 sample::SampleModel EdpMap::toSample(const sample::SampleModel &sampleTemplate) const {
+    validate();
     sampleTemplate.validate();
     if (unit != "1e15 atoms/cm2" || elements.empty() || values.empty() ||
         sampleTemplate.layers.size() != values.size())

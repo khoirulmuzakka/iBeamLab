@@ -4,12 +4,16 @@
 #include <ibeamlab/transforms.h>
 #include <memory>
 namespace ibeamlab::inference::detail {
+struct OnnxPrediction {
+    preprocessing::Matrix values, presenceProbability, posteriorStd;
+};
 class OnnxModel {
   public:
     OnnxModel(model::ModelPackage package, InferenceOptions options);
     ~OnnxModel();
     const model::ModelMetadata &metadata() const noexcept;
     preprocessing::Matrix run(const preprocessing::Matrix &physicalInput) const;
+    OnnxPrediction runPrediction(const preprocessing::Matrix &physicalInput) const;
 
   private:
     struct Impl;

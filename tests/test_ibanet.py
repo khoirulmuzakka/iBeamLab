@@ -171,13 +171,14 @@ def test_export_matches_native_multi_detector_edp(tmp_path):
     _, model = make_model()
     counts = torch.rand(2, 30) * 30
     expected = model.predict(counts).mean.numpy() / 0.01
+    posterior = model.predict(counts)
     original = {k: v.clone() for k, v in model.state_dict().items()}
     path = model.export(tmp_path / "ibanet.zip", output_inverse_factor=0.01)
     assert model.training
     for key, value in model.state_dict().items():
         torch.testing.assert_close(value, original[key])
     raw = ibl._native.native.model.ModelPackage.open(path).metadata
-    assert raw.format_version == 3 and raw.class_name == "IBAnet"
+    assert raw.format_version == 4 and raw.class_name == "IBAnet"
     assert raw.inverse.need_pileup_subtraction
     assert raw.inverse.pileup_fudge_factor_seconds == pytest.approx(0.4e-6)
     assert list(raw.inverse.output_edp.elements) == ["Si", "O"]
@@ -185,6 +186,11 @@ def test_export_matches_native_multi_detector_edp(tmp_path):
                 "RBS": ibl.Spectrum("RBS", row[:17].numpy())} for row in counts]
     actual = ibl.InverseModel(path).predict_prepared(batches)
     np.testing.assert_allclose(np.stack([x.values for x in actual]), expected, rtol=2e-5, atol=1e-5)
+    np.testing.assert_allclose(np.stack([x.presence_probability for x in actual]), posterior.P.numpy(), rtol=2e-5, atol=1e-6)
+    np.testing.assert_allclose(np.stack([x.posterior_std for x in actual]), posterior.variance.sqrt().numpy() / 0.01, rtol=2e-5, atol=1e-5)
+    assert all(x.uncertainty_predicted for x in actual)
+    for result in actual:
+        result.edp.validate()
     no_subtraction = model.export(tmp_path / "ibanet_with_pileup.zip", need_pileup_subtraction=False)
     assert not ibl._native.native.model.ModelPackage.open(no_subtraction).metadata.inverse.need_pileup_subtraction
     with pytest.raises(Exception):
@@ -383,3 +389,48 @@ def test_notebook_end_to_end_on_small_generated_dataset(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="Checkpoint schema/configuration differs"):
         exec(compile(training_source, "train_ibanet.ipynb incompatible rerun", "exec"), context)
     assert context["weights_path"].read_bytes() == before_rejected_reload
+
+
+def test_edp_requires_probability_and_std_matrices():
+    native = ibl._native.native
+    edp = native.inference.EdpMap()
+    edp.elements = ["Si"]
+    edp.values = [[2.0]]
+    with pytest.raises(ValueError):
+        edp.validate()
+    edp.presence_probability = [[0.4]]
+    edp.posterior_std = [[0.5]]
+    edp.validate()
+    for probability, deviation in ((1.1, 0.5), (float("nan"), 0.5), (0.4, -1.0)):
+        edp.presence_probability = [[probability]]
+        edp.posterior_std = [[deviation]]
+        with pytest.raises(ValueError):
+            edp.validate()
+
+
+def test_legacy_inverse_export_has_deterministic_defaults(tmp_path):
+    onnx = pytest.importorskip("onnx")
+    import zipfile
+    _, model = make_model()
+    package = model.export(tmp_path / "posterior.zip")
+    native = ibl._native.native
+    metadata = native.model.ModelPackage.open(package).metadata
+    with zipfile.ZipFile(package) as archive:
+        graph = onnx.load_from_string(archive.read("model.onnx"))
+    del graph.graph.output[1:]
+    graph_path = tmp_path / "legacy.onnx"
+    onnx.save(graph, graph_path)
+    inverse = metadata.inverse
+    inverse.presence_probability_output_name = ""
+    inverse.posterior_std_output_name = ""
+    inverse.uncertainty_predicted = False
+    metadata.inverse = inverse
+    legacy = native.model.ModelPackage.from_onnx(graph_path, metadata)
+    assert legacy.metadata.format_version == 3
+    legacy_path = tmp_path / "legacy.zip"
+    legacy.write(legacy_path)
+    result = ibl.InverseModel(legacy_path).predict_prepared(
+        {"RBS": ibl.Spectrum("RBS", np.ones(17)), "PIXE": ibl.Spectrum("PIXE", np.ones(13))})
+    np.testing.assert_array_equal(result.presence_probability, (result.values > 0).astype(np.float32))
+    np.testing.assert_array_equal(result.posterior_std, np.zeros_like(result.values))
+    assert not result.uncertainty_predicted
