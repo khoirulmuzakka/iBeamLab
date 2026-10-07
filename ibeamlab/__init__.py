@@ -24,7 +24,7 @@ __all__ = [
     "FailureRecord", "ForwardModel", "GenerationConfiguration", "GenerationProgress", "GenerationStudy",
     "GenerationSummary", "IBAnet", "IBAnetLoss", "IBAnetPrediction", "IBeamLabError", "InferenceError", "InverseModel",
     "InverseInput", "InversePrediction", "Isotope", "Layer", "LinearCalibration", "LRNModel", "Model",
-    "ModelPackageError", "NamedValue", "NativeExtensionError", "Parameter", "Sample",
+    "LRN_AD", "ModelPackageError", "NamedValue", "NativeExtensionError", "Parameter", "Sample",
     "SimnraMethod", "SimnraSimulator", "SimnraUnavailableError", "SimulationError",
     "SimulationFailure", "SimulationResult", "Simulator", "Species", "Spectrum",
     "SetupVariation", "ValidationError", "load_generation_configuration", "load_model", "open_dataset", "vary",
@@ -36,6 +36,9 @@ def __getattr__(name: str):
     if name in {"IBAnet", "IBAnetLoss", "IBAnetPrediction"}:
         from . import ibanet
         return getattr(ibanet, name)
+    if name == "LRN_AD":
+        from .lrn_ad import LRN_AD
+        return LRN_AD
     if name == "LRNModel":
         from .lrn import LRNModel
         return LRNModel

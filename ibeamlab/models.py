@@ -153,6 +153,9 @@ def load_model(path: str | Path, *, threads: int = 1, correction_threads: int = 
         raise ModelPackageError(f"cannot load model package {path}: {error}") from error
 
 def __getattr__(name: str):
+    if name == "LRN_AD":
+        from .lrn_ad import LRN_AD
+        return LRN_AD
     if name == "LRNModel":
         try:
             from .lrn import LRNModel
@@ -161,4 +164,4 @@ def __getattr__(name: str):
         return LRNModel
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-__all__ = ["ForwardModel", "InverseInput", "InverseModel", "InversePrediction", "LRNModel", "Model", "NamedValue", "load_model"]
+__all__ = ["ForwardModel", "InverseInput", "InverseModel", "InversePrediction", "LRNModel", "LRN_AD", "Model", "NamedValue", "load_model"]

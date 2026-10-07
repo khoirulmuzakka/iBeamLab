@@ -331,7 +331,7 @@ class LRNModel(nn.Module):
         config = self.study._config()
         metadata = native.model.ModelMetadata()
         metadata.model_type = native.model.ModelType.FORWARD
-        metadata.class_name = type(self).__name__
+        metadata.class_name = getattr(self, "export_class_name", type(self).__name__)
         metadata.input_dimension = self.input_dimension
         metadata.output_dimension = self.output_size
         metadata.opset_version = int(opset_version)
