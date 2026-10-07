@@ -161,3 +161,37 @@ predictions from an earlier evaluation cell. It loads data eagerly; use a
 streaming training dataset for collections that exceed available memory.
 Rerunning the export cell preserves existing ZIPs and selects a numbered new
 filename, including after a previous parity check failed or was interrupted.
+
+
+## Surrogate-informed fine-tuning
+
+[finetune_ibanet_surrogate.ipynb](../examples/finetune_ibanet_surrogate.ipynb)
+loads existing IBAnet and LRN PyTorch checkpoints. It preserves the inverse
+checkpoint's target scale, normalization, dataset ordering, and split. LRN
+weights are frozen, but its forward call retains gradients through the predicted
+mean EDP. A Torch adapter converts physical elemental densities to thicknesses
+and concentrations and applies the saved LRN scaling; a parity check compares
+this adapter with native preprocessing.
+
+The training objective is the supervised spike-and-slab NLL plus a ramped
+count-space spectrum-reconstruction penalty. Reconstruction targets are the
+clean expected spectra; Poisson noise, if configured, affects inverse inputs
+only. The spectrum term is normalized by its baseline validation value.
+Checkpoint selection uses the fixed final weight throughout the ramp, and
+separate NLL, reconstruction, physical EDP MAE, and presence Brier metrics are
+reported for the held-out data. The true-profile reconstruction diagnostic
+measures the surrogate error floor before fine-tuning.
+
+Edit checkpoint/data paths and match `LRN_ARCHITECTURE` to the original run.
+The initial notebook supports the single-detector, fixed-setup LRN schema from
+`train_lrn_multilayer.ipynb`. The older LRN checkpoint lacks complete scientific
+configuration provenance, so the user must verify matching reference conditions.
+Only trusted LRN checkpoints should be loaded because their NumPy metadata
+requires `weights_only=False`.
+
+No hard padding mask is applied to predicted profiles: small positive deeper
+layers remain active in LRN. The reconstruction is the forward prediction of
+the posterior mean, rather than a marginal spectrum likelihood. Surrogate error
+and inverse ambiguity can therefore limit or reverse improvements; assess the
+separate EDP and spectrum metrics before deployment. Export is a standard
+three-output IBAnet package and has no inference-time LRN dependency.

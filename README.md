@@ -45,6 +45,7 @@ not require SIMNRA. PyTorch is needed for training, not for running exported mod
 | Define a sample and simulate its spectra | Python example below; [quick start](docs/getting-started.md) |
 | Generate a reproducible multilayer training collection | [generation configuration](examples/multilayer-generation.toml) and [generation script](examples/generate_multilayer.py) |
 | Train a spectra-to-depth-profile inverse model | [train_ibanet.ipynb](examples/train_ibanet.ipynb); [IBAnet guide](docs/ibanet.md) |
+| Fine-tune IBAnet with a frozen forward surrogate | [finetune_ibanet_surrogate.ipynb](examples/finetune_ibanet_surrogate.ipynb) |
 | Train a sample-to-spectra forward surrogate | [train_lrn_multilayer.ipynb](examples/train_lrn_multilayer.ipynb); [LRN guide](docs/lrn.md) |
 | Run a trained model in Python or C++ | Model-package examples below; [package format](docs/model-package.md) |
 | Explore spatial scans and compare reconstructions | [simulated_NMC.ipynb](examples/simulated_NMC.ipynb) and [compare_spatial_scan_soc.ipynb](examples/compare_spatial_scan_soc.ipynb) |
