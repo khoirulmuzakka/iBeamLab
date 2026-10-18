@@ -51,7 +51,7 @@ struct OnnxModel::Impl {
         : package(std::move(p)), input(makeTransform(package.metadata().inputTransform)),
           output(makeTransform(package.metadata().outputTransform)) {
 #ifdef IBEAMLAB_HAS_ONNX
-        if (tuning.executionProvider != "cpu")
+        if (tuning.executionProvider != "cpu" && tuning.executionProvider != "cuda")
             throw std::invalid_argument("unsupported ONNX execution provider");
         if (tuning.intraOpThreads > 0)
             options.SetIntraOpNumThreads(tuning.intraOpThreads);
@@ -61,8 +61,31 @@ struct OnnxModel::Impl {
         options.SetGraphOptimizationLevel(tuning.enableGraphOptimizations
                                               ? GraphOptimizationLevel::ORT_ENABLE_ALL
                                               : GraphOptimizationLevel::ORT_DISABLE_ALL);
+        if (tuning.executionProvider == "cuda") {
+            if (tuning.deviceId < 0)
+                throw std::invalid_argument("CUDA deviceId must be nonnegative");
+#ifdef IBEAMLAB_HAS_CUDA
+            try {
+                OrtCUDAProviderOptions cuda{};
+                cuda.device_id = tuning.deviceId;
+                options.AppendExecutionProvider_CUDA(cuda);
+            } catch (const Ort::Exception &e) {
+                throw std::runtime_error(std::string("Cannot initialize ONNX CUDA provider for device ") +
+                    std::to_string(tuning.deviceId) +
+                    ". Check the NVIDIA driver, GPU ONNX Runtime, CUDA and cuDNN DLLs: " + e.what());
+            }
+#else
+            throw std::runtime_error("CUDA requested but iBeamLab was built for CPU ONNX Runtime. "
+                                     "Configure IBEAMLAB_ONNX_PROVIDER=CUDA.");
+#endif
+        }
         const auto &b = package.modelBytes();
-        session = std::make_unique<Ort::Session>(environment(), b.data(), b.size(), options);
+        try {
+            session = std::make_unique<Ort::Session>(environment(), b.data(), b.size(), options);
+        } catch (const Ort::Exception &e) {
+            throw std::runtime_error("Cannot create ONNX " + tuning.executionProvider +
+                                     " session: " + e.what());
+        }
         const auto &m = package.metadata();
         outputNames = {m.outputName};
         if (m.modelType == model::ModelType::Inverse && m.formatVersion == 4) {

@@ -67,10 +67,15 @@ endif()
 if(IBEAMLAB_HAS_ONNX)
     target_compile_definitions(ibeamlab PRIVATE IBEAMLAB_HAS_ONNX=1)
     target_link_libraries(ibeamlab PRIVATE ONNXRuntime::ONNXRuntime)
+    if(IBEAMLAB_HAS_CUDA)
+        target_compile_definitions(ibeamlab PRIVATE IBEAMLAB_HAS_CUDA=1)
+    endif()
+    set_property(TARGET ibeamlab PROPERTY IBEAMLAB_RUNTIME_FILES "${ONNXRUNTIME_RUNTIME_FILES};$<TARGET_FILE:ibeamlab>")
     if(ONNXRUNTIME_RUNTIME)
         add_custom_command(TARGET ibeamlab POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${ONNXRUNTIME_RUNTIME}" $<TARGET_FILE_DIR:ibeamlab>)
+                ${ONNXRUNTIME_RUNTIME_FILES} $<TARGET_FILE_DIR:ibeamlab>
+            COMMAND_EXPAND_LISTS VERBATIM)
     endif()
 endif()
 
@@ -80,7 +85,7 @@ install(TARGETS ibeamlab EXPORT ibeamlab-targets
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 if(IBEAMLAB_HAS_ONNX AND ONNXRUNTIME_RUNTIME)
-    install(FILES "${ONNXRUNTIME_RUNTIME}" DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES ${ONNXRUNTIME_RUNTIME_FILES} DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 if(IBEAMLAB_HAS_ONNX AND ONNXRUNTIME_LIBRARY AND (NOT BUILD_SHARED_LIBS OR ONNXRUNTIME_RUNTIME))
     install(FILES "${ONNXRUNTIME_LIBRARY}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
@@ -138,8 +143,9 @@ if(IBEAMLAB_BUILD_PYTHON)
     if(IBEAMLAB_HAS_ONNX AND ONNXRUNTIME_RUNTIME)
         add_custom_command(TARGET _ibeamlab_cpp POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${ONNXRUNTIME_RUNTIME}" $<TARGET_FILE_DIR:_ibeamlab_cpp>)
-        install(FILES "${ONNXRUNTIME_RUNTIME}" DESTINATION ibeamlab)
+                ${ONNXRUNTIME_RUNTIME_FILES} $<TARGET_FILE_DIR:_ibeamlab_cpp>
+            COMMAND_EXPAND_LISTS VERBATIM)
+        install(FILES ${ONNXRUNTIME_RUNTIME_FILES} DESTINATION ibeamlab)
     endif()
 endif()
 
@@ -148,6 +154,9 @@ if(IBEAMLAB_BUILD_TESTS)
     target_link_libraries(ibeamlab-native-tests PRIVATE ibeamlab)
     target_compile_definitions(ibeamlab-native-tests PRIVATE
         IBEAMLAB_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+    if(IBEAMLAB_HAS_CUDA)
+        target_compile_definitions(ibeamlab-native-tests PRIVATE IBEAMLAB_TEST_HAS_CUDA=1)
+    endif()
     add_test(NAME ibeamlab-native-tests COMMAND ibeamlab-native-tests)
     add_test(NAME ibeamlab-installed-consumer
         COMMAND ${CMAKE_COMMAND}

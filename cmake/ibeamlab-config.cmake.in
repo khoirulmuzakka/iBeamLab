@@ -24,23 +24,14 @@ if(TARGET ibeamlab::ibeamlab AND NOT TARGET ibeamlab)
         INTERFACE_LINK_LIBRARIES ibeamlab::ibeamlab)
 endif()
 
-set(ibeamlab_RUNTIME_DLLS)
-if(WIN32 AND @BUILD_SHARED_LIBS@)
-    list(APPEND ibeamlab_RUNTIME_DLLS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/ibeamlab.dll")
+set(_ibeamlab_runtime_files)
+if(@BUILD_SHARED_LIBS@)
+    list(APPEND _ibeamlab_runtime_files "$<TARGET_FILE:ibeamlab::ibeamlab>")
 endif()
-if(WIN32 AND EXISTS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/onnxruntime.dll")
-    list(APPEND ibeamlab_RUNTIME_DLLS
-        "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/onnxruntime.dll")
-endif()
-
-function(ibeamlab_copy_runtime_dependencies target)
-    if(WIN32)
-        foreach(runtime_dll IN LISTS ibeamlab_RUNTIME_DLLS)
-            add_custom_command(TARGET "${target}" POST_BUILD
-                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                    "${runtime_dll}" "$<TARGET_FILE_DIR:${target}>")
-        endforeach()
-    endif()
-endfunction()
+foreach(_name IN ITEMS @IBEAMLAB_RUNTIME_NAMES@)
+    list(APPEND _ibeamlab_runtime_files "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/${_name}")
+endforeach()
+set_property(TARGET ibeamlab::ibeamlab PROPERTY IBEAMLAB_RUNTIME_FILES "${_ibeamlab_runtime_files}")
+include("${CMAKE_CURRENT_LIST_DIR}/ibeamlab-runtime.cmake")
 
 check_required_components(ibeamlab)

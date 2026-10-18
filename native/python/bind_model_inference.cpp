@@ -90,6 +90,7 @@ void bindInference(py::module_ &root) {
         .def_readwrite("intra_op_threads", &InferenceOptions::intraOpThreads)
         .def_readwrite("inter_op_threads", &InferenceOptions::interOpThreads)
         .def_readwrite("execution_provider", &InferenceOptions::executionProvider)
+        .def_readwrite("device_id", &InferenceOptions::deviceId)
         .def_readwrite("enable_graph_optimizations", &InferenceOptions::enableGraphOptimizations);
     py::class_<EdpMap>(m, "EdpMap")
         .def(py::init<>())

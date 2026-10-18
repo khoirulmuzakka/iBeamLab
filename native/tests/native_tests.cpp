@@ -14,6 +14,7 @@
 #endif
 #include <cassert>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -263,8 +264,32 @@ int main() {
     assert(throws([&] { model::ModelPackage::open(writtenPackageDirectory); }));
     replaceFlag(flag);
     assert(inverseFromZip.modelBytes() == inverseFromDirectory.modelBytes());
+    inference::InferenceOptions providerOptions;
+    providerOptions.executionProvider = "invalid";
+    assert(throws([&] { inference::InverseModel bad(inverseFromZip, providerOptions); }));
+    providerOptions.executionProvider = "cuda";
+    providerOptions.deviceId = -1;
+    assert(throws([&] { inference::InverseModel bad(inverseFromZip, providerOptions); }));
+#ifndef IBEAMLAB_TEST_HAS_CUDA
+    providerOptions.deviceId = 0;
+    assert(throws([&] { inference::InverseModel unavailable(inverseFromZip, providerOptions); }));
+#endif
     inference::InverseModel inverse(inverseFromZip);
     assert(inverse.metadata().inverse.needPileupSubtraction);
+    if (std::getenv("IBEAMLAB_TEST_CUDA")) {
+        providerOptions.deviceId = 0;
+        inference::InverseModel gpu(inverseFromZip, providerOptions);
+        for (const int batchSize : {1, 10, 25, 50}) {
+            const auto one = inverse.predictPrepared({{{"RBS", {1.0F, 2.0F}}}});
+            using PreparedBatch = std::vector<std::vector<simulator::Spectrum>>;
+            PreparedBatch batch(batchSize, {{"RBS", {1.0F, 2.0F}}});
+            const auto predicted = gpu.predictPrepared(batch);
+            assert(predicted.size() == batch.size());
+            for (const auto &result : predicted)
+                assert(std::abs(result.edp.values[0][0] - one[0].edp.values[0][0]) < 1e-4);
+        }
+    }
+
     const auto inverseResults = inverse.predictPrepared({{{"RBS", {1.0F, 2.0F}}}});
     assert(std::abs(inverseResults[0].edp.values[0][0] - 9.0) < 1e-5);
     assert(inverseResults[0].edp.elements == std::vector<std::string>{"Si"});
@@ -505,6 +530,29 @@ int main() {
     forwardInput.sample.layers[0].thickness = 1.0;
     forwardInput.setup.detectors[0].beam.energy = 2.0;
     const auto forwardResults = forward.predict({forwardInput});
+    if (std::getenv("IBEAMLAB_TEST_CUDA")) {
+        inference::InferenceOptions cudaOptions;
+        cudaOptions.executionProvider = "cuda";
+        inference::ForwardModel gpu(forwardRoundTrip, cudaOptions);
+        for (const int batchSize : {1, 10, 25, 50}) {
+            std::vector<simulator::SimulationInput> batch(batchSize, forwardInput);
+            const auto cpuResults = forward.predict(batch);
+            const auto gpuResults = gpu.predict(batch);
+            assert(gpuResults.size() == cpuResults.size());
+            for (std::size_t row = 0; row < batch.size(); ++row) {
+                assert(gpuResults[row].spectra.size() == cpuResults[row].spectra.size());
+                for (std::size_t spectrum = 0; spectrum < cpuResults[row].spectra.size(); ++spectrum) {
+                    const auto &a = cpuResults[row].spectra[spectrum].counts;
+                    const auto &b = gpuResults[row].spectra[spectrum].counts;
+                    assert(a.size() == b.size());
+                    for (std::size_t channel = 0; channel < a.size(); ++channel)
+                        assert(std::abs(a[channel] - b[channel]) <= 1e-4F * (1 + std::abs(a[channel])));
+                }
+            }
+        }
+        cudaOptions.deviceId = 100000;
+        assert(throws([&] { inference::ForwardModel invalidDevice(forwardRoundTrip, cudaOptions); }));
+    }
     assert(forwardResults[0].spectra[0].label == "RBS");
     assert(std::abs(forwardResults[0].spectra[0].counts[0] - (11.0F / 3.0F)) < 1e-5F);
     auto correctedMetadata = forwardMetadata;

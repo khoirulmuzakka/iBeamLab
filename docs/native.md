@@ -170,3 +170,58 @@ be repaired by zero padding. A passing check establishes consistency with this
 model, not that the supplied data were recorded without truncation. Channel
 reconstruction takes O(N^2) work. Python exposes the same function as
 `ibeamlab.spectrum.remove_pileup`.
+
+## CPU and CUDA inference
+
+SDK capability is selected explicitly at configuration time; installed CUDA is
+never auto-detected. CPU is the default and requires no NVIDIA software:
+
+```sh
+cmake -S . -B build -DIBEAMLAB_ONNX_PROVIDER=CPU
+cmake -S . -B build-cuda -DIBEAMLAB_ONNX_PROVIDER=CUDA
+```
+
+Windows x64 builds fetch the native CPU package (IBEAMLAB_ONNX_VERSION) or the
+native Windows GPU package (IBEAMLAB_ONNX_CUDA_VERSION, default 1.27.1 / CUDA 13).
+Set ONNXRuntime_ROOT to use a local SDK instead. An explicit root must contain
+matching headers, import library and runtime; an incomplete SDK is an error.
+GPU SDKs must contain the CUDA provider library. Other platforms require a local
+SDK. No CUDA language, nvcc compiler, or installed toolkit is needed to compile
+against the prebuilt GPU SDK. ONNX can be disabled with IBEAMLAB_ENABLE_ONNX=OFF.
+
+When consuming through FetchContent, set IBEAMLAB_ONNX_PROVIDER before
+FetchContent_MakeAvailable(ibeamlab). Use separate build directories for SDK
+versions. The same GPU SDK supports CPU and CUDA model instances together:
+
+```cpp
+ibeamlab::inference::InferenceOptions options;
+options.executionProvider = "cuda"; // "cpu" is the default
+options.deviceId = 0;
+options.correctionThreads = 4; // CPU processing, independent of ONNX threads
+ibeamlab::inference::ForwardModel model("trained-model.zip", options);
+```
+
+Python exposes execution_provider, device_id, correction_threads,
+intra_op_threads and inter_op_threads on InferenceOptions. Provider settings
+belong to a model instance, not package metadata. Each model owns one persistent
+session; iBeamLab does not schedule application workers. CPU transforms and
+physical corrections remain on the CPU, with ordinary host input/output buffers.
+CUDA initialization errors throw; a requested CUDA session is never silently
+replaced with a CPU session. ONNX Runtime may still place unsupported operators
+on its CPU execution provider.
+
+CUDA execution requires a compatible NVIDIA driver and CUDA/cuDNN runtime
+libraries matching the GPU ONNX Runtime release. cuDNN is separate from the CUDA
+toolkit. See https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#requirements.
+ibeamlab_copy_runtime_dependencies(target) works for both FetchContent and
+installed consumers and copies ONNX Runtime plus provider libraries. Optional
+IBEAMLAB_CUDA_RUNTIME_DIRS is a semicolon-separated list of CUDA/cuDNN DLL
+directories to include in build, Python and installed runtime bundles. Supply
+only matching versions. Otherwise NVIDIA libraries must be available to the OS
+loader at execution time; an SDK build does not prove runtime readiness.
+
+CPU tests cover invalid providers and rejection of CUDA in CPU builds. On a
+GPU-equipped host, set IBEAMLAB_TEST_CUDA=1 when running ibeamlab-native-tests
+to additionally check CPU/CUDA forward and inverse results at batch sizes
+1, 10, 25 and 50 and invalid device errors. These hardware checks are opt-in so
+GPU SDK builds and ordinary tests also work on machines without a GPU.

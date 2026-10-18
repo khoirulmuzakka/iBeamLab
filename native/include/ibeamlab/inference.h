@@ -10,5 +10,6 @@ struct InferenceOptions {
     int interOpThreads{1};
     std::string executionProvider{"cpu"};
     bool enableGraphOptimizations{false};
+    int deviceId{0}; // CUDA device ordinal; ignored for CPU sessions.
 };
 } // namespace ibeamlab::inference
