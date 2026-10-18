@@ -3,12 +3,12 @@ format_version = 1
 name = "iba_multilayer"
 
 [output]
-directory = "datasets/iba_multilayer_moreC_seed3"
+directory = "datasets/iba_multilayer_13el"
 shards = 4
 
 [dataset]
-maximum_layers = 10
-mixed_samples_per_layer_count = 100000
+maximum_layers = 8
+mixed_samples_per_layer_count = 300000
 
 [random]
 seed = 3
@@ -18,6 +18,35 @@ seed_strategy = "named_streams_per_layer_count"
 [composition_sampling]
 strategy = "regional_weights"
 normalization = "sum_to_one"
+
+# Split the mixed budget; pure one-layer samples remain additional.
+# Each subset is shared across layers; concentrations vary independently.
+# Allocation is proportional to subset size, without fixed stoichiometry.
+[composition_sampling.compound_sampling]
+fraction = 0.8
+subsets = [
+    { name = "nmc", elements = ["Li", "Ni", "Mn", "Co", "O"] },
+    { name = "lithiated_graphite", elements = ["Li", "C"] },
+    { name = "lco", elements = ["Li", "Co", "O"] },
+    { name = "lmo", elements = ["Li", "Mn", "O"] },
+    { name = "lnmo", elements = ["Li", "Ni", "Mn", "O"] },
+    { name = "nca", elements = ["Li", "Ni", "Co", "Al", "O"] },
+    { name = "lfp", elements = ["Li", "Fe", "P", "O"] },
+    { name = "lithium_fluoride", elements = ["Li", "F"] },
+    { name = "lithium_oxide", elements = ["Li", "O"] },
+    { name = "lithium_carbonate", elements = ["Li", "C", "O"] },
+    { name = "inorganic_sei", elements = ["Li", "C", "O", "F"] },
+    { name = "fluorophosphate", elements = ["Li", "P", "O", "F"] },
+    { name = "alumina", elements = ["Al", "O"] },
+    { name = "aluminium_fluoride", elements = ["Al", "F"] },
+    { name = "aluminium_oxyfluoride", elements = ["Al", "O", "F"] },
+    { name = "lithiated_silicon", elements = ["Li", "Si"] },
+    { name = "lithiated_silicon_carbon", elements = ["Li", "Si", "C"] },
+    { name = "lithiated_silicon_oxide", elements = ["Li", "Si", "O"] },
+    { name = "lithiated_silicon_oxide_carbon", elements = ["Li", "Si", "C", "O"] },
+    { name = "sodiated_hard_carbon", elements = ["Na", "C"] },
+    { name = "sodium_layered_oxide", elements = ["Na", "Ni", "Mn", "Co", "O"] },
+]
 
 [[composition_sampling.regions]]
 name = "trace"
@@ -41,7 +70,8 @@ upper = 1.0
 
 [[elements]]
 symbol = "Li"
-selection_probability = 1.0
+# Permit Li-free compositions, including sodium-ion materials.
+selection_probability = 0.5
 region_probabilities = [0.10, 0.30, 0.40, 0.20]
 
 [[elements]]
@@ -89,6 +119,22 @@ symbol = "Al"
 selection_probability = 0.25
 region_probabilities = [0.30, 0.35, 0.25, 0.10]
 
+# New elements are appended to preserve the existing element ordering.
+[[elements]]
+symbol = "Si"
+selection_probability = 0.5
+region_probabilities = [0.10, 0.30, 0.40, 0.20]
+
+[[elements]]
+symbol = "Na"
+selection_probability = 0.5
+region_probabilities = [0.10, 0.30, 0.40, 0.20]
+
+[[elements]]
+symbol = "Fe"
+selection_probability = 0.25
+region_probabilities = [0.30, 0.35, 0.25, 0.10]
+
 [one_layer_sampling.pure_element_samples]
 enabled = true
 samples_per_element = 10000
@@ -123,7 +169,7 @@ quadratic = 0.0
 [simulation]
 backend = "simnra"
 workers = 120
-batch_size = 256
+batch_size = 512
 failure_policy = "stop"
 
 [[simulation.methods]]

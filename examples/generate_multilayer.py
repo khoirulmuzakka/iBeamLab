@@ -24,6 +24,9 @@ def main() -> None:
     print(f"Output: {configuration.output}")
     print(f"Elements: {', '.join(configuration.elements)}")
     print(f"Layer systems: 1..{configuration.maximum_layers}")
+    compound_count = int(configuration.mixed_samples * configuration.compound_fraction)
+    print(f"Mixed samples per layer count: {configuration.mixed_samples - compound_count:,} regional; "
+          f"{compound_count:,} compound-based (subsets weighted by element count)")
     print(f"One-layer samples: {one_layer_total:,}; total samples: {total:,}")
     if args.validate_only:
         print("Configuration is valid.")

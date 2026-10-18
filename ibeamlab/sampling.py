@@ -132,14 +132,47 @@ def sample_regional_compositions(count: int, layer_count: int,
 
 def sample_layer_system(*, layer_count: int, maximum_layers: int, mixed_count: int,
         pure_per_element: int, master_seed: int, thickness: ThicknessEnvelope,
-        regions: Sequence[ConcentrationRegion], elements: Mapping[str, ElementDistribution]) -> SamplingBatch:
+        regions: Sequence[ConcentrationRegion], elements: Mapping[str, ElementDistribution],
+        compound_fraction: float = 0.0,
+        compound_subsets: Sequence[tuple[str, Sequence[str]]] = ()) -> SamplingBatch:
     """Build mixed rows plus the special pure-element subset for a one-layer system."""
     symbols = tuple(elements)
+    if not np.isfinite(compound_fraction) or not 0 <= compound_fraction <= 1:
+        raise ValueError("compound_fraction must be between 0 and 1")
+    if compound_fraction and not compound_subsets:
+        raise ValueError("compound_subsets are required when compound_fraction is positive")
+    names = set()
+    for name, members in compound_subsets:
+        if (not name or name in names or not members or len(set(members)) != len(members)
+                or any(symbol not in elements for symbol in members)):
+            raise ValueError("compound subsets require unique names and distinct configured elements")
+        names.add(name)
+    compound_count = int(mixed_count * compound_fraction)
+    regional_count = mixed_count - compound_count
     mixed_thicknesses = sample_thicknesses(mixed_count, layer_count, maximum_layers, thickness,
                                            _rng(master_seed, layer_count, 1))
     mixed_compositions, composition_report = sample_regional_compositions(
-        mixed_count, layer_count, regions, elements, _rng(master_seed, layer_count, 2))
-    components = ["regional_mixture"] * mixed_count
+        regional_count, layer_count, regions, elements, _rng(master_seed, layer_count, 2))
+    components = ["regional_mixture"] * regional_count
+    compound_counts = {}
+    if compound_count:
+        # Largest remainders preserve the exact budget with weights equal to subset size.
+        weights = np.asarray([len(members) for _, members in compound_subsets], dtype=float)
+        quotas = compound_count * weights / weights.sum()
+        counts = np.floor(quotas).astype(int)
+        counts[np.argsort(-(quotas - counts), kind="stable")[:compound_count - counts.sum()]] += 1
+        parts = [mixed_compositions]
+        for index, ((name, members), count) in enumerate(zip(compound_subsets, counts)):
+            subset = {symbol: ElementDistribution(1.0, elements[symbol].region_probabilities)
+                      for symbol in members}
+            values, _ = sample_regional_compositions(
+                int(count), layer_count, regions, subset, _rng(master_seed, layer_count, 1000 + index))
+            expanded = np.zeros((count, layer_count, len(symbols)), dtype=np.float64)
+            expanded[:, :, [symbols.index(symbol) for symbol in members]] = values
+            parts.append(expanded)
+            components.extend([f"compound_{name}"] * int(count))
+            compound_counts[name] = int(count)
+        mixed_compositions = np.concatenate(parts)
     thickness_parts = [mixed_thicknesses]
     composition_parts = [mixed_compositions]
     pure_counts: dict[str, int] = {}
@@ -164,6 +197,8 @@ def sample_layer_system(*, layer_count: int, maximum_layers: int, mixed_count: i
     report: dict[str, object] = {
         "layer_count": layer_count,
         "mixed_samples": mixed_count,
+        "regional_samples": regional_count,
+        "compound_samples": compound_counts,
         "pure_samples": pure_counts,
         "total_samples": int(len(order)),
         "composition": composition_report,

@@ -13,7 +13,7 @@ class LRN_AD(LRNModel):
     """Accept flattened layer-major AD values multiplied by ``ad_input_factor``.
 
     Elemental densities use physical units of 1e15 atoms/cm2. The core forward
-    method accepts already scaled densities, just like IBAnet posterior means.
+    method accepts already scaled densities, just like iBeamNet posterior means.
     Export retains the study's physical thickness/concentration interface and
     embeds conversion and AD scaling in ONNX. Currently supports fixed setups.
     """

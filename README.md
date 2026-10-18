@@ -44,8 +44,8 @@ not require SIMNRA. PyTorch is needed for training, not for running exported mod
 | --- | --- |
 | Define a sample and simulate its spectra | Python example below; [quick start](docs/getting-started.md) |
 | Generate a reproducible multilayer training collection | [generation configuration](examples/multilayer-generation.toml) and [generation script](examples/generate_multilayer.py) |
-| Train a spectra-to-depth-profile inverse model | [train_ibanet.ipynb](examples/train_ibanet.ipynb); [IBAnet guide](docs/ibanet.md) |
-| Fine-tune IBAnet with a frozen forward surrogate | [finetune_ibanet_surrogate.ipynb](examples/finetune_ibanet_surrogate.ipynb) |
+| Train a spectra-to-depth-profile inverse model | [train_ibeamnet.ipynb](examples/train_ibeamnet.ipynb); [iBeamNet guide](docs/ibeamnet.md) |
+| Fine-tune iBeamNet with a frozen forward surrogate | [finetune_ibanet_surrogate.ipynb](examples/finetune_ibanet_surrogate.ipynb) |
 | Train a sample-to-spectra forward surrogate | [train_lrn_multilayer.ipynb](examples/train_lrn_multilayer.ipynb); [LRN guide](docs/lrn.md) |
 | Run a trained model in Python or C++ | Model-package examples below; [package format](docs/model-package.md) |
 | Explore spatial scans and compare reconstructions | [simulated_NMC.ipynb](examples/simulated_NMC.ipynb) and [compare_spatial_scan_soc.ipynb](examples/compare_spatial_scan_soc.ipynb) |
@@ -161,15 +161,15 @@ The generated datasets support two complementary tasks: forward models predict
 spectra from a sample, while inverse models recover a sample profile from spectra.
 The notebooks below train these models and export packages for deployment.
 
-### IBAnet: spectra to elemental depth profiles
+### iBeamNet: spectra to elemental depth profiles
 
-[train_ibanet.ipynb](examples/train_ibanet.ipynb) loads multilayer datasets,
+[train_ibeamnet.ipynb](examples/train_ibeamnet.ipynb) loads multilayer datasets,
 constructs elemental areal-density targets, splits the data, trains the model,
 restores the best validation checkpoint, and exports a model package with a
 native/PyTorch parity check. Set the dataset location, maximum layer count,
 architecture, target scale, and training schedule in the notebook.
 
-IBAnet uses detector-specific residual CNN encoders with GroupNorm, channel
+iBeamNet uses detector-specific residual CNN encoders with GroupNorm, channel
 compression, and a fused spectrum context. A unidirectional GRU decodes layers
 from surface to depth using that context and learned layer-position embeddings.
 Shared heads predict a presence probability and one conditional Gaussian per
@@ -189,7 +189,7 @@ Targets are thickness times atomic fraction, scaled by one global
 `TARGET_SCALE`. Keep that scale identical when comparing validation NLLs;
 negative Gaussian NLL values are possible.
 
-See the [IBAnet guide](docs/ibanet.md) for shapes, normalization, likelihood,
+See the [iBeamNet guide](docs/ibeamnet.md) for shapes, normalization, likelihood,
 checkpoint compatibility, and export settings.
 
 ### LRN: sample parameters to spectra
@@ -203,7 +203,7 @@ supply physical experiments. See the [LRN guide](docs/lrn.md).
 ## Deploy trained models in external Python and C++ applications
 
 The models trained above are deployed through a shared model-package contract. Export your trained
-`IBAnet` or `LRNModel` to a ZIP, distribute that ZIP with your application, and
+`iBeamNet` or `LRNModel` to a ZIP, distribute that ZIP with your application, and
 load it through iBeamLab inference. The exact same file works in both languages;
 the consuming program needs iBeamLab with ONNX inference enabled, but does not
 need PyTorch, the training notebook, or SIMNRA to run the exported model.
@@ -286,7 +286,7 @@ to obtain each layer's areal thickness. Divide by that sum to obtain atomic
 fractions for nonzero layers. Presence probability describes elemental presence,
 not confidence in the accuracy of the atomic fraction.
 
-New IBAnet exports use inverse package format **4** and provide actual
+New iBeamNet exports use inverse package format **4** and provide actual
 probabilities and full posterior standard deviations. Legacy format **3** inverse
 packages remain readable: probability defaults to 1 for positive densities and
 0 for exact zeros, std defaults to 0, and `result.uncertainty_predicted` is false.
@@ -364,3 +364,5 @@ for runtime dependencies, SIMNRA workers, build options, and C++ examples.
 | `cmake/` | Build and installed-consumer integration |
 
 See [LICENSE](LICENSE) for the repository license.
+
+The public inverse model is `iBeamNet(study, spectrum_lengths, version=3, model_options={...})`. Version 1 retains CNN/GRU; version 3 uses CNN/attention with presence, conditional mean and conditional standard-deviation heads. See [versioned model API](docs/ibeamnet.md).

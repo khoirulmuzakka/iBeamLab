@@ -1,13 +1,47 @@
-# IBAnet inverse training
+# iBeamNet: versioned probabilistic inverse models
+
+```python
+from ibeamlab import iBeamNet, iBeamNetLoss
+model = iBeamNet(study, spectrum_lengths, version=3, model_options={
+    "cnn_channels": (32,64,128,128), "attention_size": 128,
+    "attention_heads": 4, "attention_blocks": 2, "dropout": 0.0,
+    "minimum_std": 1e-3,
+})
+prediction = model(spectra)
+loss = iBeamNetLoss()(prediction, scaled_ad_targets)
+model.save("model.pt")
+restored = iBeamNet.load("model.pt", study=study)
+model.export("model.zip", output_inverse_factor=1e-5)
+```
+
+`version=1` selects the former IBAnet residual CNN/GRU implementation.
+`version=3` selects CNN + layer-query attention with Gaussian posterior heads.
+Version 2 is not defined. Options are version-specific; unknown keys are rejected.
+Checkpoints record version and fully resolved model options. ZIP manifests contain
+an `ibeamnet` table with the version and JSON-encoded options; native metadata
+uses class name `iBeamNet`. Native inverse package format 4 is distinct from the
+network implementation version.
+
+`P` is sigmoid presence probability, `Y` is positive conditional AD mean, and
+`E` (also accessible as `R`) is positive conditional Gaussian standard deviation.
+Covariance is diagonal conditional on presence. `mean` is `P*Y` for version 3, with no fixed presence threshold.
+Version 1 retains its historical optional discrete-presence behavior.
+Exported `posterior_std` describes the full spike-and-slab marginal distribution,
+not an interval centered on the hard-gated estimate. Sampling an untruncated
+Gaussian can produce negative draws. The loss uses BCE plus conditional Gaussian
+NLL for true-present cells; it sums cells and averages samples.
+
+## Version 1 training and implementation details
+
 
 Install the optional dependencies with `pip install -e ".[training,plot]"` and
-open [train_ibanet.ipynb](../examples/train_ibanet.ipynb). Set `DATASET_ROOT`,
+open [train_ibeamnet.ipynb](../examples/train_ibeamnet.ipynb). Set `DATASET_ROOT`,
 `CONFIG_PATH`, `MAX_LAYERS`, and `OUTPUT_DIR` before running it. The notebook
 expects complete `layers_XX` datasets from a fixed measurement setup. It checks
 their generation metadata against the selected configuration.
 
-`from ibeamlab import IBAnet, IBAnetLoss` loads the optional PyTorch module.
-IBAnet takes a `GenerationStudy` and a mapping of detector labels to channel
+`from ibeamlab import iBeamNet, iBeamNetLoss` loads the optional PyTorch module.
+iBeamNet takes a `GenerationStudy` and a mapping of detector labels to channel
 counts. Every detector has a separate residual strided 1D CNN with GroupNorm.
 A 1×1 convolution compresses its final feature channels to 16 before flattening,
 without changing energy positions. Flattened features retain absolute energy position and are fused into a
@@ -21,9 +55,9 @@ Detector order follows the study; element order is explicit or follows
 the first template layer. Every template layer must contain those elements.
 
 ```python
-model = IBAnet(study, {"RBS": 2048, "PIXE": 1024})
+model = iBeamNet(study, {"RBS": 2048, "PIXE": 1024}, version=1, model_options={})
 prediction = model(raw_concatenated_spectra)
-loss = IBAnetLoss()(prediction, scaled_edp_targets)
+loss = iBeamNetLoss()(prediction, scaled_edp_targets)
 loss.backward()
 
 probability = prediction.P
@@ -138,7 +172,7 @@ The native package exposes the posterior mean, which can retain small positive
 densities in absent elements and padded layers. All three matrices have shape
 `[layer, element]`; mean and standard deviation use `1e15 atoms/cm2`. Probability
 is dimensionless and never target-scaled. `uncertainty_predicted` is true for
-IBAnet exports. Legacy version 3 packages remain readable, with probability 1
+iBeamNet exports. Legacy version 3 packages remain readable, with probability 1
 for positive densities (0 for exact zeros), standard deviation 0, and
 `uncertainty_predicted=False`. Re-export a trained checkpoint to obtain actual
 probabilities and uncertainty. Keep the PyTorch checkpoint for sampling.
@@ -166,7 +200,7 @@ filename, including after a previous parity check failed or was interrupted.
 ## Surrogate-informed fine-tuning
 
 [finetune_ibanet_surrogate.ipynb](../examples/finetune_ibanet_surrogate.ipynb)
-loads existing IBAnet and LRN PyTorch checkpoints. It preserves the inverse
+loads existing iBeamNet and LRN PyTorch checkpoints. It preserves the inverse
 checkpoint's target scale, normalization, dataset ordering, and split. LRN
 weights are frozen, but its forward call retains gradients through the predicted
 mean EDP. A Torch adapter converts physical elemental densities to thicknesses
@@ -194,4 +228,25 @@ layers remain active in LRN. The reconstruction is the forward prediction of
 the posterior mean, rather than a marginal spectrum likelihood. Surrogate error
 and inverse ambiguity can therefore limit or reverse improvements; assess the
 separate EDP and spectrum metrics before deployment. Export is a standard
-three-output IBAnet package and has no inference-time LRN dependency.
+three-output iBeamNet package and has no inference-time LRN dependency.
+
+## Version 4: exact spike-and-slab Gaussian NLL
+
+Version 4 now predicts per-cell sigmoid presence P, softplus conditional AD mean Y,
+and softplus conditional standard deviation E (stored as R) plus a positive floor.
+It retains the 128-wide CNN/attention backbone. The point estimate is P*Y.
+There is no entmax gate, fixed prediction threshold, or covariance matrix.
+
+The training notebook uses exact spike-and-slab NLL: stable BCEWithLogits for all
+cells plus Gaussian NLL only for true-positive AD cells. This includes the
+0.5*log(2*pi) term. Cell losses sum per sample, then average across the batch.
+No auxiliary AD MSE, separate presence weighting, or depth weighting is added.
+Common AD scaling remains controlled in the preprocessing cell.
+
+Reconstruction defaults to disabled with weight zero, so LRN_AD is not loaded.
+When enabled with a positive weight, frozen LRN_AD reconstruction adds to the NLL.
+The new head uses `ibeamnet_v4_gaussian_nll`; older entmax checkpoints stay separate
+and cannot load into the new head. Checkpoint architecture metadata records sigmoid
+presence. Native export provides marginal mixture mean, per-cell P and marginal
+posterior standard deviation; conditional E is exposed by PyTorch predictions.
+Conditional interval coverage uses Y and E, not intervals centered on P*Y.

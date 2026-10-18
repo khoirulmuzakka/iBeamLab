@@ -1,3 +1,4 @@
+import re
 """Exercise the fine-tuning notebook with a small synthetic collection."""
 import json
 from pathlib import Path
@@ -27,7 +28,7 @@ def test_surrogate_notebook_end_to_end(tmp_path, monkeypatch):
     architecture = dict(cnn_channels=(4, 8), compression_channels=4,
         head_hidden_sizes=(12,), decoder_hidden_size=16, decoder_layers=1,
         layer_embedding_size=4, dropout=0.0, kernel_size=3, minimum_std=1e-5)
-    inverse = ibl.IBAnet(study, {"RBS":32}, elements=configuration.elements, **architecture)
+    inverse = ibl.iBeamNet(study, {"RBS":32}, version=1, elements=configuration.elements, model_options=dict(**architecture))
     signature = dict(max_layers=2, elements=list(configuration.elements), labels=["RBS"],
         spectrum_lengths={"RBS":32}, target_scale=1e-5, architecture=architecture,
         input_noise=dict(poisson=True, validation_seed=8, test_seed=9),
@@ -40,15 +41,13 @@ def test_surrogate_notebook_end_to_end(tmp_path, monkeypatch):
     lrn_architecture = dict(hidden_size=8, contribution_size=8, setup_embedding_dim=4,
         layer_embedding_dim=8, block_hidden_sizes=(12,), decoder_hidden_sizes=(12,),
         refiner_hidden_channels=4, refiner_kernel_size=3)
-    surrogate = ibl.LRNModel(study, {"RBS":32}, **lrn_architecture)
-    from ibeamlab import transforms
-    scaler = transforms.build_lrn_input_transform(study).transforms[-1]
+    surrogate = ibl.LRN_AD(study, {"RBS":32}, elements=configuration.elements,
+                           ad_input_factor=1e-5, **lrn_architecture)
     lrn_path = tmp_path / "lrn.pt"
     torch.save(dict(model_state_dict=surrogate.state_dict(), max_layers=2, method="RBS",
         output_scale=0.01, input_parameter_names=study.parameter_names,
-        input_minimum=np.asarray(scaler.minimum, dtype=np.float32),
-        input_scale=np.asarray(scaler.scale, dtype=np.float32),
-        layer_representation="thickness_and_concentrations"), lrn_path)
+        architecture=lrn_architecture, elements=list(configuration.elements),
+        ad_input_factor=1e-5, layer_representation="areal_density"), lrn_path)
     notebook = json.loads((root / "examples/finetune_ibanet_surrogate.ipynb").read_text(encoding="utf-8"))
     context = {"__name__":"__main__"}
     monkeypatch.chdir(root)
@@ -58,12 +57,19 @@ def test_surrogate_notebook_end_to_end(tmp_path, monkeypatch):
         source = "".join(cell["source"])
         if "IBANET_CHECKPOINT =" in source:
             # Keep the user's configuration cell intact, then override paths/settings.
-            marker = "for path in (IBANET_CHECKPOINT, LRN_CHECKPOINT):"
+            marker = "for path in (IBANET_CHECKPOINT, LRN_AD_CHECKPOINT):"
             prefix, suffix = source.split(marker, 1)
-            source = prefix + f"\nDATASET_ROOT = Path({str(tmp_path / 'datasets')!r})\nIBANET_CHECKPOINT = Path({str(inverse_path)!r})\nLRN_CHECKPOINT = Path({str(lrn_path)!r})\nOUTPUT_DIR = Path({str(tmp_path / 'out')!r})\nEPOCHS = 2\nRAMP_EPOCHS = 1\nBATCH_SIZE = 16\nLRN_ARCHITECTURE = {lrn_architecture!r}\n" + marker + suffix
+            source = prefix + f"\nDATASET_ROOT = Path({str(tmp_path / 'datasets')!r})\nIBANET_CHECKPOINT = Path({str(inverse_path)!r})\nLRN_AD_CHECKPOINT = Path({str(lrn_path)!r})\nOUTPUT_DIR = Path({str(tmp_path / 'out')!r})\nEPOCHS = 2\nRAMP_EPOCHS = 1\nBATCH_SIZE = 16\nLRN_AD_ARCHITECTURE = {lrn_architecture!r}\n" + marker + suffix
         if "weights_path = OUTPUT_DIR" in source:
-            source = source.replace("EPOCHS = 20", "EPOCHS = 2").replace("RAMP_EPOCHS = 5", "RAMP_EPOCHS = 1").replace("BATCH_SIZE = 256", "BATCH_SIZE = 16")
-            source = source.replace("OUTPUT_DIR = EXAMPLES / 'artifacts/ibanetv2_surrogate'", f"OUTPUT_DIR = Path({str(tmp_path / 'out')!r})")
+            start = source.index("TRAINING_SCHEDULE = [")
+            end = source.index("TOTAL_EPOCHS =", start)
+            source = source[:start] + ('TRAINING_SCHEDULE = [{"learning_rate": 1e-5, "epochs": 1}, '
+                                      '{"learning_rate": 5e-6, "epochs": 1}]\n') + source[end:]
+            source = source.replace("RAMP_EPOCHS = 5", "RAMP_EPOCHS = 1")
+            source = re.sub(r"(?m)^BATCH_SIZE = \d+", "BATCH_SIZE = 16", source)
+            source = source.replace("OUTPUT_DIR = EXAMPLES / 'artifacts/ibanetv2_lrn_ad_surrogate'", f"OUTPUT_DIR = Path({str(tmp_path / 'out')!r})")
+        if "weights_path = OUTPUT_DIR" in source:
+            context.pop("presence_loss", None)  # Simulate the user's existing kernel.
         exec(compile(source, "finetune_ibanet_surrogate.ipynb", "exec"), context)
     assert len(context["history"]) == 2
     assert context["history"][0]["weight"] == 0
@@ -71,13 +77,30 @@ def test_surrogate_notebook_end_to_end(tmp_path, monkeypatch):
     assert all(np.isfinite(r["score"]) for r in context["history"])
     assert context["weights_path"].exists() and context["package_path"].exists()
     assert all(p.grad is None for p in context["lrn"].parameters())
+    assert all(p.grad is not None and torch.isfinite(p.grad).all() for p in context["model"].std_head.parameters())
+    assert context["model"].discrete_presence
+    assert context["OUTPUT_DIR"].name.endswith("_discrete_nll")
     for name, value in context["lrn"].state_dict().items():
         torch.testing.assert_close(value.cpu(), saved_lrn[name], rtol=0, atol=0)
     # Rerunning the training cell must safely reuse the output folder/checkpoint.
     for cell in notebook["cells"]:
         source = "".join(cell["source"])
         if cell["cell_type"] == "code" and "weights_path = OUTPUT_DIR" in source:
-            source = source.replace("EPOCHS = 20", "EPOCHS = 2").replace("RAMP_EPOCHS = 5", "RAMP_EPOCHS = 1").replace("BATCH_SIZE = 256", "BATCH_SIZE = 16")
-            source = source.replace("OUTPUT_DIR = EXAMPLES / 'artifacts/ibanetv2_surrogate'", f"OUTPUT_DIR = Path({str(tmp_path / 'out')!r})")
+            start = source.index("TRAINING_SCHEDULE = [")
+            end = source.index("TOTAL_EPOCHS =", start)
+            source = source[:start] + ('TRAINING_SCHEDULE = [{"learning_rate": 1e-5, "epochs": 1}, '
+                                      '{"learning_rate": 5e-6, "epochs": 1}]\n') + source[end:]
+            source = source.replace("RAMP_EPOCHS = 5", "RAMP_EPOCHS = 1")
+            source = re.sub(r"(?m)^BATCH_SIZE = \d+", "BATCH_SIZE = 16", source)
+            source = source.replace("OUTPUT_DIR = EXAMPLES / 'artifacts/ibanetv2_lrn_ad_surrogate'", f"OUTPUT_DIR = Path({str(tmp_path / 'out')!r})")
             exec(compile(source, "finetune rerun", "exec"), context)
-    assert len(context["history"]) == 4
+    assert len(context["history"]) == 2
+    assert context["completed_epochs"] == 2
+    latest = torch.load(context["resume_path"], weights_only=True)
+    assert latest["optimizer_state_dict"]["state"]
+    protected = torch.load(context["weights_path"], weights_only=True)
+    assert len(protected["history"]) == protected["best_epoch"]
+    assert protected["best_validation_score"] <= context["selection_score"](context["baseline_validation"])
+    assert context["signature"]["surrogate_type"] == "LRN_AD"
+    for name, value in protected["model_state_dict"].items():
+        torch.testing.assert_close(context["model"].state_dict()[name].cpu(), value)

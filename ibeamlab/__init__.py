@@ -22,9 +22,9 @@ __all__ = [
     "Beam", "ConfigurationError", "Dataset", "DatasetError", "DatasetMetadata",
     "DatasetRecord", "Detector", "DummySimulator", "Experiment", "FailurePolicy",
     "FailureRecord", "ForwardModel", "GenerationConfiguration", "GenerationProgress", "GenerationStudy",
-    "GenerationSummary", "IBAnet", "IBAnetLoss", "IBAnetPrediction", "IBeamLabError", "InferenceError", "InverseModel",
+    "GenerationSummary", "iBeamNet", "iBeamNetLoss", "iBeamNetPrediction", "IBeamLabError", "InferenceError", "InverseModel",
     "InverseInput", "InversePrediction", "Isotope", "Layer", "LinearCalibration", "LRNModel", "Model",
-    "LRN_AD", "ModelPackageError", "NamedValue", "NativeExtensionError", "Parameter", "Sample",
+    "LRN_AD", "LRN_AD_ATT", "ModelPackageError", "NamedValue", "NativeExtensionError", "Parameter", "Sample",
     "SimnraMethod", "SimnraSimulator", "SimnraUnavailableError", "SimulationError",
     "SimulationFailure", "SimulationResult", "Simulator", "Species", "Spectrum",
     "SetupVariation", "ValidationError", "load_generation_configuration", "load_model", "open_dataset", "vary",
@@ -33,9 +33,12 @@ __all__ = [
 
 def __getattr__(name: str):
     """Load optional PyTorch models only when explicitly requested."""
-    if name in {"IBAnet", "IBAnetLoss", "IBAnetPrediction"}:
-        from . import ibanet
-        return getattr(ibanet, name)
+    if name in {"iBeamNet", "iBeamNetLoss", "iBeamNetPrediction"}:
+        from . import ibeamnet
+        return getattr(ibeamnet, name)
+    if name == "LRN_AD_ATT":
+        from .lrn_ad_att import LRN_AD_ATT
+        return LRN_AD_ATT
     if name == "LRN_AD":
         from .lrn_ad import LRN_AD
         return LRN_AD

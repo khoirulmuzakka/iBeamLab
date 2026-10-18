@@ -91,6 +91,8 @@ class GenerationConfiguration:
     batch_size: int
     shards: int
     failure_policy: FailurePolicy
+    compound_fraction: float = 0.0
+    compound_subsets: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     def experiment(self, layer_count: int) -> Experiment:
         composition = {symbol: 1.0 / len(self.elements) for symbol in self.elements}
@@ -116,7 +118,8 @@ class GenerationConfiguration:
     def rows(self, layer_count: int):
         batch = sample_layer_system(layer_count=layer_count, maximum_layers=self.maximum_layers,
             mixed_count=self.mixed_samples, pure_per_element=self.pure_samples_per_element,
-            master_seed=self.seed, thickness=self.thickness, regions=self.regions, elements=self.elements)
+            master_seed=self.seed, thickness=self.thickness, regions=self.regions, elements=self.elements,
+            compound_fraction=self.compound_fraction, compound_subsets=self.compound_subsets)
         pieces = []
         for layer in range(layer_count):
             pieces.append(batch.thicknesses[:, layer:layer + 1])
@@ -293,6 +296,23 @@ def load_generation_configuration(path: str | Path) -> GenerationConfiguration:
     if not output.is_absolute():
         output = (source.parent / output).resolve()
     allowed_targets = {"beam_energy", "beam_spread", "detector_resolution", "particles_sr"}
+    compound = _mapping(composition.get("compound_sampling", {}), "composition_sampling.compound_sampling")
+    compound_fraction = _number(compound.get("fraction", 0), "compound_sampling.fraction")
+    if not 0 <= compound_fraction <= 1:
+        raise ConfigurationError("compound_sampling.fraction must be between 0 and 1")
+    compound_subsets = []
+    for index, value in enumerate(compound.get("subsets", [])):
+        item = _mapping(value, f"compound_sampling.subsets[{index}]")
+        name = item.get("name")
+        members = item.get("elements")
+        if (not isinstance(name, str) or not name or name in {x[0] for x in compound_subsets}
+                or not isinstance(members, list) or not members
+                or any(not isinstance(x, str) or x not in elements for x in members)
+                or len(set(members)) != len(members)):
+            raise ConfigurationError(f"compound_sampling.subsets[{index}]: require a unique name and distinct configured elements")
+        compound_subsets.append((name, tuple(members)))
+    if compound_fraction > 0 and not compound_subsets:
+        raise ConfigurationError("compound_sampling.subsets are required when fraction is positive")
     labels = {x.label for x in detectors}
     for item in variations:
         if item.target not in allowed_targets or item.detector not in labels or item.bounds[0] > item.bounds[1]:
@@ -302,7 +322,8 @@ def load_generation_configuration(path: str | Path) -> GenerationConfiguration:
         elements, regions, thickness, tuple(detectors), tuple(methods), tuple(variations),
         _integer(simulation.get("workers", 1), "simulation.workers", 1),
         _integer(simulation.get("batch_size", 1), "simulation.batch_size", 1),
-        _integer(output_section.get("shards", 1), "output.shards", 1), failure_policy)
+        _integer(output_section.get("shards", 1), "output.shards", 1), failure_policy,
+        compound_fraction, tuple(compound_subsets))
     # Reuse the sampler's detailed region/element validation without generating rows.
     from .sampling import _validate
     try:

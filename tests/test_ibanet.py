@@ -9,7 +9,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 import ibeamlab as ibl
-from ibeamlab.ibanet import IBAnet, IBAnetLoss, IBAnetPrediction
+from ibeamlab.ibeamnet import iBeamNet, iBeamNetLoss, iBeamNetPrediction
 
 
 def make_model(layers=2, elements=("Si", "O")):
@@ -21,11 +21,7 @@ def make_model(layers=2, elements=("Si", "O")):
              ibl.Detector("PIXE", ibl.Beam("H", 1000), particles_sr=1e8)],
         ), [],
     )
-    model = IBAnet(study, {"PIXE": 13, "RBS": 17}, cnn_channels=(4, 8),
-                   compression_channels=4,
-                   head_hidden_sizes=(12,), kernel_size=3,
-                   decoder_hidden_size=16, decoder_layers=2, layer_embedding_size=4,
-                   input_mean=np.linspace(0, 1, 30), input_std=np.linspace(1, 2, 30))
+    model = iBeamNet(study, {"PIXE": 13, "RBS": 17}, version=1, input_mean=np.linspace(0, 1, 30), input_std=np.linspace(1, 2, 30), model_options=dict(cnn_channels=(4, 8), compression_channels=4, head_hidden_sizes=(12,), kernel_size=3, decoder_hidden_size=16, decoder_layers=2, layer_embedding_size=4))
     return study, model
 
 
@@ -36,7 +32,7 @@ def test_shapes_moments_and_gradients():
     assert (result.Y > 0).all() and (result.R > model.minimum_std).all()
     assert ((result.P > 0) & (result.P < 1)).all()
     target = torch.tensor([[[0., 1.], [2., 0.]]] * 3)
-    loss = IBAnetLoss()(result, target)
+    loss = iBeamNetLoss()(result, target)
     loss.backward()
     for head in (model.mean_head, model.std_head, model.presence_head):
         assert head.weight.grad is not None and torch.isfinite(head.weight.grad).all()
@@ -80,7 +76,7 @@ def test_checkpoint_reconstruction_and_eval_dropout():
     counts = torch.rand(2, 30) * 10
     model.eval()
     expected = model(counts)
-    restored = IBAnet(study, model.input_spectra_lengths, **model.architecture)
+    restored = iBeamNet(study, model.input_spectra_lengths, version=1, model_options=dict(**model.architecture))
     restored.load_state_dict(model.state_dict())
     restored.eval()
     for name in ("Y", "R", "logits"):
@@ -90,11 +86,47 @@ def test_checkpoint_reconstruction_and_eval_dropout():
     assert not torch.allclose(model(counts).Y, model(counts).Y)
 
 
+def test_bidirectional_transfer_and_joint_layer_context():
+    study, original = make_model(layers=4)
+    original.eval()
+    source_state = {key: value.clone() for key, value in original.state_dict().items()}
+    model = original.as_bidirectional()
+    assert model.decoder.bidirectional and model.decoder_directions == 2
+    assert model.initial_hidden.out_features == 2 * model.decoder_layers * model.decoder_hidden_size
+    torch.testing.assert_close(model.decoder.weight_hh_l0_reverse, original.decoder.weight_hh_l0)
+    torch.testing.assert_close(model.input_mean, original.input_mean)
+    for key, value in original.state_dict().items():
+        torch.testing.assert_close(value, source_state[key])
+    counts = torch.rand(3, 30)
+    before = model(counts)
+    assert before.Y.shape == (3, 4, 2)
+    with torch.no_grad():
+        model.layer_embedding.weight[-1].add_(torch.arange(4) * 10)
+    after = model(counts)
+    assert not torch.allclose(before.Y[:, 0], after.Y[:, 0])
+    model.zero_grad()
+    model(counts).Y[:, 0].sum().backward()
+    assert model.layer_embedding.weight.grad[-1].abs().sum() > 0
+    assert model.decoder.weight_hh_l0_reverse.grad.abs().sum() > 0
+    restored = iBeamNet(study, model.input_spectra_lengths, version=1, elements=model.elements, model_options=dict(**model.architecture)).eval()
+    restored.load_state_dict(model.state_dict())
+    torch.testing.assert_close(model(counts).mean, restored(counts).mean)
+
+
+def test_legacy_checkpoint_without_direction_option_still_loads():
+    study, model = make_model()
+    architecture = dict(model.architecture)
+    architecture.pop("bidirectional")
+    restored = iBeamNet(study, model.input_spectra_lengths, version=1, model_options=dict(**architecture))
+    restored.load_state_dict(model.state_dict())
+    assert not restored.decoder.bidirectional
+
+
 def test_channel_compression_preserves_energy_positions_and_reduces_projection():
     study, _ = make_model()
     lengths = {"RBS": 2997, "PIXE": 17}
-    compressed = IBAnet(study, lengths)
-    uncompressed = IBAnet(study, lengths, compression_channels=None)
+    compressed = iBeamNet(study, lengths, version=1)
+    uncompressed = iBeamNet(study, lengths, version=1, model_options=dict(compression_channels=None))
     for encoder, length in zip(compressed.encoders, compressed.input_spectra_lengths.values()):
         reduced_length = (length + 15) // 16
         with torch.no_grad():
@@ -108,7 +140,7 @@ def test_channel_compression_preserves_energy_positions_and_reduces_projection()
     # An earlier GRU checkpoint has no compression option in its architecture.
     old_architecture = dict(uncompressed.architecture)
     old_architecture.pop("compression_channels")
-    restored = IBAnet(study, lengths, compression_channels=None, **old_architecture)
+    restored = iBeamNet(study, lengths, version=1, model_options=dict(compression_channels=None, **old_architecture))
     restored.load_state_dict(uncompressed.state_dict())
     inputs = torch.rand(1, sum(lengths.values()))
     torch.testing.assert_close(restored.predict(inputs).mean, uncompressed.predict(inputs).mean)
@@ -124,7 +156,7 @@ def test_channel_compression_preserves_energy_positions_and_reduces_projection()
 def test_invalid_decoder_configuration(kwargs):
     study, model = make_model()
     with pytest.raises(ValueError):
-        IBAnet(study, model.input_spectra_lengths, **kwargs)
+        iBeamNet(study, model.input_spectra_lengths, version=1, model_options=dict(**kwargs))
 
 
 def test_likelihood_matches_draft_and_masks_absent_regression():
@@ -132,7 +164,7 @@ def test_likelihood_matches_draft_and_masks_absent_regression():
     sigma = torch.tensor([[[1e-20, 0.5]]], requires_grad=True)
     logits = torch.tensor([[[0., math.log(3)]]], requires_grad=True)
     target = torch.tensor([[[0., 3.]]])
-    loss = IBAnetLoss()(IBAnetPrediction(mean, sigma, logits), target)
+    loss = iBeamNetLoss()(iBeamNetPrediction(mean, sigma, logits), target)
     expected = -math.log(0.5) - math.log(0.75) + math.log(0.5) + 2
     assert loss.item() == pytest.approx(expected)
     loss.backward()
@@ -140,18 +172,18 @@ def test_likelihood_matches_draft_and_masks_absent_regression():
     torch.testing.assert_close(logits.grad, torch.tensor([[[0.5, -0.25]]]))
     assert mean.grad[0, 0, 1].item() == pytest.approx(-4)
     assert sigma.grad[0, 0, 1].item() == pytest.approx(-6)
-    absent = IBAnetLoss()(IBAnetPrediction(mean, sigma, logits), torch.zeros_like(target))
+    absent = iBeamNetLoss()(iBeamNetPrediction(mean, sigma, logits), torch.zeros_like(target))
     assert torch.isfinite(absent)
     with pytest.raises(ValueError, match="nonnegative"):
-        IBAnetLoss()(IBAnetPrediction(mean, sigma, logits), -torch.ones_like(target))
+        iBeamNetLoss()(iBeamNetPrediction(mean, sigma, logits), -torch.ones_like(target))
 
 
 def test_presence_loss_matches_explicit_logs_and_extreme_logits():
     logits = torch.tensor([[[-2., 0., 2., 1000., -1000.]]], requires_grad=True)
     target = torch.tensor([[[0., 1., 1., 1., 0.]]])
     # Y=A and R=1 make the Gaussian loss zero after removing its constant.
-    prediction = IBAnetPrediction(target.clone(), torch.ones_like(target), logits)
-    loss = IBAnetLoss()(prediction, target)
+    prediction = iBeamNetPrediction(target.clone(), torch.ones_like(target), logits)
+    loss = iBeamNetLoss()(prediction, target)
     p = torch.sigmoid(logits[:, :, :3])
     explicit = -torch.log1p(-p[0, 0, 0]) - torch.log(p[0, 0, 1]) - torch.log(p[0, 0, 2])
     torch.testing.assert_close(loss, explicit)
@@ -178,7 +210,7 @@ def test_export_matches_native_multi_detector_edp(tmp_path):
     for key, value in model.state_dict().items():
         torch.testing.assert_close(value, original[key])
     raw = ibl._native.native.model.ModelPackage.open(path).metadata
-    assert raw.format_version == 4 and raw.class_name == "IBAnet"
+    assert raw.format_version == 4 and raw.class_name == "iBeamNet"
     assert raw.inverse.need_pileup_subtraction
     assert raw.inverse.pileup_fudge_factor_seconds == pytest.approx(0.4e-6)
     assert list(raw.inverse.output_edp.elements) == ["Si", "O"]
@@ -259,136 +291,19 @@ def test_experimental_pipeline_matches_prepared_and_pytorch(tmp_path):
 
 
 def test_notebook_end_to_end_on_small_generated_dataset(tmp_path, monkeypatch):
-    pytest.importorskip("onnx")
-    matplotlib = pytest.importorskip("matplotlib")
-    matplotlib.use("Agg", force=True)
+    import matplotlib
+    matplotlib.use('Agg',force=True)
     import matplotlib.pyplot as plt
-    monkeypatch.setattr(plt, "show", lambda: plt.close("all"))
-    original_poisson = torch.poisson
-    noise_draws = []
-
-    def record_poisson(inputs, *, generator=None):
-        output = original_poisson(inputs, generator=generator)
-        noise_draws.append((generator, inputs.detach().cpu().clone(), output.detach().cpu().clone()))
-        return output
-
-    monkeypatch.setattr(torch, "poisson", record_poisson)
-    root = Path(__file__).parents[1]
-    configuration = ibl.load_generation_configuration(root / "examples" / "multilayer-generation.toml")
-    for layers in (1, 2):
-        study = configuration.study(layers)
-        study.generate(tmp_path / "datasets" / f"layers_{layers:02}",
-                       simulator=ibl.DummySimulator(channels=32),
-                       samples=study.sample(20, seed=layers))
-    notebook = json.loads((root / "examples" / "train_ibanet.ipynb").read_text())
-    context = {"__name__": "__main__"}
-    monkeypatch.chdir(root)
-    for index, cell in enumerate(notebook["cells"]):
-        if cell["cell_type"] != "code":
-            continue
-        source = "".join(cell["source"])
-        if index == 3:
-            source = source.replace('DATASET_ROOT = EXAMPLES / "datasets"',
-                                    f"DATASET_ROOT = Path({str(tmp_path / 'datasets')!r})")
-            source = source.replace("MAX_LAYERS = 10", "MAX_LAYERS = 2")
-            source = source.replace('OUTPUT_DIR = EXAMPLES / "artifacts" / "ibanet_multilayer_compressed16"',
-                                    f"OUTPUT_DIR = Path({str(tmp_path / 'artifacts')!r})")
-        if index == 7:
-            source = source.replace("CNN_CHANNELS = (32, 64, 128, 128)", "CNN_CHANNELS = (4, 8)")
-            source = source.replace("HEAD_HIDDEN_SIZES = (128,)", "HEAD_HIDDEN_SIZES = (16,)")
-            source = source.replace("DECODER_HIDDEN_SIZE = 256", "DECODER_HIDDEN_SIZE = 16")
-            source = source.replace("LAYER_EMBEDDING_SIZE = 32", "LAYER_EMBEDDING_SIZE = 4")
-        if index == 9:
-            source = re.sub(r'("epochs"\s*:\s*)\d+', r'\g<1>1', source)
-        if index == 13:
-            # Export parity must use current CPU/eval weights rather than cached
-            # predictions or an accidentally enabled training/dropout mode.
-            context["estimate"] = np.full_like(context["estimate"], -12345.)
-            context["model"].train()
-        exec(compile(source, f"train_ibanet.ipynb cell {index}", "exec"), context)
-        if index == 5:
-            # This short DummySimulator grid has no spectral support. Supply a
-            # count pedestal so the integration test exercises nonzero noise.
-            context["x_raw"] += np.linspace(5, 30, context["x_raw"].shape[1], dtype=np.float32)
-    assert context["native_edp"].shape[1:] == (2, len(configuration.elements))
-    np.testing.assert_allclose(context["native_edp"], context["export_reference"],
-                               rtol=2e-4, atol=1e-3)
-    assert context["model"].training  # Export did not mutate the live model.
-    first_package = context["package_path"]
-    export_source = "".join(notebook["cells"][13]["source"])
-    exec(compile(export_source, "train_ibanet.ipynb repeated export", "exec"), context)
-    assert first_package.is_file() and context["package_path"].is_file()
-    assert context["package_path"] != first_package
-    assert context["weights_path"].is_file()
-    checkpoint = torch.load(context["weights_path"], weights_only=True)
-    assert "input_mean" in checkpoint["model_state_dict"]
-    assert context["package_path"].is_file()
-    np.testing.assert_array_equal(context["x_train"], context["x_raw"][context["train_indices"]])
-    training_draws = [(rates, counts) for generator, rates, counts in noise_draws
-                      if generator is context["training_noise_generator"]]
-    assert len(training_draws) == 4  # One fresh training batch per smoke-test epoch.
-    for rates, counts in training_draws:
-        assert (rates >= 0).all()
-        assert (counts == counts.round()).all()
-    assert not torch.equal(training_draws[0][1], training_draws[1][1])
-    # Fixed evaluation noise is deterministic and does not accumulate on reruns.
-    np.testing.assert_array_equal(
-        context["x_val"], context["fixed_poisson_counts"](
-            context["x_raw"][context["val_indices"]], context["SEED"] + 1))
-    np.testing.assert_array_equal(
-        context["x_test"], context["fixed_poisson_counts"](
-            context["x_raw"][context["test_indices"]], context["SEED"] + 2))
-    number_of_draws = len(noise_draws)
-    first_loss = context["evaluate_loss"](context["x_val"], context["a_val"])
-    second_loss = context["evaluate_loss"](context["x_val"], context["a_val"])
-    assert first_loss == second_loss
-    assert len(noise_draws) == number_of_draws
-    assert checkpoint["signature"]["input_noise"]["poisson"]
-
-    # Rerun the actual training cell after a cancellation, without changing its
-    # default checkpoint setting. Loading must restore the saved best weights
-    # before training begins, even if the in-memory model has changed.
-    original_loss = context["loss_function"]
-    loaded_before_interrupt = False
-
-    def interrupt_training(prediction, target):
-        nonlocal loaded_before_interrupt
-        if torch.is_grad_enabled():
-            for key, value in context["model"].state_dict().items():
-                torch.testing.assert_close(value.cpu(), checkpoint["model_state_dict"][key])
-            loaded_before_interrupt = True
-            raise KeyboardInterrupt
-        return original_loss(prediction, target)
-
-    with torch.no_grad():
-        context["model"].mean_head.bias.add_(100)
-    context["loss_function"] = interrupt_training
-    training_source = "".join(notebook["cells"][9]["source"])
-    exec(compile(training_source, "train_ibanet.ipynb interrupted rerun", "exec"), context)
-    assert loaded_before_interrupt
-    assert not context["model"].training
-    assert context["history"] == checkpoint["history"]
-    for key, value in context["model"].state_dict().items():
-        torch.testing.assert_close(value.cpu(), checkpoint["model_state_dict"][key])
-
-    # Existing clean-data checkpoints can initialize noisy training, without
-    # retaining historical validation losses from a different noise policy.
-    legacy_checkpoint = torch.load(context["weights_path"], weights_only=True)
-    legacy_checkpoint["signature"].pop("input_noise")
-    legacy_checkpoint["history"] = [(-999., -999.)]
-    torch.save(legacy_checkpoint, context["weights_path"])
-    exec(compile(training_source, "train_ibanet.ipynb noise-policy migration", "exec"), context)
-    assert context["history"] == []
-    migrated_checkpoint = torch.load(context["weights_path"], weights_only=True)
-    assert migrated_checkpoint["signature"]["input_noise"]["poisson"]
-    assert migrated_checkpoint["best_validation_nll"] == first_loss
-
-    # Automatic loading must still refuse a different target schema.
-    context["TARGET_SCALE"] *= 2
-    before_rejected_reload = context["weights_path"].read_bytes()
-    with pytest.raises(ValueError, match="Checkpoint schema/configuration differs"):
-        exec(compile(training_source, "train_ibanet.ipynb incompatible rerun", "exec"), context)
-    assert context["weights_path"].read_bytes() == before_rejected_reload
+    monkeypatch.setattr(plt,'show',lambda:plt.close('all'))
+    monkeypatch.setattr(torch.cuda,'is_available',lambda:False)
+    from test_encoder_notebook import make_sources
+    from test_train_ibeamnet_notebook import run_notebook
+    dataset,_,_=make_sources(tmp_path)
+    context=run_notebook(dataset,tmp_path/'v1',version=1)
+    assert context['model'].version==1 and context['completed_epochs']==2
+    np.testing.assert_allclose(context['native_edp'],context['export_reference'],rtol=2e-4,atol=1e-3)
+    np.testing.assert_array_equal(context['x_val'],context['fixed_poisson_counts'](
+        context['x_raw'][context['val_indices']],context['SEED']+1))
 
 
 def test_edp_requires_probability_and_std_matrices():
@@ -434,3 +349,47 @@ def test_legacy_inverse_export_has_deterministic_defaults(tmp_path):
     np.testing.assert_array_equal(result.presence_probability, (result.values > 0).astype(np.float32))
     np.testing.assert_array_equal(result.posterior_std, np.zeros_like(result.values))
     assert not result.uncertainty_predicted
+
+
+def test_ordered_density_prefix_gradients_and_roundtrip():
+    _, source = make_model(layers=4)
+    model = source.as_bidirectional().as_ordered_density().eval()
+    counts = torch.rand(3, 30) * 10
+    # Continue into layer 2, stop before layer 3; later decisions cannot reopen.
+    hook = model.layer_activity_head.register_forward_hook(
+        lambda module, inputs, output: output * 0 + output.new_tensor([2., -2., 2.]).reshape(1, 3, 1))
+    prediction = model(counts)
+    torch.testing.assert_close(prediction.layer_gates[0, :, 0], torch.tensor([1., 1., 0., 0.]))
+    assert torch.count_nonzero(prediction.mean[:, 2:]) == 0
+    assert (prediction.mean[:, :2] > 0).all()
+    assert torch.count_nonzero(prediction.variance) == 0
+    assert prediction.sample_logits.shape == (3, 2)
+    hook.remove()
+    prediction = model(counts)
+    (prediction.mean.sum() + prediction.soft_layer_gates.sum() + prediction.sample_logits.sum()).backward()
+    for head in (model.layer_activity_head, model.mean_head, model.sample_presence_head):
+        assert head.weight.grad is not None and head.weight.grad.abs().sum() > 0
+    assert model.std_head.weight.grad is None
+    assert not source.ordered_density
+    restored = iBeamNet(model.study, model.input_spectra_lengths, version=1, elements=model.elements, model_options=dict(**model.architecture)).eval()
+    restored.load_state_dict(model.state_dict())
+    torch.testing.assert_close(restored(counts).mean, model(counts).mean)
+    with pytest.raises(ValueError, match="Deterministic"):
+        prediction.sample()
+
+
+
+def test_discrete_presence_uses_conditional_mean_and_retains_uncertainty():
+    _, source = make_model()
+    model = source.as_discrete_presence().eval()
+    with torch.no_grad():
+        model.presence_head.weight.zero_()
+        model.presence_head.bias.copy_(torch.tensor([-2., 2.]))
+    prediction = model(torch.ones(3, 30))
+    assert torch.count_nonzero(prediction.mean[:, :, 0]) == 0
+    torch.testing.assert_close(prediction.mean[:, :, 1], prediction.Y[:, :, 1])
+    assert torch.all(prediction.variance > 0)
+    assert not source.discrete_presence
+    restored = iBeamNet(model.study, model.input_spectra_lengths, version=1, elements=model.elements, model_options=dict(**model.architecture)).eval()
+    restored.load_state_dict(model.state_dict())
+    torch.testing.assert_close(restored(torch.ones(3, 30)).mean, prediction.mean)
