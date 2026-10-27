@@ -72,10 +72,28 @@ def _graph(model, directory, opset):
              h.make_node("Squeeze", ["layers_vector", "batch_axis"], ["layers"]),
              const("start", [True], T.BOOL),
              h.make_node("Squeeze", ["start", "batch_axis"], ["start_scalar"])]
+    # Determine the last nonempty layer across the entire batch once. Reducing
+    # the Loop trip count avoids executing the recurrent block on trailing
+    # padding. Interior empty layers remain masked no-ops, never stop markers.
+    reduce_axes = lambda source, output, axes, axes_input: h.make_node(
+        "ReduceMax", [source, axes_input] if opset >= 18 else [source], [output],
+        **({"keepdims": 0} if opset >= 18 else {"axes": axes, "keepdims": 0}))
+    nodes += [const("zero_int_vector", [0]), const("one_int_vector", [1]),
+              *([const("activity_axes", [0, 2])] if opset >= 18 else []),
+              const("zero_float", [0.], T.FLOAT),
+              h.make_node("Squeeze", ["zero_int_vector", "batch_axis"], ["zero_int"]),
+              h.make_node("Squeeze", ["one_int_vector", "batch_axis"], ["one_int"]),
+              h.make_node("Abs", ["inputs"], ["absolute_ad"]),
+              reduce_axes("absolute_ad", "layer_magnitude", [0, 2], "activity_axes"),
+              h.make_node("Greater", ["layer_magnitude", "zero_float"], ["active_layers"]),
+              h.make_node("Range", ["zero_int", "layers", "one_int"], ["layer_indices"]),
+              h.make_node("Add", ["layer_indices", "one_int"], ["layer_positions"]),
+              h.make_node("Where", ["active_layers", "layer_positions", "zero_int"], ["active_positions"]),
+              reduce_axes("active_positions", "effective_layers", [0], "batch_axis")]
     for label, width in (("c", "c_width"), ("h", "h_width")):
         nodes += [h.make_node("Concat", ["batch_shape", width], [label + "_shape"], axis=0),
                   h.make_node("ConstantOfShape", [label + "_shape"], [label + "_zero"])]
-    nodes += [h.make_node("Loop", ["layers", "start_scalar", "c_zero", "h_zero"],
+    nodes += [h.make_node("Loop", ["effective_layers", "start_scalar", "c_zero", "h_zero"],
                           ["decode/contributions", "decode/hidden"], body=body),
               *decode.graph.node, h.make_node("Identity", ["decode/spectra"], ["outputs"])]
     graph = h.make_graph(nodes, "LRN_AD_dynamic", [vi("inputs", ["batch", "layers", e])],

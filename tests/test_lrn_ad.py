@@ -31,6 +31,57 @@ def test_conversion_gradient_and_padding():
     torch.testing.assert_close(model(scaled), model(torch.cat((scaled, torch.zeros_like(scaled)), 1)))
 
 
+def test_inference_stops_after_last_active_layer_but_preserves_autograd():
+    _, model = make_model()
+    model.eval()
+    ad = torch.zeros(2, 16, 2)
+    ad[0, 0] = torch.tensor([100., 300.])
+    ad[1, 3] = torch.tensor([200., 600.])
+    calls = []
+    hook = model.layer_block.register_forward_hook(lambda *args: calls.append(1))
+    try:
+        padded = model.predict_ad(ad)
+        assert len(calls) == 4  # Interior zeros never terminate the sequence.
+        calls.clear()
+        torch.testing.assert_close(padded, model.predict_ad(ad[:, :4]))
+        calls.clear()
+        model.predict_ad(torch.zeros_like(ad))
+        assert len(calls) == 0
+        calls.clear()
+        scaled = model.scale_areal_density(ad).detach().requires_grad_()
+        model(scaled).sum().backward()
+        assert len(calls) == 16  # No data-dependent trimming under autograd.
+        assert torch.isfinite(scaled.grad).all()
+    finally:
+        hook.remove()
+
+
+@pytest.mark.parametrize("opset", [17, 18])
+def test_onnx_runtime_trip_count(tmp_path, opset):
+    import zipfile
+    onnx = pytest.importorskip("onnx")
+    ort = pytest.importorskip("onnxruntime")
+    _, model = make_model()
+    path = model.export(tmp_path / "dynamic.zip", layer_layout="dynamic", opset_version=opset)
+    with zipfile.ZipFile(path) as archive:
+        graph = onnx.load_from_string(archive.read("model.onnx"))
+    assert next(n for n in graph.graph.node if n.op_type == "Loop").input[0] == "effective_layers"
+    graph.graph.output.append(onnx.helper.make_tensor_value_info("effective_layers", onnx.TensorProto.INT64, []))
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 1
+    session = ort.InferenceSession(graph.SerializeToString(), sess_options=options, providers=["CPUExecutionProvider"])
+    ad = np.zeros((2, 32, 2), np.float32)
+    ad[0, 0] = [100., 300.]
+    ad[1, 7] = [200., 600.]
+    spectrum, trip_count = session.run(None, {"inputs": ad})
+    assert trip_count == 8
+    np.testing.assert_allclose(spectrum, model.predict_ad(torch.from_numpy(ad)).numpy(), rtol=3e-4, atol=1e-5)
+    ad.fill(0)
+    spectrum, trip_count = session.run(None, {"inputs": ad})
+    assert trip_count == 0
+    np.testing.assert_allclose(spectrum, model.predict_ad(torch.from_numpy(ad)).numpy(), rtol=3e-4, atol=1e-5)
+
+
 def test_export_native_parity(tmp_path):
     pytest.importorskip("onnx")
     study, model = make_model()

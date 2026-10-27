@@ -263,6 +263,15 @@ class LRNModel(nn.Module):
         hidden = inputs.new_zeros((inputs.shape[0], self.hidden_size))
         contributions = inputs.new_zeros((inputs.shape[0], self.contribution_size))
         setup_context = self._encode_setup(setup)
+        # Inference only: trailing zero layers have no effect. Keep all steps
+        # under autograd (including zero-input gradients) and during tracing.
+        # Dynamic ONNX export implements its own runtime trip-count reduction.
+        if (layers and not self.training and not torch.is_grad_enabled()
+                and not torch.jit.is_tracing() and not torch.onnx.is_in_onnx_export()):
+            active = torch.stack(layers, dim=1).ne(0).any(dim=2).any(dim=0)
+            positions = torch.arange(1, len(layers) + 1, device=inputs.device)
+            stop = int(torch.where(active, positions, 0).amax().item())
+            layers = layers[:stop]
         for layer in layers:
             mask = (~(layer == 0).all(dim=1)).to(inputs.dtype).unsqueeze(1)
             contribution, next_hidden = self.layer_block(layer, setup, hidden)

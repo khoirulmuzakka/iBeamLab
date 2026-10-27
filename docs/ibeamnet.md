@@ -305,7 +305,11 @@ The C++ `ForwardModel::predict` and Python `ForwardModel.predict` still accept
 ordinary experiments. They convert thickness times atomic fraction to AD and
 pad mixed-length batches with zeros. Every exactly zero-AD layer preserves the
 hidden state and adds no contribution, including interior zero layers; it does
-not terminate processing. Unsupported elements are rejected. Existing fixed
+not terminate processing before subsequent nonzero layers. The dynamic graph
+reduces the runtime loop count to the last nonempty layer across the batch;
+all-empty inputs execute zero recurrent steps. Trailing padding therefore avoids
+GRU work. PyTorch inference applies the same cutoff, while training and autograd
+retain every layer. Unsupported elements are rejected. Existing fixed
 packages and the default `layer_layout="fixed"` export retain their interface.
 
 For PyTorch inference, `model.predict_ad(densities)` accepts physical 3D AD
