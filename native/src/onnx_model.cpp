@@ -48,7 +48,9 @@ struct OnnxModel::Impl {
     std::unique_ptr<Ort::Session> session;
 #endif
     Impl(model::ModelPackage p, InferenceOptions tuning)
-        : package(std::move(p)), input(makeTransform(package.metadata().inputTransform)),
+        : package(std::move(p)),
+          input(package.metadata().forward.layerInput.dynamicLayers ? nullptr :
+                    makeTransform(package.metadata().inputTransform)),
           output(makeTransform(package.metadata().outputTransform)) {
 #ifdef IBEAMLAB_HAS_ONNX
         if (tuning.executionProvider != "cpu" && tuning.executionProvider != "cuda")
@@ -101,8 +103,12 @@ struct OnnxModel::Impl {
         const auto inputType = session->GetInputTypeInfo(0);
         const auto is = inputType.GetTensorTypeAndShapeInfo();
         const auto ish = is.GetShape();
-        if (is.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT || ish.size() != 2 ||
-            ish[1] != static_cast<std::int64_t>(m.inputDimension))
+        const bool sequence = m.modelType == model::ModelType::Forward && m.forward.layerInput.dynamicLayers;
+        const bool shapeMatches = sequence
+            ? (ish.size() == 3 && ish[0] == -1 && ish[1] == -1 &&
+               ish[2] == static_cast<std::int64_t>(m.forward.layerInput.elements.size()))
+            : (ish.size() == 2 && ish[1] == static_cast<std::int64_t>(m.inputDimension));
+        if (is.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT || !shapeMatches)
             throw std::runtime_error("ONNX input schema differs from metadata");
         for (const auto &name : outputNames) {
             bool found = false;
@@ -135,7 +141,8 @@ preprocessing::Matrix OnnxModel::run(const preprocessing::Matrix &physical) cons
     return runPrediction(physical).values;
 }
 OnnxPrediction OnnxModel::runPrediction(const preprocessing::Matrix &physical) const {
-#ifdef IBEAMLAB_HAS_ONNX
+    if (!impl_->input)
+        throw std::invalid_argument("dynamic AD models require rank-three sequence input");
     auto matrix = impl_->input->apply(physical);
     if (matrix.empty())
         return {};
@@ -144,10 +151,25 @@ OnnxPrediction OnnxModel::runPrediction(const preprocessing::Matrix &physical) c
     data.reserve(matrix.size() * width);
     for (const auto &r : matrix)
         data.insert(data.end(), r.begin(), r.end());
-    std::array<std::int64_t, 2> shape{static_cast<std::int64_t>(matrix.size()),
-                                      static_cast<std::int64_t>(width)};
+    return runTensor(data, {static_cast<std::int64_t>(matrix.size()),
+                            static_cast<std::int64_t>(width)});
+}
+preprocessing::Matrix OnnxModel::runSequence(const std::vector<float> &physicalAd,
+                                            std::size_t batch, std::size_t layers) const {
+    if (!impl_->package.metadata().forward.layerInput.dynamicLayers)
+        throw std::invalid_argument("model does not support dynamic layer input");
+    if (!batch) return {};
+    if (!layers) throw std::invalid_argument("layer sequence cannot be empty");
+    return runTensor(physicalAd, {static_cast<std::int64_t>(batch),
+                                  static_cast<std::int64_t>(layers),
+                                  static_cast<std::int64_t>(impl_->package.metadata().forward.layerInput.elements.size())}).values;
+}
+OnnxPrediction OnnxModel::runTensor(const std::vector<float> &data,
+                                   const std::vector<std::int64_t> &shape) const {
+#ifdef IBEAMLAB_HAS_ONNX
+    const auto batch = static_cast<std::size_t>(shape.at(0));
     auto memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-    auto tensor = Ort::Value::CreateTensor<float>(memory, data.data(), data.size(), shape.data(),
+    auto tensor = Ort::Value::CreateTensor<float>(memory, const_cast<float *>(data.data()), data.size(), shape.data(),
                                                   shape.size());
     const char *ins[]{impl_->package.metadata().inputName.c_str()};
     std::vector<const char *> outs;
@@ -159,12 +181,12 @@ OnnxPrediction OnnxModel::runPrediction(const preprocessing::Matrix &physical) c
         const auto info = values.at(index).GetTensorTypeAndShapeInfo();
         const auto outputShape = info.GetShape();
         if (info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
-            outputShape.size() != 2 || outputShape[0] != static_cast<std::int64_t>(matrix.size()) ||
+            outputShape.size() != 2 || outputShape[0] != static_cast<std::int64_t>(batch) ||
             outputShape[1] != static_cast<std::int64_t>(outputWidth))
             throw std::runtime_error("ONNX output shape mismatch");
         const float *raw = values[index].GetTensorData<float>();
-        preprocessing::Matrix result(matrix.size(), std::vector<float>(outputWidth));
-        for (std::size_t r = 0; r < matrix.size(); ++r)
+        preprocessing::Matrix result(batch, std::vector<float>(outputWidth));
+        for (std::size_t r = 0; r < batch; ++r)
             std::copy_n(raw + r * outputWidth, outputWidth, result[r].begin());
         return result;
     };
@@ -179,7 +201,8 @@ OnnxPrediction OnnxModel::runPrediction(const preprocessing::Matrix &physical) c
     }
     return result;
 #else
-    (void)physical;
+    (void)data;
+    (void)shape;
     throw std::runtime_error("iBeamLab was built without ONNX Runtime");
 #endif
 }

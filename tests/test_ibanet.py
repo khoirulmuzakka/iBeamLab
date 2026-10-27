@@ -393,3 +393,48 @@ def test_discrete_presence_uses_conditional_mean_and_retains_uncertainty():
     restored = iBeamNet(model.study, model.input_spectra_lengths, version=1, elements=model.elements, model_options=dict(**model.architecture)).eval()
     restored.load_state_dict(model.state_dict())
     torch.testing.assert_close(restored(torch.ones(3, 30)).mean, prediction.mean)
+
+
+def test_reference_pileup_preprocessing_matches_prepared(tmp_path):
+    """Measured pileup -> bare reference -> reference pileup, for two detectors."""
+    from ibeamlab.spectrum import pileup, rebin
+    _, original = make_model()
+    detectors = [replace(d, real_time=20., live_time=16.)
+                 for d in original.study.experiment.detectors]
+    study = ibl.GenerationStudy(
+        ibl.Experiment(original.study.experiment.sample, detectors), [])
+    model = iBeamNet(study, {"RBS": 17, "PIXE": 13}, version=4,
+        model_options=dict(cnn_channels=(4, 8), kernel_size=3, attention_size=8,
+            attention_heads=2, attention_blocks=1, dropout=0.))
+    tau = .003
+    path = model.export(tmp_path / "reference_pileup.zip",
+                        apply_reference_pileup=True, pileup_fudge_factor_seconds=tau)
+    runtime = ibl.InverseModel(path)
+    assert runtime.metadata.inverse.apply_reference_pileup
+    prepared, measured, bare_measured, measured_detectors = {}, {}, {}, []
+    for detector, width in zip(detectors, (9, 7)):
+        bare = np.arange(1., width+1)
+        reference = pileup(bare.tolist(), 20., 16., tau)
+        prepared[detector.label] = ibl.Spectrum(detector.label, reference)
+        # Different calibration, exposure and timing; fine grid preserves coverage.
+        source = rebin(np.arange(width+1).tolist(),
+                       (np.arange(2*width+1)/2).tolist(), bare.tolist())
+        source = (np.asarray(source)*3).tolist()
+        settings = replace(detector, particles_sr=detector.particles_sr*3,
+            calibration=ibl.LinearCalibration(linear=.5), real_time=30., live_time=27.)
+        measured_detectors.append(settings)
+        measured[detector.label] = ibl.Spectrum(detector.label, pileup(source, 30., 27., tau))
+        bare_measured[detector.label] = ibl.Spectrum(detector.label, source)
+    expected = runtime.predict_prepared(prepared)
+    for item in (ibl.InverseInput(measured, measured_detectors),
+                 ibl.InverseInput(bare_measured, measured_detectors, pileup_already_removed=True)):
+        actual = runtime.predict(item)
+        np.testing.assert_allclose(actual.values, expected.values, rtol=2e-5, atol=1e-6)
+        np.testing.assert_allclose(actual.presence_probability, expected.presence_probability,
+                                   rtol=2e-5, atol=1e-6)
+    with pytest.raises(ValueError, match="requires measured"):
+        model.export(tmp_path / "invalid.zip", apply_reference_pileup=True,
+                     need_pileup_subtraction=False)
+    _, no_timing = make_model()
+    with pytest.raises(Exception, match="positive reference times"):
+        no_timing.export(tmp_path / "no_timing.zip", apply_reference_pileup=True)

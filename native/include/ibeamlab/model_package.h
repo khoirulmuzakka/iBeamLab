@@ -45,15 +45,30 @@ struct InverseModelMetadata {
     sample::ExperimentalSetup setupTemplate;
     std::vector<SpectrumSpec> inputSpectra;
     EdpSpec outputEdp;
-    /** @brief Training spectra are pileup-free; predict() removes measured pileup. */
+    /** @brief predict() removes measured pileup before reference corrections. */
     bool needPileupSubtraction{false};
+    // Full 2*N-1 input support; reapply pileup under the reference setup.
+    bool applyReferencePileup{false};
     double pileupFudgeFactorSeconds{0.4e-6};
     // Version 4 inverse packages have three named [batch, layer-major cells] outputs.
     std::string presenceProbabilityOutputName, posteriorStdOutputName;
     double posteriorStdInverseFactor{1}; // Divide graph std by this positive factor.
     bool uncertaintyPredicted{false};
 };
+/** @brief Version-5 physical AD sequence input: [batch, layers, elements].
+ * Scaling is embedded in ONNX; trainedMaxLayers is provenance, not a limit.
+ * inputDimension is zero for this layout (no fixed flattened input width).
+ */
+struct LayerInputSpec {
+    bool dynamicLayers{false};
+    std::vector<std::string> elements;
+    std::string representation{"elemental_areal_density"}, unit{"1e15 atoms/cm2"};
+    std::string layerOrder{"surface_to_depth"}, zeroLayerBehavior{"skip"};
+    std::size_t trainedMaxLayers{};
+    double adInputFactor{1};
+};
 struct ForwardModelMetadata {
+    LayerInputSpec layerInput;
     bool bareSpectrumCorrections{false}; // Legacy packages retain raw inference.
     bool applyPileupOnInference{true};
     double pileupFudgeFactorSeconds{0.4e-6};

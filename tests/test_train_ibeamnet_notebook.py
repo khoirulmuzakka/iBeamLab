@@ -5,9 +5,9 @@ import pytest
 from test_encoder_notebook import make_sources
 
 
-def run_notebook(dataset,output,context=None,training_only=False,version=3,decoder_path=None):
+def run_notebook(dataset,output,context=None,training_only=False,version=3,decoder_path=None,notebook_name="train_ibeamnet.ipynb"):
     root=Path(__file__).parents[1]
-    notebook=json.loads((root/'examples/train_ibeamnet.ipynb').read_text(encoding='utf8'))
+    notebook=json.loads((root/'examples'/notebook_name).read_text(encoding='utf8'))
     context={'__name__':'__main__'} if context is None else context
     for cell in notebook['cells']:
         if cell['cell_type']!='code':continue
@@ -15,6 +15,11 @@ def run_notebook(dataset,output,context=None,training_only=False,version=3,decod
         if training_only and 'weights_path, resume_path' not in s:continue
         if 'DATASET_ROOT =' in s:
             s=s.replace('configuration = ibl.load_generation_configuration',f'DATASET_ROOT=Path({str(dataset)!r})\nNmaxlayers=2\nMAX_LAYERS=2\nconfiguration = ibl.load_generation_configuration',1)
+        if notebook_name == "train_ibeamnet_pileup.ipynb" and 'PREPROCESS_CACHE_DIR =' in s:
+            s=s.replace('PREPROCESS_BATCH_SIZE = 512', 'PREPROCESS_BATCH_SIZE = 7')
+            s=s.replace('PILEUP_THREADS = min(128, os.cpu_count() or 1)', 'PILEUP_THREADS = 2')
+            s=s.replace('PREPROCESS_CACHE_DIR = EXAMPLES / "artifacts/ibeamnet_pileup_cache"',
+                        f'PREPROCESS_CACHE_DIR = Path({str(output / "cache")!r})')
         if 'prepared_max_layers=MAX_LAYERS' in s:
             s=s.replace('EVALUATION_SAMPLES = 20_000','EVALUATION_SAMPLES = 20')
         if 'weights_path, resume_path' in s:
@@ -138,10 +143,44 @@ def test_smaller_inverse_zero_pads_for_larger_frozen_decoder(tmp_path,monkeypatc
     x=torch.from_numpy(c['x_train'][:2])
     prediction=c['model'](x)
     padded=torch.nn.functional.pad(prediction.mean,(0,0,0,1))
-    assert padded.shape==(2,3,10) and (padded[:,2]==0).all()
+    assert padded.shape==(2,3,len(c['ELEMENTS'])) and (padded[:,2]==0).all()
     components=c['loss_components'](prediction,torch.from_numpy(c['a_train'][:2]),x)
     assert torch.isfinite(components[2])
     components[2].backward()
     assert c['model'].mean_head.weight.grad is not None
     for name,value in larger.state_dict().items():
         torch.testing.assert_close(c['lrn'].state_dict()[name],value,rtol=0,atol=0)
+
+
+def test_pileup_notebook_training_and_export(tmp_path, monkeypatch):
+    import numpy as np
+    import matplotlib
+    matplotlib.use('Agg', force=True)
+    import matplotlib.pyplot as plt
+    monkeypatch.setattr(plt, 'show', lambda: plt.close('all'))
+    monkeypatch.setattr(torch.cuda, 'is_available', lambda: False)
+    dataset, decoder, _ = make_sources(tmp_path)
+    result = run_notebook(dataset, tmp_path/'pileup', version=4, decoder_path=decoder,
+                          notebook_name='train_ibeamnet_pileup.ipynb')
+    assert result['completed_epochs'] == 2
+    assert result['metadata'].inverse.apply_reference_pileup
+    assert result['metadata'].inverse.need_pileup_subtraction
+    assert result['x_train'].shape[1] == 2*result['x_train_bare'].shape[1]-1
+    assert result['x_test_clean'].shape[1] == result['x_train_bare'].shape[1]
+    np.testing.assert_allclose(result['x_raw_pileup'],
+                               result['add_reference_pileup'](result['x_raw_bare']))
+    # Fixed noisy held-out inputs are drawn from piled-up expectations.
+    expected = result['fixed_poisson_counts'](
+        result['x_raw_pileup'][result['test_indices']], result['SEED']+2)
+    np.testing.assert_array_equal(result['x_test'], expected)
+    assert isinstance(result['x_raw_bare'], np.memmap)
+    assert isinstance(result['x_raw_pileup'], np.memmap)
+    assert isinstance(result['a_raw'], np.memmap)
+    assert all(dataset._records is None for dataset, _ in result['CASES'])
+    assert isinstance(result['x_train'], result['IndexedRows'])
+    np.testing.assert_allclose(result['input_mean'], np.log1p(result['x_train'][:]).mean(0),
+                               rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(result['input_std'], np.maximum(np.log1p(result['x_train'][:]).std(0), 1e-3),
+                               rtol=1e-5, atol=1e-6)
+    assert result['axes'].shape == (6, 4)
+    assert result['plot_predictions'].shape[1] == result['x_test'].shape[1]

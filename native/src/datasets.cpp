@@ -283,47 +283,73 @@ DatasetReader::DatasetReader(std::filesystem::path directory) : directory_(std::
         metadata_.provenance.seed = (*p)["seed"].value_or<std::uint64_t>(0);
     }
 }
-std::vector<DatasetRecord> DatasetReader::readAll() const {
+DatasetStream::DatasetStream(std::filesystem::path directory)
+    : directory_(std::move(directory)), metadata_(DatasetReader(directory_).metadata()) {}
+
+std::vector<DatasetRecord> DatasetStream::readBatch(std::size_t maxRecords) {
+    if (!maxRecords)
+        throw std::invalid_argument("dataset batch size must be positive");
     std::vector<DatasetRecord> records;
-    for (const auto &name : metadata_.shardFiles) {
-        std::ifstream in(directory_ / name, std::ios::binary);
-        verifyHeader(in);
-        while (in.peek() != std::char_traits<char>::eof()) {
-            DatasetRecord record;
-            record.sampleIndex = readValue<std::uint64_t>(in);
-            record.sampleId = readString(in);
-            const auto parameters = readValue<std::uint32_t>(in);
-            if (parameters > 100000)
-                throw std::runtime_error("too many dataset parameters");
-            record.openParameters.resize(parameters);
-            for (auto &value : record.openParameters)
-                value = readValue<double>(in);
-            const auto spectra = readValue<std::uint32_t>(in);
-            if (spectra > 10000)
-                throw std::runtime_error("too many spectra");
-            if (spectra != metadata_.spectrumLabels.size())
-                throw std::runtime_error("dataset spectrum count differs from metadata");
-            for (std::uint32_t i = 0; i < spectra; ++i) {
-                simulator::Spectrum spectrum;
-                spectrum.label = readString(in);
-                if (spectrum.label != metadata_.spectrumLabels[i])
-                    throw std::runtime_error("dataset spectrum ordering differs from metadata");
-                const auto count = readValue<std::uint64_t>(in);
-                if (count > 100000000)
-                    throw std::runtime_error("spectrum exceeds safety limit");
-                if (count > metadata_.spectrumLengths[i])
-                    throw std::runtime_error("dataset spectrum exceeds declared maximum length");
-                spectrum.counts.resize(static_cast<std::size_t>(count));
-                in.read(reinterpret_cast<char *>(spectrum.counts.data()),
-                        static_cast<std::streamsize>(count * sizeof(float)));
-                if (!in)
-                    throw std::runtime_error("truncated spectrum");
-                spectrum.counts.resize(static_cast<std::size_t>(metadata_.spectrumLengths[i]),
-                                       0.0F);
-                record.result.spectra.push_back(std::move(spectrum));
-            }
-            records.push_back(std::move(record));
+    while (records.size() < maxRecords) {
+        if (!input_.is_open()) {
+            if (shardIndex_ == metadata_.shardFiles.size())
+                break;
+            input_.open(directory_ / metadata_.shardFiles[shardIndex_++], std::ios::binary);
+            verifyHeader(input_);
         }
+        if (input_.peek() == std::char_traits<char>::eof()) {
+            input_.close();
+            input_.clear();
+            continue;
+        }
+        auto &in = input_;
+        DatasetRecord record;
+        record.sampleIndex = readValue<std::uint64_t>(in);
+        record.sampleId = readString(in);
+        const auto parameters = readValue<std::uint32_t>(in);
+        if (parameters > 100000)
+            throw std::runtime_error("too many dataset parameters");
+        record.openParameters.resize(parameters);
+        for (auto &value : record.openParameters)
+            value = readValue<double>(in);
+        const auto spectra = readValue<std::uint32_t>(in);
+        if (spectra > 10000)
+            throw std::runtime_error("too many spectra");
+        if (spectra != metadata_.spectrumLabels.size())
+            throw std::runtime_error("dataset spectrum count differs from metadata");
+        for (std::uint32_t i = 0; i < spectra; ++i) {
+            simulator::Spectrum spectrum;
+            spectrum.label = readString(in);
+            if (spectrum.label != metadata_.spectrumLabels[i])
+                throw std::runtime_error("dataset spectrum ordering differs from metadata");
+            const auto count = readValue<std::uint64_t>(in);
+            if (count > 100000000)
+                throw std::runtime_error("spectrum exceeds safety limit");
+            if (count > metadata_.spectrumLengths[i])
+                throw std::runtime_error("dataset spectrum exceeds declared maximum length");
+            spectrum.counts.resize(static_cast<std::size_t>(count));
+            in.read(reinterpret_cast<char *>(spectrum.counts.data()),
+                    static_cast<std::streamsize>(count * sizeof(float)));
+            if (!in)
+                throw std::runtime_error("truncated spectrum");
+            spectrum.counts.resize(static_cast<std::size_t>(metadata_.spectrumLengths[i]),
+                                   0.0F);
+            record.result.spectra.push_back(std::move(spectrum));
+        }
+        records.push_back(std::move(record));
+    }
+    return records;
+}
+
+std::vector<DatasetRecord> DatasetReader::readAll() const {
+    DatasetStream stream(directory_);
+    std::vector<DatasetRecord> records;
+    for (;;) {
+        auto batch = stream.readBatch(512);
+        if (batch.empty())
+            break;
+        for (auto &record : batch)
+            records.push_back(std::move(record));
     }
     return records;
 }

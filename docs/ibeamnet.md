@@ -250,3 +250,66 @@ and cannot load into the new head. Checkpoint architecture metadata records sigm
 presence. Native export provides marginal mixture mean, per-cell P and marginal
 posterior standard deviation; conditional E is exposed by PyTorch predictions.
 Conditional interval coverage uses Y and E, not intervals centered on P*Y.
+
+
+### Training with reference pileup
+
+`examples/train_ibeamnet_pileup.ipynb` starts from pileup-free channel spectra,
+adds reference pileup with `ibeamlab.spectrum.pileup`, then draws Poisson noise.
+The full `2*N-1` support is retained per detector. LRN reconstruction targets
+remain pileup-free, with their original channel lengths.
+
+Export with `need_pileup_subtraction=True, apply_reference_pileup=True` and the
+same `pileup_fudge_factor_seconds` used during training. The native runtime reads
+`inverse.apply_reference_pileup` (default `false` for existing packages).
+`predict(InverseInput(...))` removes measured pileup, rebins to the bare reference
+grid, scales by reference/measured `particlesSr`, and applies reference pileup
+using the packaged real/live times. It never adds Poisson noise at inference.
+`pileup_already_removed=True` skips measured subtraction only.
+`predict_prepared()` expects the full already-piled reference input.
+
+Use the updated native runtime for these packages: older runtimes do not
+implement reference pileup reapplication. Reference real/live times must be
+positive; input spectrum lengths must be odd and include full convolution support.
+
+
+For multi-million-sample training, the pileup notebook streams dataset records
+with `Dataset.iter_batches()` into read-only NumPy disk caches. Its defaults are
+`PREPROCESS_BATCH_SIZE=512` and `PILEUP_THREADS=min(128, os.cpu_count())`.
+`pileup_batch` processes a NumPy batch in native code with OpenMP where available;
+serial fallback builds produce the same spectra. Full convolution tails are kept.
+Progress bars show streamed loading, reference pileup, normalization, and Poisson
+noise generation. Completed caches are reused; incomplete builds are not published.
+
+Set `PREPROCESS_CACHE_DIR` to a disk with room for the clean spectra, piled spectra,
+physical targets and fixed evaluation inputs. Required space is checked before
+each cache build. For one N-channel detector and M samples, the two main spectra
+caches use approximately `4*M*(3*N-1)` bytes, plus targets and evaluation inputs.
+Split views do not duplicate these matrices. Normalization scans source rows in
+bounded batches; training loads rows on demand. Windows DataLoader workers reopen
+memory maps instead of pickling full arrays. The notebook's original eager variant
+`train_ibeamnet.ipynb` retains its existing loading behavior.
+
+## Dynamic-layer LRN_AD inference
+
+`LRN_AD.export(path, layer_layout="dynamic", ...)` creates a version-5 forward
+package with physical elemental areal densities as ONNX input
+`[batch, layers, elements]`. The element order is recorded in
+`metadata.forward.layer_input.elements`; units are `1e15 atoms/cm2`.
+AD scaling is embedded once in the graph. An ONNX `Loop` executes the shared
+recurrent block for the runtime layer count. The eight training layers are
+provenance, not an inference limit. This permits longer samples without
+retraining, but accuracy beyond the training distribution needs validation.
+
+The C++ `ForwardModel::predict` and Python `ForwardModel.predict` still accept
+ordinary experiments. They convert thickness times atomic fraction to AD and
+pad mixed-length batches with zeros. Every exactly zero-AD layer preserves the
+hidden state and adds no contribution, including interior zero layers; it does
+not terminate processing. Unsupported elements are rejected. Existing fixed
+packages and the default `layer_layout="fixed"` export retain their interface.
+
+For PyTorch inference, `model.predict_ad(densities)` accepts physical 3D AD
+tensors. The core `model(...)` continues to accept flattened, already scaled AD.
+`examples/reexport_lrn_ad_dynamic.py` reexports the existing checkpoint using its
+original package's setup, output scaling and correction settings. Rebuild C++
+consumers against the updated headers and library before loading version-5 packages.

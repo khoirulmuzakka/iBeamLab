@@ -39,6 +39,7 @@ void bindModel(py::module_ &root) {
         .def_readwrite("setup_template", &InverseModelMetadata::setupTemplate)
         .def_readwrite("input_spectra", &InverseModelMetadata::inputSpectra)
         .def_readwrite("need_pileup_subtraction", &InverseModelMetadata::needPileupSubtraction)
+        .def_readwrite("apply_reference_pileup", &InverseModelMetadata::applyReferencePileup)
         .def_readwrite("pileup_fudge_factor_seconds",
                        &InverseModelMetadata::pileupFudgeFactorSeconds)
         .def_readwrite("presence_probability_output_name", &InverseModelMetadata::presenceProbabilityOutputName)
@@ -46,8 +47,19 @@ void bindModel(py::module_ &root) {
         .def_readwrite("posterior_std_inverse_factor", &InverseModelMetadata::posteriorStdInverseFactor)
         .def_readwrite("uncertainty_predicted", &InverseModelMetadata::uncertaintyPredicted)
         .def_readwrite("output_edp", &InverseModelMetadata::outputEdp);
+    py::class_<LayerInputSpec>(m, "LayerInputSpec")
+        .def(py::init<>())
+        .def_readwrite("dynamic_layers", &LayerInputSpec::dynamicLayers)
+        .def_readwrite("elements", &LayerInputSpec::elements)
+        .def_readwrite("representation", &LayerInputSpec::representation)
+        .def_readwrite("unit", &LayerInputSpec::unit)
+        .def_readwrite("layer_order", &LayerInputSpec::layerOrder)
+        .def_readwrite("zero_layer_behavior", &LayerInputSpec::zeroLayerBehavior)
+        .def_readwrite("trained_max_layers", &LayerInputSpec::trainedMaxLayers)
+        .def_readwrite("ad_input_factor", &LayerInputSpec::adInputFactor);
     py::class_<ForwardModelMetadata>(m, "ForwardModelMetadata")
         .def(py::init<>())
+        .def_readwrite("layer_input", &ForwardModelMetadata::layerInput)
         .def_readwrite("sample_template", &ForwardModelMetadata::sampleTemplate)
         .def_readwrite("setup_template", &ForwardModelMetadata::setupTemplate)
         .def_readwrite("input_parameters", &ForwardModelMetadata::inputParameters)

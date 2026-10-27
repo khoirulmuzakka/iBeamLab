@@ -14,8 +14,9 @@ class LRN_AD(LRNModel):
 
     Elemental densities use physical units of 1e15 atoms/cm2. The core forward
     method accepts already scaled densities, just like iBeamNet posterior means.
-    Export retains the study's physical thickness/concentration interface and
-    embeds conversion and AD scaling in ONNX. Currently supports fixed setups.
+    Fixed export retains the study's thickness/concentration interface. Dynamic
+    export accepts physical AD [batch, layers, elements] and embeds AD scaling
+    in a runtime ONNX loop. Currently supports fixed experimental setups.
     """
 
     def __init__(self, study, output_spectra_lengths, *, elements,
@@ -62,10 +63,25 @@ class LRN_AD(LRNModel):
         fractions = fractions.reshape(parameters.shape[0], self.layer_count, len(self.elements))
         return self.scale_areal_density(thickness.unsqueeze(-1) * fractions)
 
-    def export(self, path, **kwargs):
+    def predict_ad(self, densities):
+        """Predict from physical AD [batch, layers, elements], in surface order."""
+        if densities.ndim != 3 or densities.shape[1] < 1 or densities.shape[2] != len(self.elements):
+            raise ValueError("densities must have shape [batch, layers>=1, elements]")
+        if not torch.isfinite(densities).all() or (densities < 0).any():
+            raise ValueError("densities must be finite and nonnegative")
+        return self.predict(self.scale_areal_density(densities))
+
+    def export(self, path, *, layer_layout="fixed", **kwargs):
         if any(kwargs.get(key) is not None for key in
                ("input_transform", "input_minimum", "input_scale")):
             raise ValueError("LRN_AD export embeds AD conversion/scaling; supply physical atomic fractions")
+        if layer_layout == "dynamic":
+            if type(self).encode_latent is not LRNModel.encode_latent:
+                raise ValueError("Dynamic recurrent export requires the LRN_AD recurrent encoder")
+            from ._lrn_ad_export import export_dynamic
+            return export_dynamic(self, path, **kwargs)
+        if layer_layout != "fixed":
+            raise ValueError("layer_layout must be 'fixed' or 'dynamic'")
         return _PhysicalInputWrapper(self).export(path, **kwargs)
 
 

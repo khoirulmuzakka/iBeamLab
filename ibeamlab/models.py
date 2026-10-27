@@ -88,7 +88,11 @@ class InverseModel(Model):
         return row
 
     def predict(self, inputs: InverseInput | Sequence[InverseInput]) -> InversePrediction | list[InversePrediction]:
-        """Prepare experimental spectra and return physical EDPs."""
+        """Prepare experimental spectra and return physical EDPs.
+
+        Package metadata selects measured pileup removal, calibration/exposure
+        correction, and optional reference pileup reapplication, in that order.
+        """
         from ._native import native
         single = isinstance(inputs, InverseInput)
         batches = [inputs] if single else inputs
@@ -122,6 +126,11 @@ class InverseModel(Model):
 
 class ForwardModel(Model):
     """An experiment-to-spectra model."""
+    @property
+    def metadata(self):
+        """Package schema, including the ordered dynamic layer element list."""
+        return self._native.metadata
+
     def __init__(self, path: str | Path, *, threads: int = 1, correction_threads: int = 1, apply_pileup_on_inference: bool | None = None):
         super().__init__(path, threads=threads)
         from ._native import native

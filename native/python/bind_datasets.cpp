@@ -31,6 +31,10 @@ void bindDatasets(py::module_ &r) {
         .def_readonly("sample_id", &DatasetRecord::sampleId)
         .def_readonly("open_parameters", &DatasetRecord::openParameters)
         .def_readonly("result", &DatasetRecord::result);
+    py::class_<DatasetStream>(m, "DatasetStream")
+        .def(py::init<std::filesystem::path>())
+        .def("read_batch", &DatasetStream::readBatch, py::arg("max_records"),
+             py::call_guard<py::gil_scoped_release>());
     py::class_<DatasetReader>(m, "DatasetReader")
         .def(py::init<std::filesystem::path>())
         .def_property_readonly("metadata", &DatasetReader::metadata,

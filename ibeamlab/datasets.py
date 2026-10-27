@@ -68,6 +68,27 @@ class Dataset:
     def __len__(self) -> int:
         return self.metadata.accepted
 
+    def iter_batches(self, batch_size: int = 512):
+        """Stream at most batch_size records without populating the records cache.
+
+        Traverses shards in the same order as records/read_all. Each iteration
+        opens an independent cursor, so memory use is bounded by one batch.
+        """
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+            raise ValueError("batch_size must be a positive integer")
+        from ._native import native
+        try:
+            stream = native.datasets.DatasetStream(self.path)
+            while True:
+                batch = stream.read_batch(batch_size)
+                if not batch:
+                    break
+                yield tuple(DatasetRecord(x.sample_index, x.sample_id,
+                    np.asarray(x.open_parameters, dtype=np.float64), _result(x.result))
+                    for x in batch)
+        except Exception as error:
+            raise DatasetError(f"cannot stream dataset {self.path}: {error}") from error
+
     @property
     def parameters(self) -> NDArray[np.float64]:
         """Parameter matrix with shape ``(samples, parameters)``."""

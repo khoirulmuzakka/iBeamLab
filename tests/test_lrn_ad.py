@@ -43,3 +43,55 @@ def test_export_native_parity(tmp_path):
     assert metadata.class_name == "LRN_AD"
     assert metadata.input_dimension == 3
     assert metadata.input_transform.type == "identity"
+
+
+def test_dynamic_export_variable_layers_and_padding(tmp_path):
+    import zipfile
+    onnx = pytest.importorskip("onnx")
+    study, model = make_model()
+    model.eval()
+    package = model.export(tmp_path / "dynamic.zip", layer_layout="dynamic", output_inverse_factor=.01)
+    assert not model.training
+    with zipfile.ZipFile(package) as archive:
+        graph = onnx.load_from_string(archive.read("model.onnx"))
+    assert any(node.op_type == "Loop" for node in graph.graph.node)
+    runtime = ibl.ForwardModel(package)
+    assert runtime.metadata.format_version == 5
+    assert runtime.metadata.forward.layer_input.elements == ["Li", "C"]
+    experiments, expected = [], []
+    for count in (1, 2, 8, 10, 16, 32):
+        layers = [ibl.Layer(1000 + i * 100, {"Li": .25, "C": .75}) for i in range(count)]
+        experiments.append(ibl.Experiment(ibl.Sample(layers), study.experiment.detectors))
+        ad = torch.tensor([[[layer.thickness * .25, layer.thickness * .75] for layer in layers]])
+        expected.append(model.predict_ad(ad).numpy()[0] / .01)
+    for result, truth in zip(runtime.predict(experiments), expected):
+        np.testing.assert_allclose(result["RBS"].counts, truth, rtol=3e-4, atol=1e-4)
+    # Zero layers anywhere preserve state; an interior zero must not stop the loop.
+    layers = list(experiments[1].sample.layers)
+    padded = ibl.Experiment(ibl.Sample([ibl.Layer(0, {"C": 1}), layers[0],
+        ibl.Layer(0, {"C": 1}), layers[1], ibl.Layer(0, {"C": 1})]), study.experiment.detectors)
+    np.testing.assert_allclose(runtime.predict(padded)["RBS"].counts, expected[1], rtol=3e-4, atol=1e-4)
+    assert runtime.predict([]) == []
+    zero = ibl.Experiment(ibl.Sample([ibl.Layer(0, {"C": 1})]), study.experiment.detectors)
+    np.testing.assert_allclose(runtime.predict(zero)["RBS"].counts,
+                              model.predict_ad(torch.zeros(1, 1, 2)).numpy()[0] / .01,
+                              rtol=3e-4, atol=1e-4)
+    unknown = ibl.Experiment(ibl.Sample([ibl.Layer(100, {"Fe": 1})]), study.experiment.detectors)
+    with pytest.raises(ibl.InferenceError, match="unsupported element"):
+        runtime.predict(unknown)
+    for invalid in (torch.zeros(1, 0, 2), torch.full((1, 2, 2), -1.),
+                    torch.full((1, 2, 2), float("nan"))):
+        with pytest.raises(ValueError):
+            model.predict_ad(invalid)
+
+    from ibeamlab._native import native
+    metadata = native.model.ModelPackage.open(package).metadata
+    schema = metadata.forward.layer_input
+    schema.elements = ["Li", "Li"]
+    forward = metadata.forward
+    forward.layer_input = schema
+    metadata.forward = forward
+    graph_file = tmp_path / "model.onnx"
+    onnx.save(graph, graph_file)
+    with pytest.raises(ValueError, match="unique"):
+        native.model.ModelPackage.from_onnx(graph_file, metadata)

@@ -16,6 +16,10 @@ def run_training(tmp_path, model=None):
     notebook = json.loads((Path(__file__).parents[1] / "examples" /
                            "train_lrn_ad_multilayer.ipynb").read_text(encoding="utf-8"))
     source = "".join(notebook["cells"][13]["source"])
+    # Keep fixture paths independent of the user's selected experiment directory.
+    source = "\n".join('OUTPUT_DIR = EXAMPLES / "artifacts" / "lrn_ad_rbs_10layers"'
+                       if line.startswith("OUTPUT_DIR = ") else line
+                       for line in source.split("\n"))
     source = source.replace("CPU_THREADS = os.cpu_count() or 1", "CPU_THREADS = 1")
     source = source.replace("BATCH_SIZE = 512", "BATCH_SIZE = 2")
     start = source.index("TRAINING_SCHEDULE = [")
@@ -146,3 +150,53 @@ def test_original_checkpoint_is_read_only(tmp_path):
     exec(source, env)
     assert original.read_bytes() == before
     assert env["restored_loss"] == 0
+
+
+def test_resume_extended_schedule_matches_uninterrupted_training(tmp_path):
+    short = 'TRAINING_SCHEDULE = [{"learning_rate": .05, "epochs": 2}]'
+    extended = 'TRAINING_SCHEDULE = [{"learning_rate": .05, "epochs": 4}]'
+    source, reference = run_training(tmp_path / "reference")
+    exec(source.replace(short, extended), reference)
+    expected = torch.load(reference['resume_path'], weights_only=False)
+    source, initial = run_training(tmp_path / "extended")
+    exec(source, initial)
+    source, resumed = run_training(tmp_path / "extended")
+    exec(source.replace(short, extended), resumed)
+    actual = torch.load(resumed['resume_path'], weights_only=False)
+    assert actual['completed_epochs'] == 4 and len(actual['history']) == 4
+    assert actual['run_settings']['schedule'][0]['epochs'] == 4
+    for name, tensor in expected['model_state_dict'].items():
+        torch.testing.assert_close(actual['model_state_dict'][name], tensor, rtol=0, atol=0)
+    for key, state in expected['optimizer_state_dict']['state'].items():
+        for field, value in state.items():
+            torch.testing.assert_close(actual['optimizer_state_dict']['state'][key][field], value,
+                                       rtol=0, atol=0)
+
+
+def test_resume_uses_revised_future_learning_rate(tmp_path):
+    source, initial = run_training(tmp_path)
+    exec(source, initial)
+    previous = torch.load(initial['resume_path'], weights_only=False)
+    source, resumed = run_training(tmp_path)
+    source = source.replace('TRAINING_SCHEDULE = [{"learning_rate": .05, "epochs": 2}]',
+        'TRAINING_SCHEDULE = [{"learning_rate": .05, "epochs": 2}, {"learning_rate": .01, "epochs": 1}]')
+    exec(source, resumed)
+    actual = torch.load(resumed['resume_path'], weights_only=False)
+    assert actual['completed_epochs'] == 3
+    assert actual['history'][:2] == previous['history']
+    assert actual['optimizer_state_dict']['param_groups'][0]['lr'] == .01
+    diagnostics = [entry for entry in actual['step_diagnostics'] if entry['epoch'] == 3]
+    assert diagnostics and all(entry['learning_rate'] == .01 for entry in diagnostics)
+
+
+def test_resume_schedule_change_keeps_other_checks(tmp_path):
+    source, initial = run_training(tmp_path)
+    exec(source, initial)
+    before = initial['resume_path'].read_bytes()
+    source, resumed = run_training(tmp_path)
+    with pytest.raises(ValueError, match='other than the training schedule'):
+        exec(source.replace('WEIGHT_DECAY = 1e-5', 'WEIGHT_DECAY = 2e-5'), resumed)
+    assert initial['resume_path'].read_bytes() == before
+    with pytest.raises(ValueError, match='already completed'):
+        exec(source.replace('"epochs": 2', '"epochs": 1'), resumed)
+    assert initial['resume_path'].read_bytes() == before

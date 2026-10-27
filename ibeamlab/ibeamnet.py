@@ -394,7 +394,8 @@ class _CNNGRUV1(nn.Module):
 
     def export(self, path: str | Path, *, output_inverse_factor: float = 1.0,
                opset_version: int = 17, need_pileup_subtraction: bool = True,
-               pileup_fudge_factor_seconds: float = 0.4e-6) -> Path:
+               pileup_fudge_factor_seconds: float = 0.4e-6,
+               apply_reference_pileup: bool = False) -> Path:
         """Export density, presence probability and standard deviation (version 4).
 
         Discrete presence heads export the MAP presence mask times conditional
@@ -405,9 +406,12 @@ class _CNNGRUV1(nn.Module):
         Posterior std includes both Gaussian variance and presence uncertainty.
         Input normalization is inside ONNX; metadata input transform is identity.
         The runtime divides the graph output by output_inverse_factor.
-        need_pileup_subtraction declares pileup-free training inputs. Experimental
+        need_pileup_subtraction requests measured pileup removal. Experimental
         spectra/settings are supplied through InverseInput for native correction.
         predict_prepared skips physical corrections for reference spectra.
+        apply_reference_pileup=True adds reference pileup after measured pileup
+        removal, rebinning and exposure scaling. Input lengths must include full
+        2*N-1 support; predict_prepared then expects piled-up reference spectra.
         """
         if not math.isfinite(output_inverse_factor) or output_inverse_factor <= 0:
             raise ValueError("output_inverse_factor must be finite and positive")
@@ -415,6 +419,12 @@ class _CNNGRUV1(nn.Module):
             raise ValueError("need_pileup_subtraction must be a boolean")
         if not math.isfinite(pileup_fudge_factor_seconds) or pileup_fudge_factor_seconds < 0:
             raise ValueError("pileup_fudge_factor_seconds must be finite and nonnegative")
+        if not isinstance(apply_reference_pileup, bool):
+            raise ValueError("apply_reference_pileup must be a boolean")
+        if apply_reference_pileup and not need_pileup_subtraction:
+            raise ValueError("reference pileup requires measured pileup subtraction")
+        if apply_reference_pileup and any(n % 2 == 0 for n in self.input_spectra_lengths.values()):
+            raise ValueError("reference pileup input lengths must be full odd 2*N-1 lengths")
         from ._native import native
         metadata = native.model.ModelMetadata()
         metadata.model_type = native.model.ModelType.INVERSE
@@ -433,6 +443,7 @@ class _CNNGRUV1(nn.Module):
         config = self.study._config()
         inverse = native.model.InverseModelMetadata()
         inverse.need_pileup_subtraction = need_pileup_subtraction
+        inverse.apply_reference_pileup = apply_reference_pileup
         inverse.pileup_fudge_factor_seconds = pileup_fudge_factor_seconds
         inverse.presence_probability_output_name = "presence_probability"
         inverse.posterior_std_output_name = "posterior_std"

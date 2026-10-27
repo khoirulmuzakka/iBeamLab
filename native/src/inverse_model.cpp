@@ -92,7 +92,8 @@ std::vector<InverseResult> InverseModel::predict(const std::vector<InverseInput>
                 counts = spectrum::removePileup(counts, measured->realTime, measured->liveTime,
                                                 m.pileupFudgeFactorSeconds);
             const auto oldEdges = edges(*measured, counts.size());
-            const auto newEdges = edges(reference, spec.length);
+            const auto bareLength = m.applyReferencePileup ? spec.length / 2 + 1 : spec.length;
+            const auto newEdges = edges(reference, bareLength);
             const double tolerance =
                 1e-10 * std::max({1.0, std::abs(newEdges.front()), std::abs(newEdges.back())});
             if (oldEdges.front() > newEdges.front() + tolerance ||
@@ -101,10 +102,14 @@ std::vector<InverseResult> InverseModel::predict(const std::vector<InverseInput>
                     "experimental spectrum does not cover the training energy grid: " + spec.label);
             counts = spectrum::rebin(oldEdges, newEdges, counts);
             const double scale = reference.particlesSr / measured->particlesSr;
+            for (auto &value : counts)
+                value *= scale;
+            if (m.applyReferencePileup)
+                counts = spectrum::pileup(counts, reference.realTime, reference.liveTime,
+                                          m.pileupFudgeFactorSeconds);
             simulator::Spectrum corrected{spec.label, {}};
             corrected.counts.reserve(spec.length);
             for (double value : counts) {
-                value *= scale;
                 if (!std::isfinite(value) || value < 0 || value > std::numeric_limits<float>::max())
                     throw std::invalid_argument("inverse corrected counts are not representable: " +
                                                 spec.label);

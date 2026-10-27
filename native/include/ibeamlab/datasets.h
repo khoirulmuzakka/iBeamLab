@@ -130,6 +130,20 @@ class IBEAMLAB_API DatasetWriter final : public IDatasetWriter {
     bool finalized_{false};
 };
 
+/** @brief Bounded, sequential shard reader. Independent streams own their file cursors. */
+class IBEAMLAB_API DatasetStream {
+  public:
+    explicit DatasetStream(std::filesystem::path directory);
+    /** Returns at most maxRecords, or an empty batch at EOF. */
+    std::vector<DatasetRecord> readBatch(std::size_t maxRecords);
+
+  private:
+    std::filesystem::path directory_;
+    DatasetMetadata metadata_;
+    std::size_t shardIndex_{};
+    std::ifstream input_;
+};
+
 /**
  * @brief Validates and reads a native dataset directory.
  *

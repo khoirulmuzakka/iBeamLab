@@ -7,6 +7,7 @@
 #include <ibeamlab/spectrum_processing.h>
 #include <iostream>
 #include <mutex>
+#include <limits>
 #include <set>
 #include <stdexcept>
 namespace ibeamlab::inference {
@@ -42,6 +43,16 @@ ForwardModel::predict(const std::vector<simulator::SimulationInput> &inputs) con
     preprocessing::Matrix rows;
     rows.reserve(inputs.size());
     const auto &m = impl_->model.metadata().forward;
+    const bool sequence = m.layerInput.dynamicLayers;
+    std::size_t sequenceLayers = 0;
+    for (const auto &i : inputs) sequenceLayers = std::max(sequenceLayers, i.sample.layers.size());
+    const auto elements = m.layerInput.elements.size();
+    const auto maxSize = std::numeric_limits<std::size_t>::max();
+    if (sequence && (sequenceLayers > maxSize / elements ||
+        inputs.size() > maxSize / std::max<std::size_t>(1, sequenceLayers * elements)))
+        throw std::invalid_argument("layer tensor size overflows");
+    std::vector<float> sequenceData(sequence ? inputs.size() * sequenceLayers * elements : 0, 0.0f);
+    std::size_t batchIndex = 0;
     for (const auto &i : inputs) {
         i.sample.validate();
         i.setup.validate();
@@ -56,9 +67,9 @@ ForwardModel::predict(const std::vector<simulator::SimulationInput> &inputs) con
                     impl_->warn("beam or detector resolution differs from training setup for " +
                                 ref.label + "; prediction uses training values");
             }
-            if (i.sample.layers.size() > m.sampleTemplate.layers.size())
+            if (!sequence && i.sample.layers.size() > m.sampleTemplate.layers.size())
                 throw std::invalid_argument("sample exceeds trained layer layout");
-            for (std::size_t l = 0; l < i.sample.layers.size(); ++l) {
+            for (std::size_t l = 0; !sequence && l < i.sample.layers.size(); ++l) {
                 for (const auto &species : i.sample.layers[l].species) {
                     const auto &supported = m.sampleTemplate.layers[l].species;
                     if (std::none_of(supported.begin(), supported.end(),
@@ -67,6 +78,23 @@ ForwardModel::predict(const std::vector<simulator::SimulationInput> &inputs) con
                                     std::to_string(l) + "; ignored by surrogate");
                 }
             }
+        }
+        if (sequence) {
+            for (std::size_t l = 0; l < i.sample.layers.size(); ++l) {
+                const auto &layer = i.sample.layers[l];
+                for (const auto &species : layer.species) {
+                    const auto it = std::find(m.layerInput.elements.begin(), m.layerInput.elements.end(), species.element);
+                    if (it == m.layerInput.elements.end())
+                        throw std::invalid_argument("unsupported element in dynamic AD input: " + species.element);
+                    const double ad = layer.thickness * species.concentration;
+                    if (!std::isfinite(ad) || ad > std::numeric_limits<float>::max())
+                        throw std::invalid_argument("elemental areal density exceeds float32 range");
+                    const auto e = static_cast<std::size_t>(it - m.layerInput.elements.begin());
+                    sequenceData[(batchIndex * sequenceLayers + l) * elements + e] = static_cast<float>(ad);
+                }
+            }
+            ++batchIndex;
+            continue;
         }
         std::vector<float> row;
         row.reserve(m.inputParameters.size());
@@ -96,7 +124,8 @@ ForwardModel::predict(const std::vector<simulator::SimulationInput> &inputs) con
         }
         rows.push_back(std::move(row));
     }
-    const auto values = impl_->model.run(rows);
+    const auto values = sequence ? impl_->model.runSequence(sequenceData, inputs.size(), sequenceLayers)
+                                 : impl_->model.run(rows);
     std::vector<ForwardResult> result(values.size());
     // Never let exceptions escape an OpenMP region. Each row owns its output/error.
     std::vector<std::exception_ptr> errors(values.size());

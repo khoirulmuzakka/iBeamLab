@@ -120,6 +120,9 @@ if(IBEAMLAB_BUILD_PYTHON)
         python/bind_spectrum_processing.cpp python/bind_transforms.cpp
         python/bind_model_inference.cpp)
     target_link_libraries(_ibeamlab_cpp PRIVATE ibeamlab)
+    if(OpenMP_CXX_FOUND)
+        target_link_libraries(_ibeamlab_cpp PRIVATE OpenMP::OpenMP_CXX)
+    endif()
     set(IBEAMLAB_PYTHON_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/ibeamlab" CACHE PATH
         "Python extension output directory (override to build beside a running kernel)")
     set_target_properties(_ibeamlab_cpp PROPERTIES

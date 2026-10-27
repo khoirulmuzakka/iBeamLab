@@ -367,8 +367,16 @@ void validateParams(const sample::SampleModel &s, const sample::ExperimentalSetu
     }
 }
 void validate(const ModelMetadata &m) {
-    if ((m.formatVersion != 2 && m.formatVersion != 3 && m.formatVersion != 4) || !m.inputDimension || !m.outputDimension)
-        throw std::invalid_argument("invalid model metadata");
+    const bool sequence = m.modelType == ModelType::Forward && m.forward.layerInput.dynamicLayers;
+    if ((m.formatVersion != 2 && m.formatVersion != 3 && m.formatVersion != 4 && m.formatVersion != 5) ||
+        (!sequence && !m.inputDimension) || !m.outputDimension ||
+        (sequence != (m.formatVersion == 5)) || (sequence && m.inputDimension != 0))
+        throw std::invalid_argument("invalid model metadata: version=" + std::to_string(m.formatVersion) +
+            ", input_dimension=" + std::to_string(m.inputDimension) +
+            ", output_dimension=" + std::to_string(m.outputDimension) +
+            ", dynamic_layers=" + std::to_string(sequence));
+    if (sequence && m.inputTransform.type != "identity")
+        throw std::invalid_argument("dynamic AD inputs require identity preprocessing; scaling belongs in ONNX");
     validateTransform(m.inputTransform, m.inputDimension);
     validateTransform(m.outputTransform, m.outputDimension);
     if (m.modelType == ModelType::Inverse) {
@@ -390,6 +398,17 @@ void validate(const ModelMetadata &m) {
         if (!std::isfinite(m.inverse.pileupFudgeFactorSeconds) ||
             m.inverse.pileupFudgeFactorSeconds < 0)
             throw std::invalid_argument("invalid inverse pileup fudge factor in seconds");
+        if (m.inverse.applyReferencePileup) {
+            if (!m.inverse.needPileupSubtraction)
+                throw std::invalid_argument("reference pileup requires measured pileup subtraction");
+            for (const auto &spec : m.inverse.inputSpectra)
+                if (spec.length == 0 || spec.length % 2 == 0)
+                    throw std::invalid_argument("reference pileup requires full odd 2*N-1 input lengths");
+            for (const auto &detector : m.inverse.setupTemplate.detectors)
+                if (!std::isfinite(detector.realTime) || detector.realTime <= 0 ||
+                    !std::isfinite(detector.liveTime) || detector.liveTime <= 0)
+                    throw std::invalid_argument("reference pileup requires positive reference times");
+        }
         const auto &edp = m.inverse.outputEdp;
         if (!edp.maxLayers || edp.elements.empty() || edp.unit != "1e15 atoms/cm2" ||
             edp.maxLayers != m.inverse.sampleTemplate.layers.size() ||
@@ -439,7 +458,28 @@ void validate(const ModelMetadata &m) {
         }
         validateParams(m.forward.sampleTemplate, m.forward.setupTemplate,
                        m.forward.inputParameters);
-        if (m.forward.inputParameters.size() != m.inputDimension ||
+        if (sequence) {
+            const auto &s = m.forward.layerInput;
+            if (s.elements.empty() || s.representation != "elemental_areal_density" ||
+                s.unit != "1e15 atoms/cm2" || s.layerOrder != "surface_to_depth" ||
+                s.zeroLayerBehavior != "skip" || !s.trainedMaxLayers ||
+                s.trainedMaxLayers != m.forward.sampleTemplate.layers.size() ||
+                !std::isfinite(s.adInputFactor) || s.adInputFactor <= 0 ||
+                !m.forward.inputParameters.empty())
+                throw std::invalid_argument("invalid dynamic layer input specification");
+            std::unordered_set<std::string> names;
+            for (const auto &e : s.elements)
+                if (e.empty() || !names.insert(e).second)
+                    throw std::invalid_argument("layer input elements must be nonempty and unique");
+            for (const auto &layer : m.forward.sampleTemplate.layers) {
+                if (layer.species.size() != names.size())
+                    throw std::invalid_argument("layer input elements must cover training template");
+                for (const auto &species : layer.species)
+                    if (!names.count(species.element))
+                        throw std::invalid_argument("training element missing from layer input schema");
+            }
+        }
+        if ((!sequence && m.forward.inputParameters.size() != m.inputDimension) ||
             total(m.forward.outputSpectra) != m.outputDimension)
             throw std::invalid_argument("forward dimensions do not match metadata");
     }
@@ -468,6 +508,7 @@ std::string manifest(const ModelMetadata &m) {
                      {"setup_template", setupTable(m.inverse.setupTemplate)},
                      {"input_spectra", spectra(m.inverse.inputSpectra)},
                      {"need_pileup_subtraction", m.inverse.needPileupSubtraction},
+                     {"apply_reference_pileup", m.inverse.applyReferencePileup},
                      {"pileup_fudge_factor_seconds", m.inverse.pileupFudgeFactorSeconds},
                      {"output_edp", toml::table{{"max_layers", static_cast<std::int64_t>(
                                                                    m.inverse.outputEdp.maxLayers)},
@@ -486,6 +527,15 @@ std::string manifest(const ModelMetadata &m) {
                              {"setup_template", setupTable(m.forward.setupTemplate)},
                              {"input_parameters", parameters(m.forward.inputParameters)},
                              {"output_spectra", spectra(m.forward.outputSpectra)}});
+    if (m.modelType == ModelType::Forward && m.forward.layerInput.dynamicLayers) {
+        const auto &v = m.forward.layerInput;
+        r["forward"].as_table()->insert("layer_input", toml::table{
+            {"dynamic_layers", true}, {"elements", array(v.elements)},
+            {"representation", v.representation}, {"unit", v.unit},
+            {"layer_order", v.layerOrder}, {"zero_layer_behavior", v.zeroLayerBehavior},
+            {"trained_max_layers", static_cast<std::int64_t>(v.trainedMaxLayers)},
+            {"ad_input_factor", v.adInputFactor}});
+    }
     std::ostringstream s;
     if (m.modelType == ModelType::Inverse && m.formatVersion == 4) {
         auto &t = *r["inverse"].as_table();
@@ -519,7 +569,7 @@ ModelPackage ModelPackage::open(const std::filesystem::path &p) {
     const std::string text(reinterpret_cast<const char *>(b.data()), b.size());
     const auto r = toml::parse(text);
     if (r["format"].value_or<std::string>("") != "ibeamlab.onnx-package" ||
-        (r["format_version"].value_or<int>(0) != 2 && r["format_version"].value_or<int>(0) != 3 && r["format_version"].value_or<int>(0) != 4))
+        (r["format_version"].value_or<int>(0) != 2 && r["format_version"].value_or<int>(0) != 3 && r["format_version"].value_or<int>(0) != 4 && r["format_version"].value_or<int>(0) != 5))
         throw std::runtime_error("unsupported model package");
     ModelPackage q;
     auto &m = q.metadata_;
@@ -557,6 +607,10 @@ ModelPackage ModelPackage::open(const std::filesystem::path &p) {
             !(*t)["need_pileup_subtraction"].is_boolean())
             throw std::runtime_error("need_pileup_subtraction must be a boolean");
         m.inverse.needPileupSubtraction = (*t)["need_pileup_subtraction"].value_or(false);
+        if ((*t).contains("apply_reference_pileup") &&
+            !(*t)["apply_reference_pileup"].is_boolean())
+            throw std::runtime_error("apply_reference_pileup must be a boolean");
+        m.inverse.applyReferencePileup = (*t)["apply_reference_pileup"].value_or(false);
         if ((*t).contains("pileup_fudge_factor_seconds") &&
             !(*t)["pileup_fudge_factor_seconds"].value<double>())
             throw std::runtime_error("pileup_fudge_factor_seconds must be a number");
@@ -603,6 +657,25 @@ ModelPackage ModelPackage::open(const std::filesystem::path &p) {
         templates(*t, m.forward);
         m.forward.inputParameters = parameters((*t)["input_parameters"].as_array());
         m.forward.outputSpectra = spectra((*t)["output_spectra"].as_array());
+        if (auto *s = (*t)["layer_input"].as_table()) {
+            auto dynamic = (*s)["dynamic_layers"].value<bool>();
+            auto *elements = (*s)["elements"].as_array();
+            if (!dynamic || !elements)
+                throw std::runtime_error("missing or invalid dynamic layer input schema");
+            auto &v = m.forward.layerInput;
+            v.dynamicLayers = *dynamic;
+            v.representation = (*s)["representation"].value_or<std::string>("");
+            v.unit = (*s)["unit"].value_or<std::string>("");
+            v.layerOrder = (*s)["layer_order"].value_or<std::string>("");
+            v.zeroLayerBehavior = (*s)["zero_layer_behavior"].value_or<std::string>("");
+            v.trainedMaxLayers = (*s)["trained_max_layers"].value_or<std::size_t>(0);
+            v.adInputFactor = (*s)["ad_input_factor"].value_or(0.0);
+            for (const auto &element : *elements) {
+                auto e = element.value<std::string>();
+                if (!e) throw std::runtime_error("invalid layer input element");
+                v.elements.push_back(*e);
+            }
+        }
     }
     validate(m);
     const auto name = (*o)["onnx_file"].value_or<std::string>("model.onnx");
@@ -618,7 +691,7 @@ ModelPackage ModelPackage::fromOnnx(const std::filesystem::path &p, ModelMetadat
     q.modelBytes_ = readFile(p, MaxModel);
     m.formatVersion = m.modelType == ModelType::Inverse
         ? ((!m.inverse.presenceProbabilityOutputName.empty() || !m.inverse.posteriorStdOutputName.empty()) ? 4 : 3)
-        : 2;
+        : (m.forward.layerInput.dynamicLayers ? 5 : 2);
     if (m.createdUtc.empty())
         m.createdUtc = now();
     m.modelSize = q.modelBytes_.size();
