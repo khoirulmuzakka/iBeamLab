@@ -1,4 +1,5 @@
 #include <fstream>
+#include <cstdlib>
 #include <ibeamlab/generation/generator.h>
 #include <ibeamlab/inference/models.h>
 #include <ibeamlab/model/metadata.h>
@@ -230,11 +231,18 @@ void generation_tests(const std::filesystem::path &root) {
     for (double v : a)
         require(v >= 1 && v <= 2, "sampling bounds");
 }
+model::ParameterInputSchema &parameter_input(model::ForwardModelMetadata &f) {
+    return std::get<model::ParameterInputSchema>(f.input);
+}
+core::Experiment reference(const model::ForwardModelMetadata &f) {
+    return {std::get<model::ParameterInputSchema>(f.input).reference_sample, f.reference_setup};
+}
 model::ModelMetadata metadata(model::Direction direction) {
     if (direction == model::Direction::Forward) {
         model::ForwardModelMetadata forward;
-        forward.reference = experiment();
-        forward.input_parameters = {{"thickness", core::LayerThickness{0}, "1e15 atoms/cm2"}};
+        forward.reference_setup = experiment().setup;
+        parameter_input(forward).reference_sample = experiment().sample;
+        parameter_input(forward).parameters = {{"thickness", core::LayerThickness{0}, "1e15 atoms/cm2"}};
         forward.output_spectra.spectra = {{"RBS", 4}};
         forward.postprocessing = {{"RBS", {model::Rebin{}}}};
         return model::ModelMetadata(std::move(forward));
@@ -253,11 +261,33 @@ void forward_contract_tests() {
     auto m = metadata(model::Direction::Forward);
     auto &f = std::get<model::ForwardModelMetadata>(m.model);
     f.postprocessing.clear();
-    f.reference.sample.layers[0].species[0].isotopes = {{28, 28, 1}};
+    parameter_input(f).reference_sample.layers[0].species[0].isotopes = {{28, 28, 1}};
     auto package =
         model::Package::from_onnx(std::filesystem::path(IBEAMLAB_FIXTURES) / "forward.onnx", m);
     inference::ForwardModel forward(package);
-    auto reference = f.reference;
+    inference::InferenceOptions cpu_options;
+    cpu_options.intra_op_threads = 2;
+    cpu_options.enable_graph_optimizations = false;
+    inference::ForwardModel tuned(package, cpu_options);
+    require(tuned.options().intra_op_threads == 2 && !tuned.options().enable_graph_optimizations,
+            "C++ inference options snapshot");
+    const auto available = inference::available_execution_providers();
+    inference::InferenceOptions cuda_options;
+    cuda_options.execution_provider = inference::ExecutionProvider::Cuda;
+    if (std::getenv("IBEAMLAB_TEST_CUDA")) {
+        require(std::find(available.begin(), available.end(), "cuda") != available.end(), "CUDA runtime required");
+        inference::ForwardModel gpu(package, cuda_options);
+        near(gpu.predict(reference(f)).spectra[0].counts.back(), 400);
+        inference::InverseModel inverse_gpu(model::Package::from_onnx(
+            std::filesystem::path(IBEAMLAB_FIXTURES) / "inverse.onnx", metadata(model::Direction::Inverse)), cuda_options);
+        inference::Prediction prediction;
+        const std::vector<core::Spectrum> spectra{{"RBS", {1, 2, 3, 4}}};
+        inverse_gpu.predict_prepared(spectra, prediction);
+        near(prediction.values[0], 10);
+    } else if (std::find(available.begin(), available.end(), "cuda") == available.end()) {
+        rejects([&] { inference::ForwardModel unavailable(package, cuda_options); });
+    }
+    auto reference = ::reference(f);
     simulation::Result output;
     forward.predict(reference, output);
     const auto *storage = output.spectra[0].counts.data();
@@ -314,7 +344,7 @@ void forward_contract_tests() {
 
     // Resolve all supported target types, including coupled compositions and
     // deliberately non-structural input column order.
-    f.input_parameters = {{"energy", core::BeamEnergy{"RBS"}, "keV"},
+    parameter_input(f).parameters = {{"energy", core::BeamEnergy{"RBS"}, "keV"},
                           {"oxygen", core::SpeciesConcentration{0, "O"}, ""},
                           {"linear", core::CalibrationLinear{"RBS"}, ""},
                           {"thickness", core::LayerThickness{0}, ""},
@@ -325,14 +355,14 @@ void forward_contract_tests() {
                           {"exposure", core::ParticlesSr{"RBS"}, ""},
                           {"quadratic", core::CalibrationQuadratic{"RBS"}, ""}};
     // Distinct coefficients expose incorrect column placement in the graph.
-    f.preprocessing = {model::MultiplyScale{{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}};
+    parameter_input(f).preprocessing = {model::MultiplyScale{{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}};
     inference::ForwardModel varied(model::Package::from_onnx(
         std::filesystem::path(IBEAMLAB_FIXTURES) / "forward_parameters.onnx", m));
     auto x = reference;
     const core::Counts values{2100, .25, 2, 123, 4, 5, .75, 6, 1200, .01};
     double expected = 0;
     for (std::size_t i = 0; i < values.size(); ++i) {
-        core::write_parameter(x, f.input_parameters[i].target, values[i]);
+        core::write_parameter(x, parameter_input(f).parameters[i].target, values[i]);
         expected += values[i] * (i + 1);
     }
     near(varied.predict(x).spectra[0].counts[0], expected);
@@ -347,20 +377,33 @@ void forward_contract_tests() {
     bad.setup.measurements[0].detector.calibrationOffset = std::numeric_limits<double>::infinity();
     rejects([&] { varied.predict(bad); });
     auto negative = package;
-    std::get<model::ForwardModelMetadata>(negative.metadata.model).preprocessing = {
+    parameter_input(std::get<model::ForwardModelMetadata>(negative.metadata.model)).preprocessing = {
         model::MultiplyScale{{-1}}};
     inference::ForwardModel negative_output(negative);
     rejects([&] { negative_output.predict(reference); });
 }
 #endif
 void package_tests(const std::filesystem::path &root) {
+    inference::InferenceOptions tuning;
+    tuning.validate();
+    tuning.device_id = -1;
+    rejects([&] { tuning.validate(); });
+    tuning = {};
+    tuning.intra_op_threads = 0;
+    rejects([&] { tuning.validate(); });
+    tuning = {};
+    tuning.inter_op_threads = 0;
+    rejects([&] { tuning.validate(); });
+    tuning = {};
+    tuning.execution_provider = static_cast<inference::ExecutionProvider>(100);
+    rejects([&] { tuning.validate(); });
     model::Package package;
     package.metadata = metadata(model::Direction::Forward);
     package.graph = {std::byte{1}, std::byte{2}};
     package.write(root / "model.ibm");
     auto opened = model::Package::open(root / "model.ibm");
     require(opened.metadata.direction() == model::Direction::Forward, "forward variant direction");
-    require(std::get<model::ForwardModelMetadata>(opened.metadata.model).input_parameters[0].name ==
+    require(parameter_input(std::get<model::ForwardModelMetadata>(opened.metadata.model)).parameters[0].name ==
                 "thickness",
             "forward input schema round trip");
     {
@@ -397,8 +440,26 @@ void package_tests(const std::filesystem::path &root) {
 
     require(opened.graph == package.graph && opened.metadata.input_width() == 1,
             "package round trip");
+    auto layer_package = package;
+    auto &layer_forward = std::get<model::ForwardModelMetadata>(layer_package.metadata.model);
+    layer_forward.input = model::LayerInputSchema{{"Si", "O"}, {model::MultiplyScale{{.01, .02}}}};
+    layer_package.write(root / "layers-storage.ibm");
+    auto layer_loaded = model::Package::open(root / "layers-storage.ibm");
+    require(layer_loaded.metadata.layer_input() && layer_loaded.metadata.input_rank() == 3 &&
+                layer_loaded.metadata.input_width() == 2, "layer input rank and width round trip");
+    const auto &layer_schema = std::get<model::LayerInputSchema>(
+        std::get<model::ForwardModelMetadata>(layer_loaded.metadata.model).input);
+    require(layer_schema.elements == std::vector<std::string>{"Si", "O"} &&
+                std::get<model::MultiplyScale>(layer_schema.preprocessing[0]).factors == core::Counts{.01, .02},
+            "layer element order and per-element preprocessing round trip");
+    auto &invalid_layers = std::get<model::LayerInputSchema>(layer_forward.input);
+    invalid_layers.elements = {"Si", "Si"};
+    rejects([&] { layer_package.validate(); });
+    invalid_layers.elements = {"Si", "O"};
+    invalid_layers.preprocessing = {model::MultiplyScale{{1, 2, 3}}};
+    rejects([&] { layer_package.validate(); });
     rejects([&] { package.write(root / "model.ibm"); });
-    std::get<model::ForwardModelMetadata>(opened.metadata.model).preprocessing = {
+    parameter_input(std::get<model::ForwardModelMetadata>(opened.metadata.model)).preprocessing = {
         model::StandardScale{{0}, {0}}};
     rejects([&] { opened.validate(); });
     {
@@ -512,30 +573,30 @@ void package_tests(const std::filesystem::path &root) {
         model::Package::from_onnx(std::filesystem::path(IBEAMLAB_FIXTURES) / "forward.onnx",
                                   metadata(model::Direction::Forward));
     auto &pre = std::get<model::ForwardModelMetadata>(preprocessing_package.metadata.model);
-    pre.preprocessing = {model::MinMaxScale{{0}, {200}}};
+    parameter_input(pre).preprocessing = {model::MinMaxScale{{0}, {200}}};
     pre.postprocessing = {{"RBS", {model::MultiplyCounts{1000}}}};
     preprocessing_package.write(root / "preprocessing.ibm");
     inference::ForwardModel scaled_forward(model::Package::open(root / "preprocessing.ibm"));
     near(scaled_forward.predict(x).spectra[0].counts[0], 500);
-    pre.preprocessing = {model::CustomTransform{"missing.forward", 1, {}}};
+    parameter_input(pre).preprocessing = {model::CustomTransform{"missing.forward", 1, {}}};
     rejects([&] { inference::ForwardModel unavailable_custom(preprocessing_package); });
     processing::register_custom_transform(
         "test.forward", 1, [](std::span<float> values, const model::CustomParameters &parameters) {
             for (auto &v : values)
                 v *= static_cast<float>(parameters.at("factor")[0]);
         });
-    pre.preprocessing = {model::CustomTransform{"test.forward", 1, {{"factor", {.5}}}}};
+    parameter_input(pre).preprocessing = {model::CustomTransform{"test.forward", 1, {{"factor", {.5}}}}};
     pre.postprocessing.clear();
     preprocessing_package.write(root / "custom.ibm");
     inference::ForwardModel custom_forward(model::Package::open(root / "custom.ibm"));
     near(custom_forward.predict(x).spectra[0].counts[0], 50);
     auto multi = metadata(model::Direction::Forward);
     auto &mf = std::get<model::ForwardModelMetadata>(multi.model);
-    auto nra = mf.reference.setup.measurements[0];
+    auto nra = mf.reference_setup.measurements[0];
     nra.label = "NRA";
     nra.beam.energy = 3000;
     nra.acquisition.particlesSr = 2000;
-    mf.reference.setup.measurements.push_back(nra);
+    mf.reference_setup.measurements.push_back(nra);
     mf.output_spectra.spectra.push_back({"NRA", 3});
     mf.postprocessing = {
         {"RBS", {model::ExposureScale{}, model::Rebin{}}},
@@ -546,7 +607,7 @@ void package_tests(const std::filesystem::path &root) {
         std::filesystem::path(IBEAMLAB_FIXTURES) / "forward_multi.onnx", multi);
     multi_package.write(root / "multi-forward.ibm");
     inference::ForwardModel multi_forward(model::Package::open(root / "multi-forward.ibm"));
-    auto requested = mf.reference;
+    auto requested = reference(mf);
     requested.setup.measurements[0].acquisition.particlesSr = 2000;
     requested.setup.measurements[1].acquisition.particlesSr = 1000;
     std::reverse(requested.setup.measurements.begin(), requested.setup.measurements.end());
@@ -569,7 +630,7 @@ void package_tests(const std::filesystem::path &root) {
     rejects([&] { multi_forward.predict(duplicate); });
     auto multi_inverse_metadata = metadata(model::Direction::Inverse);
     auto &mi = std::get<model::InverseModelMetadata>(multi_inverse_metadata.model);
-    mi.reference_setup = mf.reference.setup;
+    mi.reference_setup = mf.reference_setup;
     mi.input_spectra = mf.output_spectra;
     mi.input_preparation = {{"RBS", {model::ExposureScale{}, model::Rebin{}}},
                             {"NRA", {model::ExposureScale{}, model::Rebin{}}}};

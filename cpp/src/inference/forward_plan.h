@@ -1,13 +1,15 @@
 #pragma once
+#include <algorithm>
 #include <functional>
 #include <ibeamlab/model/metadata.h>
 #include <limits>
 #include <optional>
+#include <unordered_map>
 
 namespace ibeamlab::inference::detail {
 // Resolve parameter locations and permitted changes once. Only scalar values and
 // structural identities are checked per call; no experiment copies or encoding.
-class ForwardPlan {
+class ParameterPlan {
     static constexpr auto absent = std::numeric_limits<std::size_t>::max();
     using Measurements = std::span<const core::Measurement *const>;
     struct Scalar {
@@ -18,15 +20,18 @@ class ForwardPlan {
     };
     std::vector<Scalar> scalars_;
     std::vector<const core::Measurement *> actual_;
+    core::Experiment reference_;
 
   public:
-    ForwardPlan(const model::ForwardModelMetadata &metadata) {
-        const auto &reference = metadata.reference;
+    ParameterPlan(const model::ForwardModelMetadata &metadata)
+        : reference_{std::get<model::ParameterInputSchema>(metadata.input).reference_sample,
+                     metadata.reference_setup} {
+        const auto &reference = reference_;
         actual_.resize(reference.setup.measurements.size());
         for (std::size_t i = 0; i < actual_.size(); ++i)
             actual_[i] = &reference.setup.measurements[i];
         std::vector<std::string> keys;
-        for (const auto &parameter : metadata.input_parameters)
+        for (const auto &parameter : std::get<model::ParameterInputSchema>(metadata.input).parameters)
             keys.push_back(core::parameter_key(parameter.target));
         auto add = [&](auto read, double minimum, double maximum,
                        std::optional<core::ParameterTarget> target = {}, bool variable = false) {
@@ -94,8 +99,8 @@ class ForwardPlan {
         }
     }
 
-    void prepare(const core::Experiment &x, const core::Experiment &reference,
-                 std::span<float> input) {
+    void prepare(const core::Experiment &x, std::span<float> input) {
+        const auto &reference = reference_;
         auto mismatch = [] {
             throw std::invalid_argument(
                 "experiment differs in fields not covered by model parameters or processing");
@@ -153,5 +158,96 @@ class ForwardPlan {
     const core::Measurement &measurement(std::size_t reference_index) const {
         return *actual_[reference_index];
     }
+};
+
+// Sequence packing and setup checks retain all lookup/scratch storage across calls.
+class LayerPlan {
+    const model::ForwardModelMetadata &metadata_;
+    std::unordered_map<std::string, std::size_t> columns_;
+    std::vector<unsigned char> seen_;
+    struct MeasurementPlan {
+        bool rebin = false, exposure = false, times = false;
+        const core::Measurement *actual = nullptr;
+    };
+    std::vector<MeasurementPlan> measurements_;
+
+  public:
+    explicit LayerPlan(const model::ForwardModelMetadata &metadata) : metadata_(metadata) {
+        const auto &schema = std::get<model::LayerInputSchema>(metadata.input);
+        seen_.resize(schema.elements.size());
+        for (std::size_t i = 0; i < schema.elements.size(); ++i) columns_.emplace(schema.elements[i], i);
+        measurements_.resize(metadata.reference_setup.measurements.size());
+        for (std::size_t i = 0; i < measurements_.size(); ++i)
+            for (const auto &pipeline : metadata.postprocessing)
+                if (pipeline.measurement == metadata.reference_setup.measurements[i].label)
+                    for (const auto &step : pipeline.steps) {
+                        measurements_[i].rebin |= std::holds_alternative<model::Rebin>(step);
+                        measurements_[i].exposure |= std::holds_alternative<model::ExposureScale>(step);
+                        measurements_[i].times |= std::holds_alternative<model::Pileup>(step) ||
+                                                 std::holds_alternative<model::RemovePileup>(step);
+                    }
+    }
+    void prepare_setup(const core::ExperimentalSetup &setup) {
+        if (setup.measurements.size() != measurements_.size())
+            throw std::invalid_argument("forward measurement count mismatch");
+        auto nonnegative = [](double v) { return std::isfinite(v) && v >= 0; };
+        for (std::size_t i = 0; i < measurements_.size(); ++i) {
+            auto &plan = measurements_[i];
+            const auto &reference = metadata_.reference_setup.measurements[i];
+            plan.actual = nullptr;
+            for (const auto &m : setup.measurements)
+                if (m.label == reference.label) {
+                    if (plan.actual) throw std::invalid_argument("duplicate measurement label");
+                    plan.actual = &m;
+                }
+            if (!plan.actual) throw std::invalid_argument("missing measurement");
+            const auto &m = *plan.actual;
+            if (m.beam.particle != reference.beam.particle || m.beam.energy != reference.beam.energy ||
+                m.beam.spread != reference.beam.spread || m.detector.resolution != reference.detector.resolution)
+                throw std::invalid_argument("unsupported beam or resolution change");
+            if (!std::isfinite(m.detector.calibrationLinear) || !std::isfinite(m.detector.calibrationOffset) ||
+                !std::isfinite(m.detector.calibrationQuadratic) || !nonnegative(m.acquisition.particlesSr) ||
+                !nonnegative(m.acquisition.realTime) || !nonnegative(m.acquisition.liveTime))
+                throw std::invalid_argument("invalid measurement values");
+            if (!plan.rebin && (m.detector.calibrationLinear != reference.detector.calibrationLinear ||
+                m.detector.calibrationOffset != reference.detector.calibrationOffset ||
+                m.detector.calibrationQuadratic != reference.detector.calibrationQuadratic))
+                throw std::invalid_argument("calibration changed without rebin");
+            if (!plan.exposure && m.acquisition.particlesSr != reference.acquisition.particlesSr)
+                throw std::invalid_argument("exposure changed without scaling");
+            if (!plan.times && (m.acquisition.realTime != reference.acquisition.realTime ||
+                               m.acquisition.liveTime != reference.acquisition.liveTime))
+                throw std::invalid_argument("acquisition times changed without processing");
+        }
+    }
+    void pack(const core::Sample &sample, std::span<float> input) {
+        const auto width = seen_.size();
+        if (sample.layers.empty() || input.size() / width != sample.layers.size() || input.size() % width)
+            throw std::invalid_argument("invalid layer input shape");
+        std::fill(input.begin(), input.end(), 0.f);
+        std::size_t offset = 0;
+        for (const auto &layer : sample.layers) {
+            if (!std::isfinite(layer.thickness) || layer.thickness < 0 || layer.roughness != 0 ||
+                layer.porosityFraction != 0 || layer.poreDiameter != 0 || layer.species.empty())
+                throw std::invalid_argument("layer AD inputs require nonnegative thickness and no roughness/porosity");
+            std::fill(seen_.begin(), seen_.end(), static_cast<unsigned char>(0));
+            double sum = 0;
+            for (const auto &s : layer.species) {
+                const auto found = columns_.find(s.element);
+                if (found == columns_.end()) throw std::invalid_argument("unsupported element: " + s.element);
+                const auto column = found->second;
+                if (seen_[column]++ || !std::isfinite(s.concentration) || s.concentration < 0 || !s.isotopes.empty())
+                    throw std::invalid_argument("invalid or unsupported species in AD input");
+                sum += s.concentration;
+                const float value = static_cast<float>(layer.thickness * s.concentration);
+                if (!std::isfinite(value)) throw std::invalid_argument("areal density exceeds float32 range");
+                input[offset + column] = value;
+            }
+            if (!std::isfinite(sum) || std::abs(sum - 1) > 1e-6)
+                throw std::invalid_argument("species concentrations must sum to one");
+            offset += width;
+        }
+    }
+    const core::Measurement &measurement(std::size_t index) const { return *measurements_[index].actual; }
 };
 } // namespace ibeamlab::inference::detail

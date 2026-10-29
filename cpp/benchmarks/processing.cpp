@@ -47,12 +47,12 @@ int main() {
 #ifdef IBEAMLAB_BENCHMARK_ONNX
     using namespace ibeamlab;
     model::ForwardModelMetadata metadata;
-    metadata.reference.sample.layers = {{100, 0, 0, 0, {{"Si", 1, {}}}}};
-    metadata.reference.setup.measurements = {
+    std::get<model::ParameterInputSchema>(metadata.input).reference_sample.layers = {{100, 0, 0, 0, {{"Si", 1, {}}}}};
+    metadata.reference_setup.measurements = {
         {"single-detector-measurement", {"He", 2000, 0}, {}, {1000, 10, 8}}};
-    metadata.input_parameters = {{"thickness", core::LayerThickness{0}, "1e15 atoms/cm2"}};
+    std::get<model::ParameterInputSchema>(metadata.input).parameters = {{"thickness", core::LayerThickness{0}, "1e15 atoms/cm2"}};
     metadata.output_spectra.spectra = {{"single-detector-measurement", channels}};
-    auto experiment = metadata.reference;
+    core::Experiment experiment{std::get<model::ParameterInputSchema>(metadata.input).reference_sample, metadata.reference_setup};
     inference::ForwardModel model(
         model::Package::from_onnx(std::filesystem::path(IBEAMLAB_FIXTURES) / "forward_5000.onnx",
                                   model::ModelMetadata(metadata)));
@@ -74,6 +74,54 @@ int main() {
               << " C++ new allocations after warmup\n";
     passed = passed && allocations == 0 && result.spectra[0].counts.size() == channels &&
              result.spectra[0].counts.back() == (100 + iterations - 1) * channels;
+
+    // Vary layer count after warming maximum capacity; neither packing nor
+    // independent per-element preprocessing should allocate on the hot path.
+    model::ForwardModelMetadata dynamic;
+    dynamic.reference_setup = metadata.reference_setup;
+    dynamic.input = model::LayerInputSchema{{"Si", "O"}, {model::MultiplyScale{{.01, .02}}}};
+    dynamic.output_spectra = metadata.output_spectra;
+    auto dynamic_package = model::Package::from_onnx(
+        std::filesystem::path(IBEAMLAB_FIXTURES) / "forward_layers.onnx", model::ModelMetadata(dynamic));
+    inference::ForwardModel sequence(dynamic_package);
+    std::vector<core::Experiment> cases;
+    for (std::size_t layers : {1u, 2u, 8u, 32u}) {
+        core::Experiment sample;
+        sample.setup = dynamic.reference_setup;
+        sample.sample.layers.resize(layers, core::Layer{100, 0, 0, 0, {{"O", .5, {}}, {"Si", .5, {}}}});
+        cases.push_back(std::move(sample));
+    }
+    simulation::Result layered_result;
+    for (int i = 0; i < 10; ++i) sequence.predict(cases.back(), layered_result);
+    allocations = 0;
+    counting = true;
+    for (int i = 0; i < iterations; ++i) sequence.predict(cases[i % cases.size()], layered_result);
+    counting = false;
+    std::cout << channels << " channels, variable 1..32 layers: " << allocations
+              << " C++ new allocations after warmup\n";
+    passed = passed && allocations == 0 && layered_result.spectra[0].counts.back() ==
+        2.5 * cases[(iterations - 1) % cases.size()].sample.layers.size() * channels;
+
+    std::vector<float> ad(32 * 2, 50.f);
+    for (int i = 0; i < 10; ++i) sequence.predict_areal_density(ad, 32, layered_result);
+    allocations = 0;
+    counting = true;
+    for (int i = 0; i < iterations; ++i)
+        sequence.predict_areal_density(std::span<const float>(ad).first(2 * cases[i % cases.size()].sample.layers.size()),
+            cases[i % cases.size()].sample.layers.size(), layered_result);
+    counting = false;
+    std::cout << "Direct physical AD with preprocessing: " << allocations << " C++ new allocations after warmup\n";
+    passed = passed && allocations == 0;
+    std::get<model::LayerInputSchema>(std::get<model::ForwardModelMetadata>(dynamic_package.metadata.model).input).preprocessing.clear();
+    inference::ForwardModel borrowed(dynamic_package);
+    for (int i = 0; i < 10; ++i) borrowed.predict_areal_density(ad, 32, layered_result);
+    allocations = 0;
+    counting = true;
+    for (int i = 0; i < iterations; ++i) borrowed.predict_areal_density(ad, 32, layered_result);
+    counting = false;
+    std::cout << "Direct AD without preprocessing (borrowed input): " << allocations << " C++ new allocations after warmup\n";
+    passed = passed && allocations == 0 && ad.front() == 50.f &&
+        layered_result.spectra[0].counts.back() == 32. * 150 * channels;
 #endif
     return passed ? 0 : 1;
 }

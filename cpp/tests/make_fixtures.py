@@ -23,3 +23,16 @@ for name, width, weights, bias in [
     model = h.make_model(graph, opset_imports=[h.make_opsetid('', 17)], ir_version=9)
     onnx.checker.check_model(model)
     onnx.save(model, root / f'{name}.onnx')
+
+# Architecture-independent layer-sequence fixture: sum layers, then decode 5000 channels.
+weights = np.stack((np.arange(1, 5001), 2 * np.arange(1, 5001))).astype(np.float32)
+graph = h.make_graph([
+    h.make_node('ReduceSum', ['inputs', 'layer_axis'], ['summed'], keepdims=0),
+    h.make_node('MatMul', ['summed', 'weights'], ['outputs'])], 'forward_layers',
+    [h.make_tensor_value_info('inputs', T.FLOAT, ['batch', 'layers', 2])],
+    [h.make_tensor_value_info('outputs', T.FLOAT, ['batch', 5000])],
+    [numpy_helper.from_array(np.array([1], dtype=np.int64), 'layer_axis'),
+     numpy_helper.from_array(weights, 'weights')])
+model = h.make_model(graph, opset_imports=[h.make_opsetid('', 17)], ir_version=9)
+onnx.checker.check_model(model)
+onnx.save(model, root / 'forward_layers.onnx')

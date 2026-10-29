@@ -1,7 +1,21 @@
 # Implemented tests and CI
 
+Public Python metadata types are checked in the wheel CI jobs, including expected
+type errors for incompatible parameter targets and processing operations:
+
+```console
+python -m mypy ibeamlab/inference.py ibeamlab/metadata.py ibeamlab/parameters.py tests/typecheck_metadata.py --follow-imports=silent --ignore-missing-imports --warn-unused-ignores --check-untyped-defs
+```
+
 This inventory covers the unified root project. CTest counts test programs
 or suites, not individual assertions. Some suites contain several scenarios.
+
+ONNX builds include `python-inference-providers`: CPU option handling, provider
+snapshots and explicit CUDA-unavailable errors. On a CUDA build with compatible
+hardware/dependencies, set `IBEAMLAB_TEST_CUDA=1` before running CTest to require
+GPU forward/inverse, variable layers and batch parity, graph-optimization modes
+and invalid-device checks. The C++ package suite then exercises CUDA directly too.
+Ordinary hosted CI verifies CPU and unavailable-CUDA behavior without requiring a GPU.
 
 | CTest name | Labels | Implemented coverage |
 | --- | --- | --- |
@@ -12,6 +26,7 @@ or suites, not individual assertions. Some suites contain several scenarios.
 | `installed-consumer` | integration, deployment | Install the library, configure/build an independent C++ consumer with `find_package`, then run it |
 | `python-api` | integration, python | Python domain API, dummy simulation, caller-owned NumPy buffers, dtype rejection, generation callbacks, dataset reads; with ONNX: multi-measurement deployment and PyTorch export parity at two batch sizes |
 | `python-wrapper` | integration, python | Root Python package, independent measurement settings, cached experiment conversion, NumPy result lifetime/read-only views, buffer reuse, streaming datasets, failure/cancellation policies; with ONNX: multi-detector metadata/inference, optional training and export |
+| `python-surrogate` | integration, python (ONNX builds) | Recurrent surrogate training, staged rates, exact resume/partial-epoch replay, single-package variable layers, dynamic ONNX Loop at opsets 17/18, physical/direct AD parity, per-detector processing and shape validation |
 | `python-data-generation` | integration, python | Multilayer configuration validation without an extension, exact method budgets, compounds/shared 2–8 element sets/independent layerwise 1–13 element sets, reproducibility, pure samples, parameter columns, dummy generation and selected-element audit artifacts |
 | `allocation-benchmark` | performance | 100 rebin+pileup iterations at 5,000 channels; with ONNX, 100 single-detector predictions into reused output at 5,000 channels, checking no counted C++ allocations after warmup |
 | `simnra-reference` | integration, licensed, simnra | Five repository XNRA projects; independent fresh COM calculations, two workers, session reuse, forced append-before-delete rebuilds, a 10% layer-thickness change and pileup flags |

@@ -51,6 +51,28 @@ def main():
                 result = plan.generate(rows[:samples], simulator, directory / name,
                                        batch_size=batch_size, records_per_shard=256)
                 seconds = time.perf_counter() - started
+                if fast:
+                    def interrupt(done, total):
+                        if done == 1:
+                            raise RuntimeError("throughput cancellation probe")
+                    interrupted = directory / "interrupted"
+                    try:
+                        plan.generate(rows, simulator, interrupted, progress=interrupt,
+                                      batch_size=min(len(rows), 4096))
+                    except ibl.DatasetError as error:
+                        if "throughput cancellation probe" not in str(error):
+                            raise
+                    else:
+                        raise AssertionError("progress interruption was ignored")
+                    try:
+                        ibl.open_dataset(interrupted)
+                    except ibl.DatasetError:
+                        pass
+                    else:
+                        raise AssertionError("interrupted dataset was published")
+                    simulator.reset_stop()
+                    if simulator.simulate(plan.reference).failed:
+                        raise AssertionError("backend failed after draining interrupted jobs")
             dataset = ibl.open_dataset(result.path)
             np.testing.assert_array_equal(dataset.parameters, rows[:samples])
             if result.accepted != samples or result.failed or result.cancelled:

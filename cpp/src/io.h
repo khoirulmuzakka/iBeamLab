@@ -135,9 +135,9 @@ inline void encode(Encoder &e, const core::ExperimentalSetup &setup) {
         e.real(m.acquisition.liveTime);
     }
 }
-inline void encode(Encoder &e, const core::Experiment &x) {
-    e.integer(x.sample.layers.size());
-    for (const auto &l : x.sample.layers) {
+inline void encode(Encoder &e, const core::Sample &x) {
+    e.integer(x.layers.size());
+    for (const auto &l : x.layers) {
         e.real(l.thickness);
         e.real(l.roughness);
         e.real(l.porosityFraction);
@@ -154,6 +154,9 @@ inline void encode(Encoder &e, const core::Experiment &x) {
             }
         }
     }
+}
+inline void encode(Encoder &e, const core::Experiment &x) {
+    encode(e, x.sample);
     encode(e, x.setup);
 }
 inline core::ExperimentalSetup setup(Decoder &d) {
@@ -176,11 +179,11 @@ inline core::ExperimentalSetup setup(Decoder &d) {
     result.validate();
     return result;
 }
-inline core::Experiment experiment(Decoder &d) {
-    core::Experiment x;
+inline core::Sample sample(Decoder &d) {
+    core::Sample x;
     auto layers = d.count(10000);
-    x.sample.layers.resize(layers);
-    for (auto &l : x.sample.layers) {
+    x.layers.resize(layers);
+    for (auto &l : x.layers) {
         l.thickness = d.real();
         l.roughness = d.real();
         l.porosityFraction = d.real();
@@ -200,8 +203,13 @@ inline core::Experiment experiment(Decoder &d) {
             }
         }
     }
-    x.setup = setup(d);
     x.validate();
+    return x;
+}
+inline core::Experiment experiment(Decoder &d) {
+    core::Experiment x;
+    x.sample = sample(d);
+    x.setup = setup(d);
     return x;
 }
 inline void encode(Encoder &e, const core::ParameterTarget &t) {

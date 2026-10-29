@@ -213,10 +213,18 @@ SpectrumPipeline decode_spectrum_pipeline(detail::Decoder &d) {
 void encode(detail::Encoder &e, const ModelMetadata &m) {
     e.integer(m.direction() == Direction::Forward ? 0 : 1);
     if (const auto *f = std::get_if<ForwardModelMetadata>(&m.model)) {
-        detail::encode(e, f->reference);
-        encode_parameters(e, f->input_parameters);
+        detail::encode(e, f->reference_setup);
+        e.integer(f->input.index());
+        if (const auto *p = std::get_if<ParameterInputSchema>(&f->input)) {
+            detail::encode(e, p->reference_sample);
+            encode_parameters(e, p->parameters);
+        } else {
+            const auto &layers = std::get<LayerInputSchema>(f->input);
+            e.integer(layers.elements.size());
+            for (const auto &element : layers.elements) e.text(element);
+        }
         encode_spectra(e, f->output_spectra);
-        encode_tensor(e, f->preprocessing);
+        encode_tensor(e, m.preprocessing());
         encode_spectrum_pipeline(e, f->postprocessing);
     } else {
         const auto &i = std::get<InverseModelMetadata>(m.model);
@@ -238,10 +246,21 @@ ModelMetadata decode(detail::Decoder &d) {
     auto direction = d.integer();
     if (direction == 0) {
         ForwardModelMetadata f;
-        f.reference = detail::experiment(d);
-        f.input_parameters = decode_parameters(d);
+        f.reference_setup = detail::setup(d);
+        auto kind = d.integer();
+        if (kind == 0) {
+            ParameterInputSchema p;
+            p.reference_sample = detail::sample(d);
+            p.parameters = decode_parameters(d);
+            f.input = std::move(p);
+        } else if (kind == 1) {
+            LayerInputSchema layers;
+            layers.elements.resize(d.count(256));
+            for (auto &element : layers.elements) element = d.text();
+            f.input = std::move(layers);
+        } else throw std::runtime_error("unknown forward input schema");
         f.output_spectra = decode_spectra(d);
-        f.preprocessing = decode_tensor(d);
+        std::visit([&](auto &input) { input.preprocessing = decode_tensor(d); }, f.input);
         f.postprocessing = decode_spectrum_pipeline(d);
         m.model = std::move(f);
     } else if (direction == 1) {

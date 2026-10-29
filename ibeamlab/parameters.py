@@ -1,20 +1,32 @@
 """Ordered physical parameter descriptions shared by generation and model metadata."""
+from __future__ import annotations
 from dataclasses import dataclass
+from typing import TypeAlias, Union
+from . import native as core
 from ._engine import engine
 from .exceptions import ValidationError
+
+ParameterTarget: TypeAlias = Union["core.LayerThickness", "core.SpeciesConcentration", "core.BeamEnergy",
+    "core.BeamSpread", "core.CalibrationLinear", "core.CalibrationOffset", "core.CalibrationQuadratic",
+    "core.DetectorResolution", "core.ParticlesSr"]
 
 
 @dataclass(frozen=True, slots=True)
 class ParameterSpec:
     """One named physical input column, with a C++ parameter target and unit label."""
     name: str
-    target: object
+    target: ParameterTarget
     unit: str = ""
 
-    def to_core(self):
-        if not self.name:
-            raise ValidationError("parameter name cannot be empty")
-        return engine().Parameter(self.name, self.target, self.unit)
+    def to_core(self) -> core.Parameter:
+        if not isinstance(self.name, str) or not self.name:
+            raise ValidationError("ParameterSpec.name must be a nonempty string")
+        if not isinstance(self.unit, str):
+            raise ValidationError("ParameterSpec.unit must be a string")
+        try:
+            return engine().Parameter(self.name, self.target, self.unit)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ValidationError(f"ParameterSpec.target: {error}") from error
 
 
 @dataclass(frozen=True, slots=True)

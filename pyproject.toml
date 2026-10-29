@@ -22,9 +22,9 @@ classifiers = [
 
 [project.optional-dependencies]
 plot = ["matplotlib>=3.7"]
-training = ["torch>=2", "onnx>=1.16"]
+training = ["torch>=2", "onnx>=1.16", "onnxruntime>=1.17"]
 examples = ["tomli>=2; python_version < '3.11'"]
-dev = ["build>=1", "pytest>=8", "twine>=5", "tomli>=2; python_version < '3.11'"]
+dev = ["build>=1", "pytest>=8", "twine>=5", "mypy>=1.10,<3", "tomli>=2; python_version < '3.11'"]
 
 [tool.scikit-build]
 cmake.source-dir = "."

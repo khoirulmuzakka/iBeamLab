@@ -117,6 +117,8 @@ class SimnraSimulator(Simulator):
 
     Use as a context manager to release sessions promptly. References preserve
     geometry and cross-section settings independently for each measurement.
+    fast_calculation explicitly opts into CalculateSpectrumFast, whose numerical
+    results can differ from the standard algorithm used by default.
     """
     def __init__(self, methods, *, workers=1, multithreaded_apartment=True,
                  reuse_target_topology=True, fast_calculation=False):

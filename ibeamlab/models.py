@@ -1,13 +1,16 @@
 """Forward and inverse execution with labelled spectra and NumPy predictions."""
+from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
 from ._engine import engine, to_core
-from .exceptions import InferenceError
+from .exceptions import InferenceError, ValidationError
+from . import native as core
 from .metadata import ModelMetadata
 from .package import Package
 from .simulator import Spectrum, result_from_core
+from .inference import InferenceOptions
 
 
 def _spectra(values):
@@ -63,19 +66,24 @@ class InversePrediction:
 
 class Model:
     """Loaded model; create one instance per worker rather than calling concurrently."""
-    def __init__(self, package, *, threads=1):
+    def __init__(self, package, *, options: InferenceOptions | core.InferenceOptions | None = None) -> None:
         self.package = Package.open(package) if isinstance(package, (str, Path)) else package
         self._package = to_core(self.package)
         self.metadata = ModelMetadata.from_core(self._package.metadata)
-        self.threads = threads
+        requested = InferenceOptions() if options is None else options
+        if not isinstance(requested, (InferenceOptions, engine().InferenceOptions)):
+            raise ValidationError("options must be an InferenceOptions value")
+        self._options = to_core(requested)
+        self.options = InferenceOptions.from_core(self._options)
 
 
 class ForwardModel(Model):
     """Physical experiment to one or several independently processed spectra."""
-    def __init__(self, package, *, threads=1):
-        super().__init__(package, threads=threads)
+    def __init__(self, package, *, options: InferenceOptions | core.InferenceOptions | None = None) -> None:
+        super().__init__(package, options=options)
         try:
-            self._core = engine().ForwardModel(self._package, threads)
+            self._core = engine().ForwardModel(self._package, self._options)
+            self.options = InferenceOptions.from_core(self._core.options)
         except (ValueError, RuntimeError) as error:
             raise InferenceError(str(error)) from error
 
@@ -91,13 +99,26 @@ class ForwardModel(Model):
         except (ValueError, RuntimeError) as error:
             raise InferenceError(str(error)) from error
 
+    def predict_areal_density(self, densities, *, setup=None):
+        """Physical AD [layers,elements] in metadata order; no thickness column.
+
+        Contiguous float32 arrays are passed through without a Python copy.
+        Other array types/layouts are converted once. Caller storage stays unchanged.
+        """
+        values = np.ascontiguousarray(densities, dtype=np.float32)
+        try:
+            return result_from_core(self._core.predict_areal_density(values, to_core(setup)))
+        except (ValueError, RuntimeError) as error:
+            raise InferenceError(str(error)) from error
+
 
 class InverseModel(Model):
     """Measured multi-spectrum input to physical elemental depth profiles."""
-    def __init__(self, package, *, threads=1):
-        super().__init__(package, threads=threads)
+    def __init__(self, package, *, options: InferenceOptions | core.InferenceOptions | None = None) -> None:
+        super().__init__(package, options=options)
         try:
-            self._core = engine().InverseModel(self._package, threads)
+            self._core = engine().InverseModel(self._package, self._options)
+            self.options = InferenceOptions.from_core(self._core.options)
         except (ValueError, RuntimeError) as error:
             raise InferenceError(str(error)) from error
 
@@ -121,8 +142,8 @@ class InverseModel(Model):
             raise InferenceError(str(error)) from error
 
 
-def load_model(path, *, threads=1):
+def load_model(path, *, options: InferenceOptions | core.InferenceOptions | None = None):
     """Read the package direction and construct the matching inference model."""
     package = Package.open(path)
     cls = ForwardModel if package.to_core().metadata.direction == engine().Direction.FORWARD else InverseModel
-    return cls(package, threads=threads)
+    return cls(package, options=options)

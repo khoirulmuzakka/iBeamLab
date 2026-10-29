@@ -46,6 +46,18 @@ Python `*_into` processing functions require contiguous float64 NumPy arrays,
 reject implicit conversion, and write into caller-owned output. Other Python
 vector conversions are convenience operations and may copy.
 
+Forward metadata separates `ParameterInputSchema` (fixed sample/parameters) from
+`LayerInputSchema` (ordered elemental AD and any positive layer count). For the
+layer schema, `ForwardModel::predict(experiment, output)` packs AD into a reused
+buffer. `predict_areal_density(span<const float>, layers, output, setup)` accepts
+contiguous physical AD directly; setup defaults to the package reference.
+The runtime retains element lookups, setup bindings, preprocessing scratch and
+output capacity. Repeated calls at or below warmed layer capacity do not allocate
+new C++ buffers. Empty preprocessing borrows direct AD without an input copy.
+Use the overloads taking caller-owned output to reuse spectrum storage; the
+convenience return-by-value overloads create owning results. Instances are not
+concurrently callable. ONNX Runtime may manage its own internal allocations.
+
 Pileup is the documented pair-sum model in `processing/pileup.h`. It requires
 positive acquisition times with live time <= real time and occupancy
 `tau*total/real_time < 1`. Output includes full `2*N-1` support. Removal requires
@@ -63,6 +75,27 @@ resident; generated spectra and writer memory are bounded by one shard.
 
 
 ## Using the library
+
+Inference tuning is shared by forward/inverse models and is not serialized in
+scientific model packages:
+
+```cpp
+#include <ibeamlab/inference/models.h>
+ibeamlab::inference::InferenceOptions options;
+options.execution_provider = ibeamlab::inference::ExecutionProvider::Cuda;
+options.device_id = 0;
+options.intra_op_threads = 1;
+options.enable_graph_optimizations = true;
+ibeamlab::inference::ForwardModel model(std::move(package), options);
+model.predict(experiment, reusable_output);
+```
+
+Use `ExecutionProvider::Cpu` for CPU inference. `available_execution_providers()`
+reports the build/runtime capabilities; session creation checks the actual GPU
+and dependency availability. Invalid/unavailable CUDA requests fail explicitly.
+CUDA also executes supported host control operators where needed. FP32 is the
+default (`allow_tf32=false`). Tensor wrappers borrow host storage and are reused
+until pointer or shape changes; CUDA device storage is managed by ORT's arena.
 
 The [C++ generation example](../cpp/examples/generate.cpp) shows constructing
 an experiment, declaring parameter columns and writing a dataset. Build it

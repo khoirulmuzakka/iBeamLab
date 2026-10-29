@@ -1,0 +1,71 @@
+format = "ibeamlab.surrogate"
+format_version = 1
+
+[data]
+# All selected layer datasets must be complete before preparation.
+source = "../DataGeneration/datasets/iba_multilayer_13el"
+layer_counts = [1, 2, 3, 4, 5, 6, 7, 8]
+cache = "cache"
+# 0 uses every successful record; set a small limit for a first experiment.
+max_records_per_source = 0
+validation_fraction = 0.1
+test_fraction = 0.1
+seed = 42
+
+[preprocessing]
+# AD_e = thickness * atomic_fraction_e, in 1e15 atoms/cm2; scaled once.
+ad_input_factor = 0.0001
+
+[[spectra]]
+measurement = "RBS"
+channels = 5000
+count_scale = 100.0
+loss_weight = 1.0
+# Enable only for pileup-free targets linear in particlesSr (the nopu references).
+exposure_scale = true
+rebin = true
+
+[model]
+hidden_size = 256
+embedding_size = 128
+setup_embedding_size = 32
+block_hidden_sizes = [512, 512]
+contribution_size = 512
+decoder_hidden_sizes = [512, 512]
+refiner_channels = 32
+# Even values round up to preserve spectrum length: 8 uses a 9-channel kernel.
+refiner_kernel = 8
+
+[training]
+output = "runs/forward"
+device = "auto"
+batch_size = 512
+workers = 0
+weight_decay = 0.00001
+gradient_clip = 5.0
+seed = 42
+
+# Total run: 165 epochs. Resume skips completed epochs in this schedule.
+# All stages run; validation selects best.pt but does not stop the schedule.
+[[training.schedule]]
+learning_rate = 0.0005
+epochs = 25
+
+[[training.schedule]]
+learning_rate = 0.0001
+epochs = 90
+
+[[training.schedule]]
+learning_rate = 0.00001
+epochs = 50
+
+[loss]
+kind = "chi_square"
+noise_floor = 1.0
+
+[export]
+output = "packages"
+opset = 17
+# Python ONNX Runtime verification always runs. Enable this additional check
+# with an ONNX-enabled C++ extension to validate the complete deployment path.
+verify_native = true

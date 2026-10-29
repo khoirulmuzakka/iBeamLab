@@ -65,7 +65,7 @@ class Configuration:
     failure_policy: ibl.FailurePolicy
     multithreaded_apartment: bool = True
     batch_size: int = 512
-    fast_calculation: bool = True
+    fast_calculation: bool = False
 
     @property
     def total_samples(self):
@@ -141,8 +141,7 @@ class Configuration:
 
         progress receives cumulative completed and total sample counts.
         layer_progress(layer_count, completed, total) starts at zero per system.
-        Existing
-        output is refused. Exceptions and cancellation leave complete=false in
+        Existing output is refused. Exceptions and cancellation leave complete=false in
         generation-summary.json and preserve the core's incomplete dataset marker.
         """
         self.validate_files()
@@ -270,7 +269,7 @@ def load_configuration(path):
     mta = simulation.get("multithreaded_apartment", True)
     if not isinstance(mta, bool):
         raise ValueError("simulation.multithreaded_apartment must be boolean")
-    fast = simulation.get("fast_calculation", True)
+    fast = simulation.get("fast_calculation", False)
     if not isinstance(fast, bool):
         raise ValueError("simulation.fast_calculation must be boolean")
     backend = simulation["backend"]

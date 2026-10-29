@@ -10,7 +10,8 @@ a uint64 FNV-1a checksum of the payload, and that payload. Numeric scalar fields
 use uint64 or IEEE-754 binary64 in little-endian order. Text is byte-length
 prefixed UTF-8; arrays are count-prefixed. ONNX graph bytes are opaque. Current
 field order is defined by the encoder/decoder in [cpp/src/io.h](../cpp/src/io.h) and each module's
-matching metadata encoder/decoder. Format changes require a new version tag.
+matching metadata encoder/decoder. This format-1 schema replaces earlier development
+layouts; compatibility with those layouts is not provided.
 
 ## Datasets
 
@@ -35,8 +36,10 @@ A `.ibm` envelope uses magic `IBMODEL1`; only format 1 is supported. Its payload
 starts with direction (uint64: forward=0, inverse=1) followed by exactly one
 schema and its ordered pipelines:
 
-- Forward: reference experiment, ordered input parameter targets/units, spectra
-  schema, tensor preprocessing, per-spectrum postprocessing.
+- Forward: reference measurement setup, input-schema tag and fields, spectra
+  schema, input preprocessing, per-spectrum postprocessing. Input tag 0 stores
+  a reference sample and ordered parameter targets/units; tag 1 stores ordered
+  element names only, with no sample or layer count.
 - Inverse: reference measurement setup, spectra schema, EDP element names/layers/
   uncertainty, per-spectrum input preparation, tensor preprocessing, EDP scaling.
 
@@ -77,8 +80,20 @@ and pipelines. Finally the payload contains graph byte length and embedded ONNX
 bytes. Shared/direction-specific metadata is declared in [model/metadata.h](../cpp/include/ibeamlab/model/metadata.h);
 [model/package.h](../cpp/include/ibeamlab/model/package.h) contains the package I/O interface.
 
-Graph loading verifies one rank-2 float32 input/output, names and feature widths.
-Inputs/outputs use `[batch,width]`, with graph spectrum slices defined above.
+Graph loading verifies one float32 input/output, names and feature widths.
+Parameter forward models and inverse models use rank-2 `[batch,width]` inputs.
+Layer forward models use `[batch,layers,elements]`, with dynamic batch and layer
+axes and a fixed ordered element width. Outputs use rank-2 `[batch,width]`.
+Layer models consume physical elemental AD in 1e15 atoms/cm2; packing an
+Experiment computes thickness times fraction into retained float32 storage.
+Direct AD inference avoids sample construction; contiguous float32 input can be
+borrowed when preprocessing is empty. Unknown elements, explicit isotopes and
+roughness/porosity are rejected. Missing supported elements become zero.
+Layer preprocessing applies per nonempty row; scalar/per-element coefficients
+are independent of layer count and empty padding stays zero. The graph consumes
+the preprocessed tensor, so metadata scaling is applied exactly once. Model
+architectures and their exporters live in applications or examples; the
+framework validates and executes their declared input/output contracts.
 Fitted transformations run outside ONNX in their recorded order and are never
 refit at inference. Physical outputs must be finite/nonnegative and probabilities
 must remain in [0,1]. Standard deviations use the same physical scale as means.

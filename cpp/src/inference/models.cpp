@@ -4,6 +4,8 @@
 #include <ibeamlab/processing/pileup.h>
 #include <ibeamlab/processing/rebin.h>
 #include <ibeamlab/processing/transforms.h>
+#include <algorithm>
+#include <limits>
 namespace ibeamlab::inference {
 namespace {
 const core::Spectrum &find_spectrum(std::span<const core::Spectrum> spectra,
@@ -53,8 +55,8 @@ struct Runtime {
     std::vector<float> input, output;
     core::Counts counts, scratch, old_edges, new_edges;
     processing::PileupWorkspace pileup;
-    Runtime(model::Package p, int threads)
-        : package(std::move(p)), session(supported(package), threads),
+    Runtime(model::Package p, InferenceOptions options)
+        : package(std::move(p)), session(supported(package), options),
           input(package.metadata.input_width()), output(package.metadata.output_width()) {}
     void run() {
         processing::apply_preprocessing(input, package.metadata.preprocessing());
@@ -134,31 +136,55 @@ struct Runtime {
 };
 } // namespace
 struct ForwardModel::Impl : Runtime {
-    detail::ForwardPlan plan;
+    std::optional<detail::ParameterPlan> parameters;
+    std::optional<detail::LayerPlan> layers;
     struct SpectrumPlan {
         std::size_t reference_index;
         std::span<const model::SpectrumOperation> steps;
     };
     std::vector<SpectrumPlan> spectra;
-    Impl(model::Package p, int threads)
-        : Runtime(std::move(p), threads),
-          plan(std::get<model::ForwardModelMetadata>(package.metadata.model)) {
+    Impl(model::Package p, InferenceOptions options)
+        : Runtime(std::move(p), options) {
         const auto &f = std::get<model::ForwardModelMetadata>(package.metadata.model);
+        if (package.metadata.layer_input()) layers.emplace(f);
+        else parameters.emplace(f);
         for (const auto &spec : f.output_spectra.spectra) {
-            const auto &reference = core::find_measurement(f.reference, spec.measurement);
+            const auto &reference = core::find_measurement(f.reference_setup, spec.measurement);
             spectra.push_back(
-                {static_cast<std::size_t>(&reference - f.reference.setup.measurements.data()),
+                {static_cast<std::size_t>(&reference - f.reference_setup.measurements.data()),
                  operations(f.postprocessing, spec.measurement)});
         }
     }
+    void run_layers(std::span<const float> values, std::size_t count) {
+        const auto width = package.metadata.input_width();
+        if (!count || count > std::numeric_limits<std::size_t>::max() / width || values.size() != count * width)
+            throw std::invalid_argument("AD input must have shape [layers>=1,elements]");
+        for (float value : values)
+            if (!std::isfinite(value) || value < 0)
+                throw std::invalid_argument("AD must be finite and nonnegative");
+        const auto &pipeline = package.metadata.preprocessing();
+        if (pipeline.empty()) {
+            session.run(values, output, 1, count);
+            return;
+        }
+        if (values.data() != input.data()) input.assign(values.begin(), values.end());
+        for (std::size_t offset = 0; offset < input.size(); offset += width) {
+            auto row = std::span<float>(input).subspan(offset, width);
+            if (std::any_of(row.begin(), row.end(), [](float v) { return v != 0; }))
+                processing::apply_preprocessing(row, pipeline);
+        }
+        session.run(input, output, 1, count);
+    }
+    void finish(simulation::Result &result);
 };
-ForwardModel::ForwardModel(model::Package p, int threads) {
+ForwardModel::ForwardModel(model::Package p, InferenceOptions options) {
     if (p.metadata.direction() != model::Direction::Forward)
         throw std::invalid_argument("forward package required");
-    impl_ = std::make_unique<Impl>(std::move(p), threads);
+    impl_ = std::make_unique<Impl>(std::move(p), options);
 }
 ForwardModel::~ForwardModel() = default;
 const model::ModelMetadata &ForwardModel::metadata() const { return impl_->package.metadata; }
+const InferenceOptions &ForwardModel::options() const { return impl_->session.options(); }
 simulation::Result ForwardModel::predict(const core::Experiment &x) {
     simulation::Result result;
     predict(x, result);
@@ -173,18 +199,47 @@ ForwardModel::predict_batch(std::span<const core::Experiment> inputs) {
 }
 void ForwardModel::predict(const core::Experiment &x, simulation::Result &result) {
     auto &r = *impl_;
-    const auto &m = r.package.metadata;
-    const auto &f = std::get<model::ForwardModelMetadata>(m.model);
-    r.plan.prepare(x, f.reference, r.input);
-    r.run();
+    if (r.layers) {
+        const auto count = x.sample.layers.size(), width = r.package.metadata.input_width();
+        if (!count || count > std::numeric_limits<std::size_t>::max() / width)
+            throw std::invalid_argument("invalid layer count");
+        r.layers->prepare_setup(x.setup);
+        r.input.resize(count * width);
+        r.layers->pack(x.sample, r.input);
+        r.run_layers(r.input, count);
+    } else {
+        r.parameters->prepare(x, r.input);
+        r.run();
+    }
+    r.finish(result);
+}
+simulation::Result ForwardModel::predict_areal_density(std::span<const float> densities,
+    std::size_t count, const core::ExperimentalSetup *setup) {
+    simulation::Result result;
+    predict_areal_density(densities, count, result, setup);
+    return result;
+}
+void ForwardModel::predict_areal_density(std::span<const float> densities, std::size_t count,
+    simulation::Result &result, const core::ExperimentalSetup *setup) {
+    auto &r = *impl_;
+    if (!r.layers) throw std::invalid_argument("AD inference requires a layer input schema");
+    const auto &f = std::get<model::ForwardModelMetadata>(r.package.metadata.model);
+    r.layers->prepare_setup(setup ? *setup : f.reference_setup);
+    r.run_layers(densities, count);
+    r.finish(result);
+}
+void ForwardModel::Impl::finish(simulation::Result &result) {
+    auto &r = *this;
+    const auto &f = std::get<model::ForwardModelMetadata>(r.package.metadata.model);
     result.failure.reset();
     result.spectra.resize(f.output_spectra.spectra.size());
     std::size_t offset = 0;
     for (std::size_t i = 0; i < f.output_spectra.spectra.size(); ++i) {
         const auto &spec = f.output_spectra.spectra[i];
         const auto &plan = r.spectra[i];
-        const auto &reference = f.reference.setup.measurements[plan.reference_index];
-        const auto &actual = r.plan.measurement(plan.reference_index);
+        const auto &reference = f.reference_setup.measurements[plan.reference_index];
+        const auto &actual = r.layers ? r.layers->measurement(plan.reference_index)
+                                     : r.parameters->measurement(plan.reference_index);
         auto &out = result.spectra[i];
         out.measurement = spec.measurement;
         if (plan.steps.empty()) {
@@ -234,13 +289,14 @@ struct InverseModel::Impl : Runtime {
         }
     }
 };
-InverseModel::InverseModel(model::Package p, int threads) {
+InverseModel::InverseModel(model::Package p, InferenceOptions options) {
     if (p.metadata.direction() != model::Direction::Inverse)
         throw std::invalid_argument("inverse package required");
-    impl_ = std::make_unique<Impl>(std::move(p), threads);
+    impl_ = std::make_unique<Impl>(std::move(p), options);
 }
 InverseModel::~InverseModel() = default;
 const model::ModelMetadata &InverseModel::metadata() const { return impl_->package.metadata; }
+const InferenceOptions &InverseModel::options() const { return impl_->session.options(); }
 Prediction InverseModel::predict(const InverseInput &input) {
     Prediction result;
     predict(input, result);

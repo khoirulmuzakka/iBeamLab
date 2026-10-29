@@ -309,11 +309,15 @@ PYBIND11_MODULE(_ibeamlab, m) {
             FIELD(model::SpectrumProcessing, measurement) FIELD(model::SpectrumProcessing, steps);
     py::class_<model::ScaleEdp>(m, "ScaleEdp")
         .def(py::init<double>()) FIELD(model::ScaleEdp, factor);
+    py::class_<model::ParameterInputSchema>(m, "ParameterInputSchema")
+        .def(py::init<>()) FIELD(model::ParameterInputSchema, reference_sample)
+            FIELD(model::ParameterInputSchema, parameters) FIELD(model::ParameterInputSchema, preprocessing);
+    py::class_<model::LayerInputSchema>(m, "LayerInputSchema")
+        .def(py::init<>()) FIELD(model::LayerInputSchema, elements) FIELD(model::LayerInputSchema, preprocessing);
     py::class_<model::ForwardModelMetadata>(m, "ForwardModelMetadata")
-        .def(py::init<>()) FIELD(model::ForwardModelMetadata, reference)
-            FIELD(model::ForwardModelMetadata, input_parameters)
+        .def(py::init<>()) FIELD(model::ForwardModelMetadata, reference_setup)
+            FIELD(model::ForwardModelMetadata, input)
                 FIELD(model::ForwardModelMetadata, output_spectra)
-                    FIELD(model::ForwardModelMetadata, preprocessing)
                         FIELD(model::ForwardModelMetadata, postprocessing);
     py::class_<model::InverseModelMetadata>(m, "InverseModelMetadata")
         .def(py::init<>()) FIELD(model::InverseModelMetadata, reference_setup)
@@ -333,16 +337,38 @@ PYBIND11_MODULE(_ibeamlab, m) {
                 FIELD(model::ModelMetadata, provenance)
         .def("validate", &model::ModelMetadata::validate)
         .def("input_width", &model::ModelMetadata::input_width)
+        .def("input_rank", &model::ModelMetadata::input_rank)
+        .def("layer_input", &model::ModelMetadata::layer_input)
         .def("output_width", &model::ModelMetadata::output_width);
     py::class_<model::Package>(m, "Package")
         .def_static("open", &model::Package::open)
         .def_static("from_onnx", &model::Package::from_onnx)
         .def("write", &model::Package::write) FIELD(model::Package, metadata);
+    py::enum_<inference::ExecutionProvider>(m, "ExecutionProvider")
+        .value("CPU", inference::ExecutionProvider::Cpu)
+        .value("CUDA", inference::ExecutionProvider::Cuda);
+    py::class_<inference::InferenceOptions>(m, "InferenceOptions")
+        .def(py::init<>()) FIELD(inference::InferenceOptions, execution_provider)
+            FIELD(inference::InferenceOptions, device_id) FIELD(inference::InferenceOptions, intra_op_threads)
+                FIELD(inference::InferenceOptions, inter_op_threads) FIELD(inference::InferenceOptions, enable_graph_optimizations)
+                    FIELD(inference::InferenceOptions, allow_tf32)
+        .def("validate", &inference::InferenceOptions::validate);
+    m.def("available_execution_providers", &inference::available_execution_providers);
     py::class_<inference::ForwardModel>(m, "ForwardModel")
-        .def(py::init<model::Package, int>(), py::arg("package"), py::arg("threads") = 1)
+        .def(py::init<model::Package, inference::InferenceOptions>(), py::arg("package"),
+             py::arg("options") = inference::InferenceOptions{})
+        .def_property_readonly("options", &inference::ForwardModel::options, py::return_value_policy::copy)
         .def("predict",
              py::overload_cast<const core::Experiment &>(&inference::ForwardModel::predict),
              py::call_guard<py::gil_scoped_release>())
+        .def("predict_areal_density", [](inference::ForwardModel &model,
+             py::array_t<float, py::array::c_style> values, const core::ExperimentalSetup *setup) {
+            if (values.ndim() != 2 || static_cast<std::size_t>(values.shape(1)) != model.metadata().input_width())
+                throw std::invalid_argument("AD must have shape [layers,elements]");
+            py::gil_scoped_release release;
+            return model.predict_areal_density({values.data(), static_cast<std::size_t>(values.size())},
+                                               static_cast<std::size_t>(values.shape(0)), setup);
+        }, py::arg("densities").noconvert(), py::arg("setup") = nullptr)
         .def("predict_batch",
              [](inference::ForwardModel &model, const std::vector<core::Experiment> &inputs) {
                  py::gil_scoped_release release;
@@ -383,7 +409,9 @@ PYBIND11_MODULE(_ibeamlab, m) {
                 {static_cast<py::ssize_t>(p.layers), static_cast<py::ssize_t>(p.elements.size())});
         });
     py::class_<inference::InverseModel>(m, "InverseModel")
-        .def(py::init<model::Package, int>(), py::arg("package"), py::arg("threads") = 1)
+        .def(py::init<model::Package, inference::InferenceOptions>(), py::arg("package"),
+             py::arg("options") = inference::InferenceOptions{})
+        .def_property_readonly("options", &inference::InverseModel::options, py::return_value_policy::copy)
         .def("predict",
              py::overload_cast<const inference::InverseInput &>(&inference::InverseModel::predict),
              py::call_guard<py::gil_scoped_release>())
@@ -404,11 +432,11 @@ PYBIND11_MODULE(_ibeamlab, m) {
              });
     m.def(
         "run_graph",
-        [](const model::Package &p, py::array_t<float, py::array::c_style> input) {
-            if (input.ndim() != 2)
-                throw std::invalid_argument("input must have shape [batch,width]");
+        [](const model::Package &p, py::array_t<float, py::array::c_style> input, inference::InferenceOptions options) {
+            if (input.ndim() != static_cast<py::ssize_t>(p.metadata.input_rank()))
+                throw std::invalid_argument("graph input rank mismatch");
             auto batch = static_cast<std::size_t>(input.shape(0));
-            if (static_cast<std::size_t>(input.shape(1)) != p.metadata.input_width())
+            if (static_cast<std::size_t>(input.shape(input.ndim() - 1)) != p.metadata.input_width())
                 throw std::invalid_argument("graph input width mismatch");
             py::array_t<float> output({static_cast<py::ssize_t>(batch),
                                        static_cast<py::ssize_t>(p.metadata.output_width())});
@@ -416,9 +444,10 @@ PYBIND11_MODULE(_ibeamlab, m) {
                 py::gil_scoped_release release;
                 inference::detail::run_graph(
                     p, {const_cast<float *>(input.data()), static_cast<std::size_t>(input.size())},
-                    {output.mutable_data(), static_cast<std::size_t>(output.size())}, batch, 1);
+                    {output.mutable_data(), static_cast<std::size_t>(output.size())}, batch, options,
+                    p.metadata.layer_input() ? static_cast<std::size_t>(input.shape(1)) : 1);
             }
             return output;
         },
-        py::arg("package"), py::arg("input").noconvert());
+        py::arg("package"), py::arg("input").noconvert(), py::arg("options") = inference::InferenceOptions{});
 }

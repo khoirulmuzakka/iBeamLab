@@ -77,15 +77,45 @@ TOML-driven multilayer example with regional and compound sampling.
 
 ## Metadata and inference
 
+CPU and CUDA execution are session options, independent of package metadata:
+
+```python
+options = ibl.InferenceOptions(execution_provider="cuda", device_id=0,
+    intra_op_threads=1, inter_op_threads=1, enable_graph_optimizations=True)
+model = ibl.load_model("forward.ibm", options=options)  # Also accepts inverse packages.
+print(model.options)
+print(ibl.available_execution_providers())
+```
+
+The default provider is `cpu`. CUDA requires a CUDA-enabled native build and
+working runtime dependencies. An unavailable CUDA provider or invalid GPU ID
+raises an error; it does not silently create a CPU-only session. CPU shape/control
+operators may participate in CUDA graphs. Native inference does not require
+PyTorch or Python ONNX Runtime. `allow_tf32=False` is the default; explicitly
+enable it to permit reduced-mantissa tensor-core arithmetic after checking accuracy.
+Host input/output buffers and tensor handles are reused where addresses/shapes
+remain stable. CUDA transfers use ONNX Runtime's device arena and complete before
+physical CPU postprocessing begins. `native.run_graph` also accepts native
+`InferenceOptions` as its third argument for raw batched graph execution.
+
+Metadata fields have concrete Python/native types and typed ordered pipelines:
+`TensorPipeline`, `SpectrumPipeline` and `EdpPipeline`. Native descriptor stubs
+ship with the package, while normal imports remain lazy. Wrapper conversion
+failures raise `ValidationError` with a field path such as
+`LayerInputSchema.preprocessing`; physical consistency checks stay in C++.
+
 ```python
 schema = ibl.SpectraSchema([
     ibl.SpectrumSpec("RBS", 5000), ibl.SpectrumSpec("NRA", 3000),
 ])
 forward = ibl.ForwardModelMetadata(
-    reference=experiment,
-    input_parameters=plan.parameters,
+    reference_setup=experiment.setup,
+    input=ibl.ParameterInputSchema(
+        reference_sample=experiment.sample,
+        parameters=plan.parameters,
+        preprocessing=[ibl.StandardScale([0, 2000], [100, 100])],
+    ),
     output_spectra=schema,
-    preprocessing=[ibl.StandardScale([0, 2000], [100, 100])],
     postprocessing=[
         ibl.SpectrumProcessing("RBS", [ibl.ExposureScale(), ibl.Rebin()]),
         ibl.SpectrumProcessing("NRA", [ibl.MultiplyCounts(100), ibl.Rebin()]),
@@ -100,6 +130,18 @@ metadata.validate()
 ```
 
 Graph outputs concatenate spectra in schema order; lengths may differ.
+For a variable-layer forward model, replace the input with
+`ibl.LayerInputSchema(["Si", "O"], preprocessing=[ibl.MultiplyScale([1e-5])])`.
+Its graph accepts `[batch,layers,elements]`, and the package stores no layer count.
+`model.predict(experiment)` packs physical AD automatically;
+`model.predict_areal_density(ad)` accepts physical `[layers,elements]` arrays
+directly. Contiguous float32 inputs avoid a Python copy; an optional `setup=`
+selects requested acquisition/calibration settings. Raw `run_graph` bypasses
+physical preprocessing and expects graph-ready, already-scaled values.
+Layer export requires an architecture-specific `graph_exporter` callback to
+`export_package`; applications choose how to represent dynamic layer computation.
+A symbolic dimension alone does not make a traced Python loop dynamic. The
+framework does not select, construct or train a particular network architecture.
 Each forward output has its own labelled physical processing pipeline.
 Inverse metadata similarly defines `reference_setup`, `input_spectra`, elements
 and layers. Its `input_preparation` applies physical operations per measurement;

@@ -97,12 +97,15 @@ failures.ibd
 *.pt
 *.pth
 *.ckpt
+*.safetensors
+*.ibm
 *.zip
 *.tar
 *.tar.gz
 *.tgz
 *.onnx
 *.onnx.data
+!/cpp/tests/fixtures/*.onnx
 !native/tests/data/**/*.onnx
 !native/tests/data/**/*.onnx.data
 
@@ -122,6 +125,7 @@ ehthumbs.db
 
 # Logs and temporary files
 *.log
+events.out.tfevents.*
 *.tmp
 *.temp
 *.bak
@@ -146,3 +150,13 @@ xnra/backup.xnra
 !/examples/datasets/NMC_simulated/model_test/ibanet_test.ipynb
 
 old/*
+
+# Surrogate example outputs, including custom runs launched from train/.
+/examples/ibeamnet/**/cache*/
+/examples/ibeamnet/**/runs/
+/examples/ibeamnet/**/packages/
+/examples/ibeamnet/**/artifacts/
+/examples/ibeamnet/**/checkpoints/
+/examples/ibeamnet/**/logs/
+/examples/ibeamnet/**/tensorboard/
+/examples/ibeamnet/**/wandb/

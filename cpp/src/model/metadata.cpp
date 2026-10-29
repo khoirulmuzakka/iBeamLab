@@ -132,7 +132,7 @@ Direction ModelMetadata::direction() const noexcept {
 }
 const core::ExperimentalSetup &ModelMetadata::reference_setup() const {
     if (const auto *f = std::get_if<ForwardModelMetadata>(&model))
-        return f->reference.setup;
+        return f->reference_setup;
     return std::get<InverseModelMetadata>(model).reference_setup;
 }
 const std::vector<SpectrumSpec> &ModelMetadata::spectra() const {
@@ -142,12 +142,16 @@ const std::vector<SpectrumSpec> &ModelMetadata::spectra() const {
 }
 const TensorPipeline &ModelMetadata::preprocessing() const {
     if (const auto *f = std::get_if<ForwardModelMetadata>(&model))
-        return f->preprocessing;
+        return std::visit([](const auto &input) -> const TensorPipeline & { return input.preprocessing; }, f->input);
     return std::get<InverseModelMetadata>(model).preprocessing;
 }
 std::size_t ModelMetadata::input_width() const {
     if (const auto *f = std::get_if<ForwardModelMetadata>(&model))
-        return f->input_parameters.size();
+        return std::visit([](const auto &input) -> std::size_t {
+            using T = std::decay_t<decltype(input)>;
+            if constexpr (std::is_same_v<T, LayerInputSchema>) return input.elements.size();
+            else return input.parameters.size();
+        }, f->input);
     return std::get<InverseModelMetadata>(model).input_spectra.width();
 }
 std::size_t ModelMetadata::output_width() const {
@@ -158,14 +162,32 @@ std::size_t ModelMetadata::output_width() const {
         throw std::invalid_argument("EDP dimensions too large");
     return i.layers * i.elements.size() * (i.uncertainty ? 3 : 1);
 }
+bool ModelMetadata::layer_input() const noexcept {
+    const auto *f = std::get_if<ForwardModelMetadata>(&model);
+    return f && std::holds_alternative<LayerInputSchema>(f->input);
+}
 void ModelMetadata::validate() const {
     if (model.valueless_by_exception())
         throw std::invalid_argument("missing model specification");
     if (const auto *f = std::get_if<ForwardModelMetadata>(&model)) {
-        f->reference.validate();
-        core::validate_parameters(f->reference, f->input_parameters);
-        if (f->input_parameters.empty())
-            throw std::invalid_argument("forward model requires parameters");
+        f->reference_setup.validate();
+        if (f->input.valueless_by_exception())
+            throw std::invalid_argument("missing forward input schema");
+        if (const auto *p = std::get_if<ParameterInputSchema>(&f->input)) {
+            core::Experiment reference{p->reference_sample, f->reference_setup};
+            reference.validate();
+            core::validate_parameters(reference, p->parameters);
+            if (p->parameters.empty())
+                throw std::invalid_argument("parameter input requires parameters");
+        } else {
+            const auto &layers = std::get<LayerInputSchema>(f->input);
+            if (layers.elements.empty() || layers.elements.size() > 256)
+                throw std::invalid_argument("layer input requires 1..256 ordered elements");
+            std::unordered_set<std::string> names;
+            for (const auto &e : layers.elements)
+                if (e.empty() || !names.insert(e).second)
+                    throw std::invalid_argument("invalid layer input elements");
+        }
     } else {
         const auto &i = std::get<InverseModelMetadata>(model);
         i.reference_setup.validate();

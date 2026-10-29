@@ -109,16 +109,35 @@ struct ScaleEdp {
     double factor = 1;
 };
 using EdpPipeline = std::vector<ScaleEdp>;
-/** @brief Contract for a parameter-to-spectrum surrogate.
- * Physical input columns follow input_parameters, then preprocessing runs before
- * the graph. Graph output slices follow output_spectra; postprocessing operates
- * on each labelled spectrum afterwards. Unvaried physics comes from reference.
+/** @brief Fixed-width physical parameters for architectures that require a fixed sample.
+ * Columns follow parameters. Unvaried sample properties come from reference_sample.
+ */
+struct ParameterInputSchema {
+    core::Sample reference_sample;
+    std::vector<core::ParameterSpec> parameters;
+    TensorPipeline preprocessing;
+};
+/** @brief Variable-length surface-to-depth sequence of elemental areal densities.
+ * Graph inputs are float32 [batch,layers,elements]. Physical densities use
+ * 1e15 atoms/cm2, with exactly one feature per ordered element and no thickness
+ * column. No layer count is stored. Missing supported elements are zero; unknown
+ * elements and explicit isotopes/roughness/porosity are unsupported.
+ * Preprocessing runs independently per nonempty layer; zero padding stays zero.
+ * Coefficients broadcast from one value or have one value per element.
+ */
+struct LayerInputSchema {
+    std::vector<std::string> elements;
+    TensorPipeline preprocessing;
+};
+using ForwardInputSchema = std::variant<ParameterInputSchema, LayerInputSchema>;
+/** @brief Architecture-independent forward input contract and labelled spectra.
+ * reference_setup defines fixed experimental conditions, independent of sample
+ * layer count. The input variant defines graph rank and physical packing.
  */
 struct IBEAMLAB_API ForwardModelMetadata {
-    core::Experiment reference;
-    std::vector<core::ParameterSpec> input_parameters;
+    core::ExperimentalSetup reference_setup;
+    ForwardInputSchema input;
     SpectraSchema output_spectra;
-    TensorPipeline preprocessing;
     SpectrumPipeline postprocessing;
 };
 /** @brief Contract for a multi-spectrum-to-elemental-depth-profile model.
@@ -152,8 +171,12 @@ struct IBEAMLAB_API ModelMetadata {
     const core::ExperimentalSetup &reference_setup() const;
     const std::vector<SpectrumSpec> &spectra() const;
     const TensorPipeline &preprocessing() const;
-    /** @brief Feature count of one graph input row, excluding the batch dimension. */
+    /** @brief Last-axis feature count: parameters, elements or packed spectrum channels. */
     std::size_t input_width() const;
+    /** @brief True for a variable-length [batch,layers,elements] forward graph. */
+    bool layer_input() const noexcept;
+    /** @brief Graph input rank, 3 for layer sequences and 2 otherwise. */
+    std::size_t input_rank() const noexcept { return layer_input() ? 3 : 2; }
     /** @brief Feature count of one graph output row, before postprocessing. */
     std::size_t output_width() const;
     void validate() const;

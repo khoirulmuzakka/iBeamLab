@@ -253,12 +253,16 @@ def setup_from_core(value):
     ) for m in value.measurements))
 
 
-def experiment_from_core(value):
-    """Convert C++ experiment metadata to Python value objects."""
-    sample = Sample(tuple(Layer(l.thickness, tuple(Species(s.element, s.concentration,
+def sample_from_core(value):
+    """Convert C++ sample metadata to Python value objects."""
+    return Sample(tuple(Layer(l.thickness, tuple(Species(s.element, s.concentration,
         tuple(Isotope(i.massNumber, i.exactMass, i.fraction) for i in s.isotopes))
         for s in l.species), roughness=l.roughness, porosity_fraction=l.porosityFraction,
-        pore_diameter=l.poreDiameter) for l in value.sample.layers))
-    return Experiment(sample, setup_from_core(value.setup))
+        pore_diameter=l.poreDiameter) for l in value.layers))
+
+
+def experiment_from_core(value):
+    """Convert C++ experiment metadata to Python value objects."""
+    return Experiment(sample_from_core(value.sample), setup_from_core(value.setup))
 
 

@@ -1,25 +1,38 @@
 #pragma once
 #include <ibeamlab/model/package.h>
+#include <ibeamlab/inference/options.h>
 #include <ibeamlab/simulation/simulator.h>
 #include <memory>
 namespace ibeamlab::inference {
-/** @brief Pack physical parameters, run a forward graph and process labelled spectra.
+/** @brief Pack the declared physical input schema, run a graph and process spectra.
  * Instances reuse scratch buffers and are not concurrently callable: use one per
  * worker. Graph tensors use float32; physical results use double precision.
  */
 class IBEAMLAB_API ForwardModel {
   public:
-    explicit ForwardModel(model::Package, int threads = 1);
+    explicit ForwardModel(model::Package, InferenceOptions = {});
     ~ForwardModel();
     /** @brief Predict into caller-owned output, reusing storage where possible.
-     * Parameter bindings and permitted changes are resolved at construction.
+     * Parameter/element bindings and permitted changes are resolved at construction.
+     * Layer schemas accept any positive layer count and grow capacity only as needed.
      * Without spectrum processing, graph values convert directly into output.
      */
     void predict(const core::Experiment &, simulation::Result &output);
     simulation::Result predict(const core::Experiment &);
+    /** @brief Predict from host-resident float32 AD in contiguous [layers,elements] order.
+     * Requires a LayerInputSchema. No sample object or parameter list is built.
+     * setup defaults to the reference setup. Caller memory is never modified;
+     * preprocessing uses retained scratch storage, bypassed for an empty pipeline.
+     */
+    void predict_areal_density(std::span<const float> densities, std::size_t layers,
+                              simulation::Result &output,
+                              const core::ExperimentalSetup *setup = nullptr);
+    simulation::Result predict_areal_density(std::span<const float> densities, std::size_t layers,
+                                            const core::ExperimentalSetup *setup = nullptr);
     /** @brief Predict sequentially in input order using this instance's reusable buffers. */
     std::vector<simulation::Result> predict_batch(std::span<const core::Experiment>);
     const model::ModelMetadata &metadata() const;
+    const InferenceOptions &options() const;
 
   private:
     struct Impl;
@@ -52,7 +65,7 @@ struct Prediction {
  */
 class IBEAMLAB_API InverseModel {
   public:
-    explicit InverseModel(model::Package, int threads = 1);
+    explicit InverseModel(model::Package, InferenceOptions = {});
     ~InverseModel();
     /** @brief Run spectrum preparation, tensor preprocessing, graph and EDP processing. */
     void predict(const InverseInput &, Prediction &output);
@@ -65,6 +78,7 @@ class IBEAMLAB_API InverseModel {
     /** @brief Predict sequentially in input order using this instance's reusable buffers. */
     std::vector<Prediction> predict_batch(std::span<const InverseInput>);
     const model::ModelMetadata &metadata() const;
+    const InferenceOptions &options() const;
 
   private:
     struct Impl;

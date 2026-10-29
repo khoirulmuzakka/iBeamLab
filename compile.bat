@@ -25,6 +25,7 @@ rem Separate configurations so Debug and Release never replace each other's outp
 set "IBEAMLAB_BUILD_DIR=build\local\%CONFIG%"
 set "ONNX_ENABLED=OFF"
 if defined ONNXRUNTIME_ROOT set "ONNX_ENABLED=ON"
+if not defined IBEAMLAB_ONNX_PROVIDER set "IBEAMLAB_ONNX_PROVIDER=CPU"
 
 rem Pin CMake to the interpreter on PATH and check the isolated test environment.
 set "IBEAMLAB_PYTHON_EXECUTABLE="
@@ -41,16 +42,16 @@ if errorlevel 1 (
     exit /b 2
 )
 if "%ONNX_ENABLED%"=="ON" (
-    "%IBEAMLAB_PYTHON_EXECUTABLE%" -I -c "import torch, onnx"
+    "%IBEAMLAB_PYTHON_EXECUTABLE%" -I -c "import torch, onnx, onnxruntime"
     if errorlevel 1 (
-        echo ONNX export tests require torch and onnx in this environment.
+        echo ONNX export tests require torch, onnx and onnxruntime in this environment.
         exit /b 2
     )
 )
 
 echo Building %CONFIG% in %IBEAMLAB_BUILD_DIR%
 echo Python: %IBEAMLAB_PYTHON_EXECUTABLE%
-cmake -S . -B "%IBEAMLAB_BUILD_DIR%" -DCMAKE_BUILD_TYPE=%CONFIG% "-DPython_EXECUTABLE=%IBEAMLAB_PYTHON_EXECUTABLE%" -DBUILD_SHARED_LIBS=ON -DIBEAMLAB_BUILD_TESTS=ON -DIBEAMLAB_BUILD_PYTHON=ON -DIBEAMLAB_BUILD_EXAMPLES=ON -DIBEAMLAB_BUILD_BENCHMARKS=ON -DIBEAMLAB_ENABLE_SIMNRA=ON -DIBEAMLAB_REQUIRE_SIMNRA_TEST_RUNTIME=ON -DIBEAMLAB_ENABLE_ONNX=%ONNX_ENABLED% "-DONNXRUNTIME_ROOT=%ONNXRUNTIME_ROOT%"
+cmake -S . -B "%IBEAMLAB_BUILD_DIR%" -DCMAKE_BUILD_TYPE=%CONFIG% "-DPython_EXECUTABLE=%IBEAMLAB_PYTHON_EXECUTABLE%" -DBUILD_SHARED_LIBS=ON -DIBEAMLAB_BUILD_TESTS=ON -DIBEAMLAB_BUILD_PYTHON=ON -DIBEAMLAB_BUILD_EXAMPLES=ON -DIBEAMLAB_BUILD_BENCHMARKS=ON -DIBEAMLAB_ENABLE_SIMNRA=ON -DIBEAMLAB_REQUIRE_SIMNRA_TEST_RUNTIME=ON -DIBEAMLAB_ENABLE_ONNX=%ONNX_ENABLED% "-DIBEAMLAB_ONNX_PROVIDER=%IBEAMLAB_ONNX_PROVIDER%" "-DONNXRUNTIME_ROOT=%ONNXRUNTIME_ROOT%"
 if errorlevel 1 exit /b %errorlevel%
 cmake --build "%IBEAMLAB_BUILD_DIR%" --config "%CONFIG%" --parallel
 if errorlevel 1 exit /b %errorlevel%
@@ -60,5 +61,6 @@ echo iBeamLab build completed successfully.
 echo C++ import library: %IBEAMLAB_BUILD_DIR%\lib\ibeamlab.lib
 echo Python extension and runtime DLLs: %IBEAMLAB_BUILD_DIR%\bin\
 echo ONNX inference enabled: %ONNX_ENABLED%
+echo ONNX SDK provider capabilities: %IBEAMLAB_ONNX_PROVIDER%
 endlocal
 exit /b 0

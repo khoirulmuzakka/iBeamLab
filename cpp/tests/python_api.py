@@ -51,8 +51,9 @@ with tempfile.TemporaryDirectory(prefix='ibeamlab-python-test-') as directory:
     assert 'seed=123' in reader.metadata.provenance
     if len(sys.argv) > 2 and sys.argv[2] == 'ON':
         fixtures = Path(__file__).parent / 'fixtures'
-        forward = ibl.ForwardModelMetadata(); forward.reference = x
-        forward.input_parameters = plan.parameters
+        forward = ibl.ForwardModelMetadata(); forward.reference_setup = x.setup
+        schema = ibl.ParameterInputSchema(); schema.reference_sample = x.sample; schema.parameters = plan.parameters; forward.input = schema
+
         forward.output_spectra = ibl.SpectraSchema([ibl.SpectrumSpec('RBS', 4)])
         metadata = ibl.ModelMetadata(forward)
         assert metadata.direction == ibl.Direction.FORWARD
@@ -116,8 +117,9 @@ with tempfile.TemporaryDirectory(prefix='ibeamlab-python-test-') as directory:
             return value
         multi_ref = multi_experiment(1000, 2000)
         multi_request = multi_experiment(2000, 1000, reverse=True)
-        multi_forward = ibl.ForwardModelMetadata(); multi_forward.reference = multi_ref
-        multi_forward.input_parameters = plan.parameters
+        multi_forward = ibl.ForwardModelMetadata(); multi_forward.reference_setup = multi_ref.setup
+        schema = ibl.ParameterInputSchema(); schema.reference_sample = multi_ref.sample; schema.parameters = plan.parameters; multi_forward.input = schema
+
         multi_forward.output_spectra = ibl.SpectraSchema([ibl.SpectrumSpec('RBS', 4), ibl.SpectrumSpec('NRA', 3)])
         assert multi_forward.output_spectra.width() == 7 and multi_forward.output_spectra.offset('NRA') == 4
         multi_forward.postprocessing = [ibl.SpectrumProcessing('RBS', [ibl.ExposureScale(), ibl.Rebin()]),
@@ -137,9 +139,10 @@ with tempfile.TemporaryDirectory(prefix='ibeamlab-python-test-') as directory:
         measured = ibl.InverseInput(); measured.setup = multi_request.setup
         measured.spectra = [ibl.Spectrum('NRA', [.5, 1, 1.5]), ibl.Spectrum('RBS', [2, 4, 6, 8])]
         np.testing.assert_allclose(ibl.InverseModel(ibl.Package.open(root/'multi-inverse.ibm')).predict(measured).values, [70, 140])
-        scaling = ibl.ForwardModelMetadata(); scaling.reference = x; scaling.input_parameters = plan.parameters
+        scaling = ibl.ForwardModelMetadata(); scaling.reference_setup = x.setup
+        schema = ibl.ParameterInputSchema(); schema.reference_sample = x.sample; schema.parameters = plan.parameters; scaling.input = schema
         scaling.output_spectra = forward.output_spectra
-        scaling.preprocessing = [ibl.MinMaxScale([0], [200])]
+        schema = scaling.input; schema.preprocessing = [ibl.MinMaxScale([0], [200])]; scaling.input = schema
         scaling.postprocessing = [ibl.SpectrumProcessing('RBS', [ibl.MultiplyCounts(1000)])]
         scale_package = ibl.Package.from_onnx(fixtures/'forward.onnx', ibl.ModelMetadata(scaling))
         np.testing.assert_allclose(ibl.ForwardModel(scale_package).predict(x).spectra[0].counts, [500, 1000, 1500, 2000])
