@@ -14,8 +14,8 @@ parser.add_argument('--extension-dir', type=Path)
 args=parser.parse_args()
 if args.extension_dir:
     sys.path.insert(0,str(args.extension_dir.resolve()))
-    sys.path.insert(0,str(Path(__file__).parents[1]/'python'))
-import ibeamlab as ibl
+    sys.path.insert(0,str(Path(__file__).parents[2]))
+from ibeamlab import native as ibl
 args.output.mkdir()  # refuse overwrites
 np.random.seed(42)
 torch.manual_seed(42)

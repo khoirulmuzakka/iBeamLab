@@ -1,6 +1,6 @@
 # Implemented tests and CI
 
-This inventory covers the standalone `cpp/` project. CTest counts test programs
+This inventory covers the unified root project. CTest counts test programs
 or suites, not individual assertions. Some suites contain several scenarios.
 
 | CTest name | Labels | Implemented coverage |
@@ -11,6 +11,8 @@ or suites, not individual assertions. Some suites contain several scenarios.
 | `packages` | integration | Metadata and binary package round trip, overwrite/corruption/normalization rejection; with ONNX enabled: forward/inverse numerical predictions, batch parity, prepared-input parity, ordered scaler/custom pipelines, per-measurement exposure/rebin/pileup corrections, unequal-length multi-spectrum packing and tensor schema rejection |
 | `installed-consumer` | integration, deployment | Install the library, configure/build an independent C++ consumer with `find_package`, then run it |
 | `python-api` | integration, python | Python domain API, dummy simulation, caller-owned NumPy buffers, dtype rejection, generation callbacks, dataset reads; with ONNX: multi-measurement deployment and PyTorch export parity at two batch sizes |
+| `python-wrapper` | integration, python | Root Python package, independent measurement settings, cached experiment conversion, NumPy result lifetime/read-only views, buffer reuse, streaming datasets, failure/cancellation policies; with ONNX: multi-detector metadata/inference, optional training and export |
+| `python-data-generation` | integration, python | Multilayer configuration validation without an extension, exact method budgets, compounds/shared 2–8 element sets/independent layerwise 1–13 element sets, reproducibility, pure samples, parameter columns, dummy generation and selected-element audit artifacts |
 | `allocation-benchmark` | performance | 100 rebin+pileup iterations at 5,000 channels; with ONNX, 100 single-detector predictions into reused output at 5,000 channels, checking no counted C++ allocations after warmup |
 | `simnra-reference` | integration, licensed, simnra | Five repository XNRA projects; independent fresh COM calculations, two workers, session reuse, forced append-before-delete rebuilds, a 10% layer-thickness change and pileup flags |
 
@@ -22,10 +24,10 @@ and verify that inference reports its unavailability.
 ## Run locally
 
 ```console
-cmake -S cpp -B cpp/build -DIBEAMLAB_BUILD_TESTS=ON
-cmake --build cpp/build --config Release --parallel
-ctest --test-dir cpp/build -C Release -L unit --no-tests=error --output-on-failure
-ctest --test-dir cpp/build -C Release -L integration -LE licensed --no-tests=error --output-on-failure
+cmake -S . -B build/local -DIBEAMLAB_BUILD_TESTS=ON
+cmake --build build/local --config Release --parallel
+ctest --test-dir build/local -C Release -L unit --no-tests=error --output-on-failure
+ctest --test-dir build/local -C Release -L integration -LE licensed --no-tests=error --output-on-failure
 ```
 
 Enable `IBEAMLAB_BUILD_PYTHON=ON` for Python integration and install NumPy/pybind11
@@ -41,11 +43,16 @@ invalid physical values, caller-owned output reuse, and changing measurement ord
 
 ## GitHub Actions
 
-`.github/workflows/cpp-tests.yml` runs on pushes/pull requests changing the
-C++ project, XNRA references, or CI configuration. It can also be run manually.
+[`.github/workflows/cpp-tests.yml`](../.github/workflows/cpp-tests.yml) runs on pushes/pull requests changing the
+Root/C++ build files, documentation, Python package/tests, examples, packaging,
+XNRA references, or CI configuration.
+It can also be run manually.
 
 - Windows and Ubuntu, static and shared: unit tests, integration tests including
   Python and installed consumers, and allocation checks. ONNX/SIMNRA are disabled.
+- Windows and Ubuntu: build a Python wheel from the repository root, install it,
+  and run `python -I tests/installed_package.py` to prevent source imports from
+  masking installation or shared-library loading problems.
 - Ubuntu Debug: ASan and UBSan on unit/integration tests, including installed consumption.
 - Windows, static and shared, ONNX Runtime 1.22.1: unit and integration checks,
   including the real inference graphs, PyTorch export parity and allocation checks.
@@ -70,6 +77,21 @@ For a strict audit of stored curves, enable
 known outdated RBS no-pileup curve until the project is recalculated and saved.
 The script itself also accepts `--check-saved-spectra`.
 
-The independent `tests/simnra_precision_probe.py` diagnostic reproduces the
-composition serialization sensitivity discussed in `SIMNRA_VALIDATION.md`.
+The independent `cpp/tests/simnra_precision_probe.py` diagnostic reproduces the
+composition serialization sensitivity discussed in [SIMNRA notes](simnra.md).
 Run standalone SIMNRA diagnostics separately from the integration suite.
+
+## Live generation throughput
+
+The manual benchmark exercises the actual sampled generation path, including
+dataset writing, with separate cold warmup and timed intervals:
+
+```console
+python cpp/benchmarks/simnra_generation.py --extension-dir build/local/Release/bin --workers 64 --samples 256 --layers 1 --report build/local/Release/simnra-throughput.json
+```
+
+It uses temporary datasets and compares a serial standard-mode run with bounded
+parallel fast-mode generation. Run it separately from other COM diagnostics.
+Use `--layers 8` to measure the thicker multilayer system. Fast mode is a distinct
+numerical algorithm; the live reference suite compares it against independent
+Fast calculations as well as retaining the standard-mode comparisons.

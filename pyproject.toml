@@ -12,22 +12,22 @@ license = {file = "LICENSE"}
 authors = [{name = "iBeamLab contributors"}]
 dependencies = [
   "numpy>=1.24",
-  "tomli>=2.0; python_version < '3.11'",
-  "tomli-w>=1.0",
   "tqdm>=4.66",
 ]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: C++",
-  "Operating System :: Microsoft :: Windows",
+  "Operating System :: OS Independent",
 ]
 
 [project.optional-dependencies]
 plot = ["matplotlib>=3.7"]
 training = ["torch>=2", "onnx>=1.16"]
-dev = ["build>=1", "pytest>=8", "twine>=5"]
+examples = ["tomli>=2; python_version < '3.11'"]
+dev = ["build>=1", "pytest>=8", "twine>=5", "tomli>=2; python_version < '3.11'"]
 
 [tool.scikit-build]
+cmake.source-dir = "."
 cmake.build-type = "Release"
 cmake.args = [
   "-DBUILD_SHARED_LIBS=ON",
@@ -36,7 +36,8 @@ cmake.args = [
   "-DIBEAMLAB_BUILD_EXAMPLES=OFF",
 ]
 wheel.packages = ["ibeamlab"]
-sdist.include = ["CMakeLists.txt", "cmake/**", "native/**", "ibeamlab/**", "docs/**"]
+sdist.include = ["CMakeLists.txt", "README.md", "cmake/**", "docs/**", "cpp/CMakeLists.txt", "cpp/src/**", "cpp/include/**", "cpp/python/module.cpp", "ibeamlab/**", "tests/**", "examples/**"]
+sdist.exclude = ["old/**", "build*/**", "cpp/build*/**", "xnra/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -131,6 +131,7 @@ ehthumbs.db
 *.swo
 *~
 examples/datasets*
+/examples/DataGeneration/datasets/
 xnra/backup.xnra
 /autonra/
 /ibamlkit/

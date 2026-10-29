@@ -1,0 +1,184 @@
+format = "ibeamlab.generation"
+format_version = 1
+name = "iba_multilayer"
+
+[output]
+directory = "datasets/iba_multilayer_13el"
+records_per_shard = 2048
+
+[dataset]
+maximum_layers = 8
+# Small example budget; increase for production.
+mixed_samples_per_layer_count = 300000
+
+[random]
+seed = 3
+algorithm = "PCG64"
+seed_strategy = "named_streams_per_layer_count"
+
+[composition_sampling]
+normalization = "sum_to_one"
+
+# Split the mixed budget; pure one-layer samples remain additional.
+# The fractions in the three method sections must sum to one.
+# Each subset is shared across layers; concentrations vary independently.
+# Allocation is proportional to subset size, without fixed stoichiometry.
+[composition_sampling.compound]
+fraction = 0.4
+subset_allocation = "proportional_to_element_count"
+subsets = [
+    { name = "nmc", elements = ["Li", "Ni", "Mn", "Co", "O"] },
+    { name = "lithiated_graphite", elements = ["Li", "C"] },
+    { name = "nca", elements = ["Li", "Ni", "Co", "Al", "O"] },
+    { name = "lfp", elements = ["Li", "Fe", "P", "O"] },
+    { name = "inorganic_sei", elements = ["Li", "C", "O", "F"] },
+    { name = "fluorophosphate", elements = ["Li", "P", "O", "F"] },
+    { name = "aluminium_oxyfluoride", elements = ["Al", "O", "F"] },
+    { name = "lithiated_silicon", elements = ["Li", "Si"] },
+    { name = "lithiated_silicon_oxide_carbon", elements = ["Li", "Si", "C", "O"] },
+    { name = "sodiated_hard_carbon", elements = ["Na", "C"] },
+    { name = "sodium_layered_oxide", elements = ["Na", "Ni", "Mn", "Co", "O"] },
+    {name = "Dummy_O_Na_P", elements = ["Na", "O", "P", "F"]},
+    {name = "Dummy_O_Na", elements = ["Na", "O"]},
+    {name = "Dummy_Fe_Ni", elements = ["Fe", "Ni"]},
+    {name = "Dummy_Co_Ni", elements = ["Co", "Ni"]},
+    {name = "Dummy_Mn_Co", elements = ["Mn", "Co"]},
+    {name = "Dummy_Fe_Mn_Ni_Co", elements = ["Fe", "Mn", "Ni", "Co"]},
+]
+
+# Choose one element set per sample and reuse it in every layer.
+[composition_sampling.shared_random_elements]
+fraction = 0.3
+minimum_elements = 2
+maximum_elements = 10
+count_distribution = "uniform"
+selection = "uniform_without_replacement"
+
+# Choose both the count and element set independently for each layer.
+[composition_sampling.random_elements]
+fraction = 0.3
+minimum_elements = 1
+maximum_elements = 13
+count_distribution = "uniform"
+selection = "uniform_without_replacement"
+
+# Shared raw-weight regions; concentrations are independent between layers.
+[[composition_sampling.regions]]
+name = "trace"
+lower = 0.0
+upper = 0.01
+
+[[composition_sampling.regions]]
+name = "minor"
+lower = 0.01
+upper = 0.10
+
+[[composition_sampling.regions]]
+name = "major"
+lower = 0.10
+upper = 0.50
+
+[[composition_sampling.regions]]
+name = "dominant"
+lower = 0.50
+upper = 1.0
+
+[[elements]]
+symbol = "Li"
+region_probabilities = [0.10, 0.30, 0.40, 0.20]
+
+[[elements]]
+symbol = "Ni"
+region_probabilities = [0.05, 0.20, 0.50, 0.25]
+
+[[elements]]
+symbol = "Mn"
+region_probabilities = [0.10, 0.25, 0.50, 0.15]
+
+[[elements]]
+symbol = "Co"
+region_probabilities = [0.10, 0.25, 0.50, 0.15]
+
+[[elements]]
+symbol = "O"
+region_probabilities = [0.05, 0.15, 0.45, 0.35]
+
+[[elements]]
+symbol = "C"
+region_probabilities = [0.1, 0.20, 0.30, 0.4]
+
+[[elements]]
+symbol = "F"
+region_probabilities = [0.30, 0.35, 0.25, 0.10]
+
+[[elements]]
+symbol = "P"
+region_probabilities = [0.30, 0.35, 0.25, 0.10]
+
+[[elements]]
+symbol = "Cu"
+region_probabilities = [0.30, 0.35, 0.25, 0.10]
+
+[[elements]]
+symbol = "Al"
+region_probabilities = [0.30, 0.35, 0.25, 0.10]
+
+# Element order defines parameter and training-target columns.
+[[elements]]
+symbol = "Si"
+region_probabilities = [0.10, 0.30, 0.40, 0.20]
+
+[[elements]]
+symbol = "Na"
+region_probabilities = [0.10, 0.30, 0.40, 0.20]
+
+[[elements]]
+symbol = "Fe"
+region_probabilities = [0.30, 0.35, 0.25, 0.10]
+
+[one_layer_sampling.pure_element_samples]
+enabled = true
+samples_per_element = 20000
+thickness_sampling = "stratified"
+
+[thickness_sampling]
+strategy = "exponential_envelope"
+minimum_total_envelope = 50000.0
+maximum_total_envelope = 700000.0
+growth_ratio = 1.6
+layer_value_distribution = "uniform"
+unit = "1e15_atoms_per_cm2"
+
+# Measurements can have independent beam and detector settings.
+[[experiment.measurements]]
+label = "RBS"
+
+[experiment.measurements.beam]
+particle = "H"
+energy = 2974.0
+spread = 0.0
+
+[experiment.measurements.detector]
+resolution = 20.0
+calibration_linear = 2.63714
+calibration_offset = 0.0
+calibration_quadratic = 0.0
+
+[experiment.measurements.acquisition]
+particles_sr = 1.0e12
+real_time = 0.001
+live_time = 0.001
+
+[simulation]
+batch_size = 512
+fast_calculation = true
+multithreaded_apartment = true
+backend = "simnra" # Use --backend dummy for a dependency-free smoke run.
+workers = 64
+channels = 5000 # Dummy backend only; SIMNRA uses each reference's channel count.
+failure_policy = "stop"
+
+[[simulation.methods]]
+measurement = "RBS"
+reference_file = "../../xnra/Ref_RBS_LiCOFNaAlSiPSTiMnFeCoNiCuH_nopu.xnra"
+particle = "H"

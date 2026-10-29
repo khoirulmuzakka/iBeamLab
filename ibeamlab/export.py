@@ -14,12 +14,12 @@ def export_package(model, example, metadata, destination, *, opset=17, verify=Tr
     """
     import torch
     import numpy as np
-    try:
-        from ._ibeamlab import Package, run_graph
-    except ModuleNotFoundError as error:
-        if error.name != __package__ + "._ibeamlab":
-            raise
-        from _ibeamlab import Package, run_graph
+    from ._engine import engine, to_core
+    from .metadata import ModelMetadata
+    from .package import Package as PythonPackage
+    wrapped = isinstance(metadata, ModelMetadata)
+    metadata = to_core(metadata)
+    Package, run_graph = engine().Package, engine().run_graph
     metadata.validate()
     destination = Path(destination)
     if destination.exists():
@@ -61,6 +61,6 @@ def export_package(model, example, metadata, destination, *, opset=17, verify=Tr
                 np.testing.assert_allclose(run_graph(package, second.numpy()), expected_second,
                                            rtol=1e-4, atol=1e-5)
             package.write(destination)
-            return package
+            return PythonPackage(package) if wrapped else package
     finally:
         model.train(was_training)

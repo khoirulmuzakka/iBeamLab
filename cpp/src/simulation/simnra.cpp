@@ -30,6 +30,10 @@ struct Value {
         value.vt = VT_I4;
         value.lVal = n;
     }
+    explicit Value(bool b) : Value() {
+        value.vt = VT_BOOL;
+        value.boolVal = b ? VARIANT_TRUE : VARIANT_FALSE;
+    }
     explicit Value(const std::wstring &s) : Value() {
         value.vt = VT_BSTR;
         value.bstrVal = SysAllocStringLen(s.data(), static_cast<UINT>(s.size()));
@@ -131,7 +135,8 @@ struct Dispatch {
             std::string message = "SIMNRA method returned false: ";
             for (auto c : std::wstring_view(n))
                 message.push_back(static_cast<char>(c));
-            if (std::wstring_view(n) == L"CalculateSpectrum") {
+            if (std::wstring_view(n) == L"CalculateSpectrum" ||
+                std::wstring_view(n) == L"CalculateSpectrumFast") {
                 auto detail = call(L"LastMessage", DISPATCH_PROPERTYGET);
                 if (detail.value.vt == VT_BSTR && detail.value.bstrVal) {
                     int size =
@@ -166,8 +171,9 @@ struct PrivateDirectory {
 struct Session {
     PrivateDirectory directory;
     Dispatch app{L"SIMNRA.App"}, target{L"SIMNRA.Target"}, setup{L"SIMNRA.Setup"},
-        spectrum{L"SIMNRA.Spectrum"};
+        spectrum{L"SIMNRA.Spectrum"}, calculation{L"SIMNRA.Calc"};
     std::optional<core::Sample> topology;
+    std::optional<core::Measurement> configured_measurement;
     double reference_real_time = 0, reference_live_time = 0;
     explicit Session(const SimnraMethod &method) {
         static std::atomic_uint64_t sequence{0};
@@ -182,6 +188,8 @@ struct Session {
             auto reference = directory.path / method.reference.filename();
             std::filesystem::copy_file(method.reference, reference);
             app.method(L"Open", {Value(reference.wstring()), Value(-1)});
+            // This API returns total spectra only, as in the reference generator.
+            calculation.set(L"ElementSpectra", {Value(false)});
             reference_real_time = setup.get(L"RealTime");
             reference_live_time = setup.get(L"LiveTime");
             // Reuse the loaded reference topology when it already matches.
@@ -247,7 +255,11 @@ struct Session {
             } else {
                 ++li;
             }
-            target.set(L"LayerThickness", {Value(li), Value(l.thickness)});
+            const auto *previous = configured_measurement && !rebuild
+                                       ? &topology->layers[static_cast<std::size_t>(li - 1)]
+                                       : nullptr;
+            if (!previous || previous->thickness != l.thickness)
+                target.set(L"LayerThickness", {Value(li), Value(l.thickness)});
             int ei = 0;
             for (auto &s : l.species) {
                 ++ei;
@@ -297,16 +309,20 @@ struct Session {
             Value rough;
             rough.value.vt = VT_BOOL;
             rough.value.boolVal = l.roughness > 0 ? VARIANT_TRUE : VARIANT_FALSE;
-            target.set(L"HasLayerRoughness", {Value(li), rough});
-            if (l.roughness > 0)
+            if (!previous || (previous->roughness > 0) != (l.roughness > 0))
+                target.set(L"HasLayerRoughness", {Value(li), rough});
+            if (l.roughness > 0 && (!previous || previous->roughness != l.roughness))
                 target.set(L"LayerRoughness", {Value(li), Value(l.roughness)});
             Value porous;
             porous.value.vt = VT_BOOL;
             porous.value.boolVal = l.porosityFraction > 0 ? VARIANT_TRUE : VARIANT_FALSE;
-            target.set(L"HasLayerPorosity", {Value(li), porous});
+            if (!previous || (previous->porosityFraction > 0) != (l.porosityFraction > 0))
+                target.set(L"HasLayerPorosity", {Value(li), porous});
             if (l.porosityFraction > 0) {
-                target.set(L"PorosityFraction", {Value(li), Value(l.porosityFraction)});
-                target.set(L"PoreDiameter", {Value(li), Value(l.poreDiameter)});
+                if (!previous || previous->porosityFraction != l.porosityFraction)
+                    target.set(L"PorosityFraction", {Value(li), Value(l.porosityFraction)});
+                if (!previous || previous->poreDiameter != l.poreDiameter)
+                    target.set(L"PoreDiameter", {Value(li), Value(l.poreDiameter)});
             }
         }
         if (rebuild) {
@@ -314,22 +330,34 @@ struct Session {
             // identities and their inherited cross-section selections.
             for (int i = 0; i < old_layers; ++i)
                 target.method(L"DeleteLayer", {Value(1)});
-            topology = x.sample;
         }
-        setup.set(L"Energy", {Value(m.beam.energy)});
-        setup.set(L"Beamspread", {Value(m.beam.spread)});
-        setup.set(L"DetectorResolution", {Value(m.detector.resolution)});
-        setup.set(L"CalibrationLinear", {Value(m.detector.calibrationLinear)});
-        setup.set(L"CalibrationOffset", {Value(m.detector.calibrationOffset)});
-        setup.set(L"CalibrationQuadratic", {Value(m.detector.calibrationQuadratic)});
-        setup.set(L"ParticlesSr", {Value(m.acquisition.particlesSr)});
-        setup.set(L"RealTime", {Value(m.acquisition.realTime > 0 ? m.acquisition.realTime
-                                                                 : reference_real_time)});
-        setup.set(L"LiveTime", {Value(m.acquisition.liveTime > 0 ? m.acquisition.liveTime
-                                                                 : reference_live_time)});
+        // Fixed setup fields are common in large generation runs. Avoid a COM
+        // round trip for each unchanged value on every spectrum.
+        const auto &old = configured_measurement ? *configured_measurement : m;
+        auto update = [&](const wchar_t *name, double value, double previous) {
+            if (!configured_measurement || value != previous)
+                setup.set(name, {Value(value)});
+        };
+        update(L"Energy", m.beam.energy, old.beam.energy);
+        update(L"Beamspread", m.beam.spread, old.beam.spread);
+        update(L"DetectorResolution", m.detector.resolution, old.detector.resolution);
+        update(L"CalibrationLinear", m.detector.calibrationLinear, old.detector.calibrationLinear);
+        update(L"CalibrationOffset", m.detector.calibrationOffset, old.detector.calibrationOffset);
+        update(L"CalibrationQuadratic", m.detector.calibrationQuadratic,
+               old.detector.calibrationQuadratic);
+        update(L"ParticlesSr", m.acquisition.particlesSr, old.acquisition.particlesSr);
+        update(L"RealTime",
+               m.acquisition.realTime > 0 ? m.acquisition.realTime : reference_real_time,
+               old.acquisition.realTime > 0 ? old.acquisition.realTime : reference_real_time);
+        update(L"LiveTime",
+               m.acquisition.liveTime > 0 ? m.acquisition.liveTime : reference_live_time,
+               old.acquisition.liveTime > 0 ? old.acquisition.liveTime : reference_live_time);
+        // Assignment reuses nested vector storage when topology is unchanged.
+        topology = x.sample;
+        configured_measurement = m;
     }
-    void calculate(core::Counts &out) {
-        app.method(L"CalculateSpectrum");
+    void calculate(core::Counts &out, bool fast) {
+        app.method(fast ? L"CalculateSpectrumFast" : L"CalculateSpectrum");
         auto data = spectrum.call(L"GetDataArray", DISPATCH_METHOD, {Value(2)});
         if ((data.value.vt != (VT_ARRAY | VT_R8) && data.value.vt != (VT_ARRAY | VT_VARIANT)) ||
             !data.value.parray || SafeArrayGetDim(data.value.parray) != 1)
@@ -369,7 +397,9 @@ struct SimnraSimulator::Impl {
         if (!config.workers || config.workers > 256 || config.methods.empty())
             throw std::invalid_argument("invalid SIMNRA worker configuration");
         std::vector<std::string> labels;
-        provenance = "simnra-com-v1";
+        provenance = std::string("simnra-com-v1;calculation=") +
+                     (config.fast_calculation ? "fast" : "standard") +
+                     ";workers=" + std::to_string(config.workers);
         for (auto &m : config.methods) {
             if (m.measurement.empty() || m.particle.empty() ||
                 std::find(labels.begin(), labels.end(), m.measurement) != labels.end())
@@ -451,7 +481,7 @@ struct SimnraSimulator::Impl {
                             sessions[i] = std::make_unique<Session>(m);
                         sessions[i]->configure(x, measurement, config.reuse_target_topology);
                         out.spectra.push_back({label, {}});
-                        sessions[i]->calculate(out.spectra.back().counts);
+                        sessions[i]->calculate(out.spectra.back().counts, config.fast_calculation);
                     }
                 } catch (const std::exception &e) {
                     out.failure = Failure{label, e.what()};
@@ -500,6 +530,7 @@ std::vector<Result> SimnraSimulator::simulate_batch(std::span<const core::Experi
                 progress(out.size(), inputs.size());
             } catch (...) {
                 error = std::current_exception();
+                request_stop();
             }
     }
     if (error)

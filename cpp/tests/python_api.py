@@ -4,8 +4,8 @@ from pathlib import Path
 import tempfile
 import numpy as np
 sys.path.insert(0, str(Path(sys.argv[1])))
-sys.path.insert(0, str(Path(__file__).parents[1] / 'python'))
-import ibeamlab as ibl
+sys.path.insert(0, str(Path(__file__).parents[2]))
+from ibeamlab import native as ibl
 
 def experiment():
     x = ibl.Experiment()

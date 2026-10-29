@@ -116,7 +116,7 @@ def load_reference(path, ibl, isotope_masses=None, effective_fractions=None):
 
 
 
-def recalculate_reference(path, first_layer_scale=1.0):
+def recalculate_reference(path, first_layer_scale=1.0, fast=False):
     """Independent COM calculation with the saved target/setup left untouched."""
     import pythoncom
     import win32com.client
@@ -152,12 +152,19 @@ def recalculate_reference(path, first_layer_scale=1.0):
             thickness = get(target, 'LayerThickness', 1)*first_layer_scale
             target._oleobj_.Invoke(target._oleobj_.GetIDsOfNames('LayerThickness'), 0,
                                   pythoncom.DISPATCH_PROPERTYPUT, False, 1, thickness)
-        if not app.CalculateSpectrum():
+        if fast:
+            calculation = win32com.client.Dispatch('SIMNRA.Calc')
+            calculation.ElementSpectra = False
+            objects.append(calculation)
+            calculation = None
+        calculate = app.CalculateSpectrumFast if fast else app.CalculateSpectrum
+        if not calculate():
             raise RuntimeError('SIMNRA baseline calculation failed')
         counts = np.asarray(spectrum.GetDataArray(2), dtype=np.float64)
         return counts, version, isotope_masses, enabled, effective_fractions
     finally:
         # Explicitly drop local aliases before uninitializing their apartment.
+        calculate = None
         app = setup = target = spectrum = None
         objects.clear()
         pythoncom.CoUninitialize()
@@ -187,8 +194,8 @@ def main():
             print('SIMNRA COM is not registered; reference comparison skipped')
             return 77
     sys.path.insert(0, str(args.extension_dir.resolve()))
-    sys.path.insert(0, str(Path(__file__).parents[1] / 'python'))
-    import ibeamlab as ibl
+    sys.path.insert(0, str(Path(__file__).parents[2]))
+    from ibeamlab import native as ibl
     report = []
     for path in args.references:
         started = time.monotonic()
@@ -276,6 +283,29 @@ def main():
                 np.testing.assert_allclose(a, b, rtol=1e-5, atol=1e-5)
                 entry['varied_thickness_passed'] = True
                 entry['backend_matches_fresh_reference'] = True
+                # Fast is a distinct algorithm: compare it with independent Fast
+                # calculations, never weaken the standard-mode tolerance.
+                independent_fast, _, _, _, _ = recalculate_reference(path, fast=True)
+                config.fast_calculation = True
+                fast_backend = ibl.SimnraSimulator(config)
+                try:
+                    for fast_result in fast_backend.simulate_batch([experiment, experiment]):
+                        if fast_result.failure:
+                            raise RuntimeError(fast_result.failure.message)
+                        a, b = padded_pair(np.asarray(fast_result.spectra[0].counts), independent_fast)
+                        np.testing.assert_allclose(a, b, rtol=1e-5, atol=1e-5)
+                        entry['fast_max_absolute_error'] = float(np.max(np.abs(a-b)))
+                    independent_fast_changed, _, _, _, _ = recalculate_reference(path, first_layer_scale=.9, fast=True)
+                    fast_varied = fast_backend.simulate(changed)
+                    if fast_varied.failure:
+                        raise RuntimeError(fast_varied.failure.message)
+                    a, b = padded_pair(np.asarray(fast_varied.spectra[0].counts), independent_fast_changed)
+                    np.testing.assert_allclose(a, b, rtol=1e-5, atol=1e-5)
+                    entry['fast_matches_independent_fast'] = True
+                    a, b = padded_pair(independent_fast, baseline)
+                    entry['fast_vs_standard_relative_l1'] = float(np.sum(np.abs(a-b))/max(1., np.sum(b)))
+                finally:
+                    fast_backend.close()
                 entry['passed'] = saved_matches if args.check_saved_spectra else True
                 if not saved_matches:
                     message = 'Saved spectrum differs from an untouched SIMNRA recalculation at rtol=1e-5, atol=1e-5; backend matches the fresh reference.'

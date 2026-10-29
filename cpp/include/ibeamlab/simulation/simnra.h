@@ -16,7 +16,9 @@ struct SimnraMethod {
 struct SimnraConfig {
     std::vector<SimnraMethod> methods;
     std::size_t workers = 1;
-    bool multithreaded_apartment = false;
+    bool multithreaded_apartment = true;
+    /// Opt into SIMNRA's faster algorithm; its numerical results can differ.
+    bool fast_calculation = false;
     // Disable for diagnostics that compare rebuilding against cached updates.
     bool reuse_target_topology = true;
 };

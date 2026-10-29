@@ -1,7 +1,6 @@
 # iBeamLab format 1
 
-These formats are independent of the legacy native formats. They are not ZIP or
-TOML. Unknown magic/version tags, invalid lengths, trailing fields and checksum
+Datasets and model packages use binary format 1. Unknown magic/version tags, invalid lengths, trailing fields and checksum
 failures are rejected. Files are limited to 512 MiB payload each. Readers bound
 nested counts before allocating. Checksums detect accidental corruption; they
 are not signatures.
@@ -10,7 +9,7 @@ Every file has an 8-byte ASCII magic, a little-endian uint64 payload length,
 a uint64 FNV-1a checksum of the payload, and that payload. Numeric scalar fields
 use uint64 or IEEE-754 binary64 in little-endian order. Text is byte-length
 prefixed UTF-8; arrays are count-prefixed. ONNX graph bytes are opaque. Current
-field order is defined by the encoder/decoder in `src/io.h` and each module's
+field order is defined by the encoder/decoder in [cpp/src/io.h](../cpp/src/io.h) and each module's
 matching metadata encoder/decoder. Format changes require a new version tag.
 
 ## Datasets
@@ -75,8 +74,8 @@ All pipeline/list lengths and array sizes are bounded before decoding allocation
 
 Input tensor name, output tensor name and provenance follow the active schema
 and pipelines. Finally the payload contains graph byte length and embedded ONNX
-bytes. Shared/direction-specific metadata is declared in `model/metadata.h`;
-`model/package.h` contains the package I/O interface.
+bytes. Shared/direction-specific metadata is declared in [model/metadata.h](../cpp/include/ibeamlab/model/metadata.h);
+[model/package.h](../cpp/include/ibeamlab/model/package.h) contains the package I/O interface.
 
 Graph loading verifies one rank-2 float32 input/output, names and feature widths.
 Inputs/outputs use `[batch,width]`, with graph spectrum slices defined above.

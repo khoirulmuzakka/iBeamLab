@@ -20,6 +20,12 @@ std::span<double> writable(Array &a) {
         throw std::invalid_argument("output array must be writable");
     return {a.mutable_data(), static_cast<std::size_t>(a.size())};
 }
+py::array_t<double> readonly_array(py::object owner, std::span<const double> values,
+                                   std::vector<py::ssize_t> shape) {
+    py::array_t<double> result(shape, values.data(), owner);
+    result.attr("setflags")(false);
+    return result;
+}
 #define FIELD(T, N) .def_readwrite(#N, &T::N)
 PYBIND11_MODULE(_ibeamlab, m) {
     m.doc() = "iBeamLab C++ library; fitting is not implemented.";
@@ -89,7 +95,15 @@ PYBIND11_MODULE(_ibeamlab, m) {
     py::class_<core::Spectrum>(m, "Spectrum")
         .def(py::init<>())
         .def(py::init<std::string, core::Counts>()) FIELD(core::Spectrum, measurement)
-            FIELD(core::Spectrum, counts);
+            FIELD(core::Spectrum, counts)
+        .def_property_readonly(
+            "counts_array",
+            [](py::object owner) {
+                const auto &s = owner.cast<const core::Spectrum &>();
+                return readonly_array(owner, s.counts, {static_cast<py::ssize_t>(s.counts.size())});
+            },
+            "Read-only NumPy view retaining its C++ owner; do not replace counts while a view "
+            "exists.");
     py::enum_<processing::Coverage>(m, "Coverage")
         .value("ZERO_OUTSIDE", processing::Coverage::ZeroOutside)
         .value("REQUIRE_FULL", processing::Coverage::RequireFull);
@@ -164,7 +178,8 @@ PYBIND11_MODULE(_ibeamlab, m) {
         .def(py::init<>()) FIELD(simulation::SimnraConfig, methods)
             FIELD(simulation::SimnraConfig, workers)
                 FIELD(simulation::SimnraConfig, multithreaded_apartment)
-                    FIELD(simulation::SimnraConfig, reuse_target_topology);
+                    FIELD(simulation::SimnraConfig, fast_calculation)
+                        FIELD(simulation::SimnraConfig, reuse_target_topology);
     py::class_<simulation::SimnraSimulator, simulation::Simulator>(m, "SimnraSimulator")
         .def(py::init<simulation::SimnraConfig>())
         .def("close", &simulation::SimnraSimulator::close,
@@ -223,7 +238,7 @@ PYBIND11_MODULE(_ibeamlab, m) {
         "generate",
         [](const generation::GenerationPlan &plan, const Array &rows, simulation::Simulator &sim,
            const std::filesystem::path &path, generation::FailurePolicy policy, py::object progress,
-           std::string provenance, std::size_t shard_size) {
+           std::string provenance, std::size_t shard_size, std::size_t batch_size) {
             if (rows.ndim() != 2)
                 throw std::invalid_argument("rows must be a two-dimensional float64 array");
             if (static_cast<std::size_t>(rows.shape(1)) != plan.parameters.size())
@@ -237,12 +252,12 @@ PYBIND11_MODULE(_ibeamlab, m) {
                 };
             py::gil_scoped_release release;
             return generation::generate(plan, data(rows), samples, sim, path, policy, callback,
-                                        provenance, shard_size);
+                                        provenance, shard_size, batch_size);
         },
         py::arg("plan"), py::arg("rows").noconvert(), py::arg("simulator"), py::arg("path"),
         py::arg("failure_policy") = generation::FailurePolicy::Stop,
         py::arg("progress") = py::none(), py::arg("provenance") = "",
-        py::arg("records_per_shard") = 64);
+        py::arg("records_per_shard") = 64, py::arg("batch_size") = 256);
     py::enum_<model::Direction>(m, "Direction")
         .value("FORWARD", model::Direction::Forward)
         .value("INVERSE", model::Direction::Inverse);
@@ -344,7 +359,29 @@ PYBIND11_MODULE(_ibeamlab, m) {
         .def_readonly("presence_probability", &inference::Prediction::presence_probability)
         .def_readonly("posterior_std", &inference::Prediction::posterior_std)
         .def_readonly("uncertainty_predicted", &inference::Prediction::uncertainty_predicted)
-        .def_readonly("unit", &inference::Prediction::unit);
+        .def_readonly("unit", &inference::Prediction::unit)
+        .def_property_readonly("values_array",
+                               [](py::object owner) {
+                                   const auto &p = owner.cast<const inference::Prediction &>();
+                                   return readonly_array(
+                                       owner, p.values,
+                                       {static_cast<py::ssize_t>(p.layers),
+                                        static_cast<py::ssize_t>(p.elements.size())});
+                               })
+        .def_property_readonly("presence_probability_array",
+                               [](py::object owner) {
+                                   const auto &p = owner.cast<const inference::Prediction &>();
+                                   return readonly_array(
+                                       owner, p.presence_probability,
+                                       {static_cast<py::ssize_t>(p.layers),
+                                        static_cast<py::ssize_t>(p.elements.size())});
+                               })
+        .def_property_readonly("posterior_std_array", [](py::object owner) {
+            const auto &p = owner.cast<const inference::Prediction &>();
+            return readonly_array(
+                owner, p.posterior_std,
+                {static_cast<py::ssize_t>(p.layers), static_cast<py::ssize_t>(p.elements.size())});
+        });
     py::class_<inference::InverseModel>(m, "InverseModel")
         .def(py::init<model::Package, int>(), py::arg("package"), py::arg("threads") = 1)
         .def("predict",

@@ -16,12 +16,14 @@ struct Summary {
     bool cancelled = false;
 };
 // Row-major caller-owned physical values; no implicit concentration normalization.
+// Bounded batches use backend workers; batch_size is independent of shard size.
+// Progress reports completed rows, which may still await buffered publication.
 // Cancellation/Stop leave an explicitly incomplete dataset, never a complete subset.
 IBEAMLAB_API Summary generate(const GenerationPlan &, std::span<const double> rows,
                               std::size_t samples, simulation::Simulator &,
                               const std::filesystem::path &, FailurePolicy = FailurePolicy::Stop,
                               simulation::Progress = {}, std::string provenance = {},
-                              std::size_t records_per_shard = 64);
+                              std::size_t records_per_shard = 64, std::size_t batch_size = 256);
 /** @brief Independent uniform sampling interval for one physical parameter column. */
 struct Uniform {
     core::ParameterBounds bounds;

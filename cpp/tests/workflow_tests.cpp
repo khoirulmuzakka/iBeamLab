@@ -170,6 +170,44 @@ void generation_tests(const std::filesystem::path &root) {
     require(cancelled.cancelled, "cancel flag");
     rejects([&] { datasets::Reader incomplete(root / "cancel"); });
     sim.reset_stop();
+    // The generator must submit bounded batches rather than serial simulate calls.
+    struct BatchProbe final : simulation::Simulator {
+        std::vector<std::size_t> sizes;
+        simulation::DummySimulator backend{32};
+        void simulate(const core::Experiment &, simulation::Result &) override {
+            throw std::logic_error("generator used serial simulation");
+        }
+        std::string provenance() const override { return "batch-probe"; }
+        std::vector<simulation::Result> simulate_batch(std::span<const core::Experiment> inputs,
+                                                       simulation::Progress progress) override {
+            sizes.push_back(inputs.size());
+            std::vector<simulation::Result> results(inputs.size());
+            for (std::size_t i = 0; i < inputs.size(); ++i) {
+                backend.simulate(inputs[i], results[i]);
+                if (progress)
+                    progress(i + 1, inputs.size());
+            }
+            return results;
+        }
+    } batched;
+    core::Counts batch_rows{100, 200, 300, 400, 500};
+    auto batched_summary = generation::generate(plan, batch_rows, 5, batched, root / "batched",
+                                                generation::FailurePolicy::Stop, {}, "", 3, 2);
+    require(batched_summary.accepted == 5 && batched.sizes == std::vector<std::size_t>{2, 2, 1},
+            "bounded backend batches");
+    datasets::Reader batch_reader(root / "batched");
+    std::size_t batch_index = 0;
+    while (batch_reader.next(record)) {
+        require(record.sample_index == batch_index &&
+                    record.parameters[0] == batch_rows[batch_index],
+                "batch source row identity");
+        ++batch_index;
+    }
+    require(batch_index == 5, "batch result count");
+    rejects([&] {
+        generation::generate(plan, batch_rows, 5, batched, root / "zero-batch",
+                             generation::FailurePolicy::Stop, {}, "", 3, 0);
+    });
     {
         std::fstream f(root / "dataset" / "shard-0.ibd",
                        std::ios::in | std::ios::out | std::ios::binary);
