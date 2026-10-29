@@ -1,5 +1,0 @@
-format = "ibeamlab.onnx-package"
-format_version = 2
-[model]
-input_dimension = 2
-output_dimension = 1

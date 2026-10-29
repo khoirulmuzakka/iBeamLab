@@ -1,0 +1,19 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "ibeamlab-cpp"
+version = "0.1.0"
+description = "C++ library and Python interface for iBeamLab"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+training = ["torch>=2", "onnx>=1.16"]
+
+[tool.scikit-build]
+cmake.build-type = "Release"
+cmake.args = ["-DIBEAMLAB_BUILD_PYTHON=ON", "-DIBEAMLAB_BUILD_TESTS=OFF"]
+wheel.packages = ["python/ibeamlab"]
+sdist.include = ["CMakeLists.txt", "cmake/**", "src/**", "include/**", "python/**"]

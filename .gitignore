@@ -143,3 +143,5 @@ xnra/backup.xnra
 !/examples/datasets/NMC_simulated/model_test/
 /examples/datasets/NMC_simulated/model_test/*
 !/examples/datasets/NMC_simulated/model_test/ibanet_test.ipynb
+
+old/*

@@ -1,0 +1,138 @@
+name: C++ unit and integration tests
+
+on:
+  push:
+    paths: ['cpp/**', 'xnra/**', '.github/workflows/cpp-tests.yml']
+  pull_request:
+    paths: ['cpp/**', 'xnra/**', '.github/workflows/cpp-tests.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-and-integration:
+    name: ${{ matrix.os }} / shared=${{ matrix.shared }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        shared: ['ON', 'OFF']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test dependencies
+        run: python -m pip install "numpy>=1.24,<3" "pybind11>=2.12,<4"
+      - name: Configure
+        run: >-
+          cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_SHARED_LIBS=${{ matrix.shared }}
+          -DIBEAMLAB_BUILD_TESTS=ON -DIBEAMLAB_BUILD_PYTHON=ON
+          -DPython_ROOT_DIR="${{ env.pythonLocation }}"
+          -DIBEAMLAB_BUILD_BENCHMARKS=ON -DIBEAMLAB_BUILD_EXAMPLES=ON
+          -DIBEAMLAB_ENABLE_ONNX=OFF -DIBEAMLAB_ENABLE_SIMNRA=OFF
+      - name: Build
+        id: build
+        run: cmake --build cpp/build --config Release --parallel 2
+      - name: Unit tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ctest --test-dir cpp/build -C Release -L unit --no-tests=error --output-on-failure --output-junit unit-results.xml
+      - name: Integration tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ctest --test-dir cpp/build -C Release -L integration -LE licensed --no-tests=error --output-on-failure --output-junit integration-results.xml
+      - name: Allocation regression
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ctest --test-dir cpp/build -C Release -L performance --no-tests=error --output-on-failure --output-junit performance-results.xml
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tests-${{ matrix.os }}-shared-${{ matrix.shared }}
+          path: |
+            cpp/build/*-results.xml
+            cpp/build/Testing/Temporary/*.log
+          if-no-files-found: warn
+
+  sanitizers:
+    name: Linux ASan and UBSan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S cpp -B cpp/build -DIBEAMLAB_BUILD_TESTS=ON -DIBEAMLAB_SANITIZERS=ON -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build cpp/build --parallel 2
+      - name: Unit and integration tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir cpp/build -L "unit|integration" --no-tests=error --output-on-failure --output-junit sanitizer-results.xml
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitizer-results
+          path: |
+            cpp/build/*-results.xml
+            cpp/build/Testing/Temporary/*.log
+          if-no-files-found: warn
+
+  onnx-integration:
+    name: ONNX / Windows / shared=${{ matrix.shared }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shared: ['ON', 'OFF']
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install training and export test dependencies
+        run: python -m pip install "numpy>=1.24,<3" "pybind11>=2.12,<4" "onnx>=1.16,<2" "torch>=2,<3"
+      - name: Fetch matching ONNX Runtime SDK
+        shell: pwsh
+        run: |
+          $sdkArchive = Join-Path $env:RUNNER_TEMP 'ibeamlab-ort.zip'
+          $sdkRoot = Join-Path $env:RUNNER_TEMP 'ibeamlab-ort'
+          Invoke-WebRequest https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.22.1/microsoft.ml.onnxruntime.1.22.1.nupkg -OutFile $sdkArchive
+          Expand-Archive -LiteralPath $sdkArchive -DestinationPath $sdkRoot
+          "ONNXRUNTIME_ROOT=$sdkRoot" >> $env:GITHUB_ENV
+      # Compile the Windows COM adapter; integration selection excludes licensed tests.
+      - name: Configure
+        run: >-
+          cmake -S cpp -B cpp/build -DBUILD_SHARED_LIBS=${{ matrix.shared }}
+          -DIBEAMLAB_BUILD_TESTS=ON -DIBEAMLAB_BUILD_PYTHON=ON
+          -DPython_ROOT_DIR="${{ env.pythonLocation }}"
+          -DIBEAMLAB_ENABLE_ONNX=ON -DIBEAMLAB_ENABLE_SIMNRA=ON
+          -DIBEAMLAB_BUILD_BENCHMARKS=ON
+          -DONNXRUNTIME_ROOT="${{ env.ONNXRUNTIME_ROOT }}"
+      - name: Build
+        id: build
+        run: cmake --build cpp/build --config Release --parallel 2
+      - name: Unit tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ctest --test-dir cpp/build -C Release -L unit --no-tests=error --output-on-failure --output-junit unit-results.xml
+      - name: ONNX and Python integration tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ctest --test-dir cpp/build -C Release -L integration -LE licensed --no-tests=error --output-on-failure --output-junit integration-results.xml
+      - name: Inference allocation regression
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ctest --test-dir cpp/build -C Release -L performance --no-tests=error --output-on-failure --output-junit performance-results.xml
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onnx-shared-${{ matrix.shared }}
+          path: |
+            cpp/build/*-results.xml
+            cpp/build/Testing/Temporary/*.log
+          if-no-files-found: warn
+

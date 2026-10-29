@@ -1,0 +1,12 @@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+if(@IBEAMLAB_CONFIG_NEEDS_ONNX@)
+    set(_ibeamlab_saved_module_path "${CMAKE_MODULE_PATH}")
+    list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
+    find_dependency(ONNXRuntime)
+    set(CMAKE_MODULE_PATH "${_ibeamlab_saved_module_path}")
+    unset(_ibeamlab_saved_module_path)
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/ibeamlab-targets.cmake")
+check_required_components(ibeamlab)
