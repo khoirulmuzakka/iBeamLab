@@ -9,10 +9,13 @@ from ibeamlab import native
 
 def valid_metadata(setup: ibl.ExperimentalSetup) -> ibl.ModelMetadata:
     operations: ibl.TensorPipeline = [ibl.MultiplyScale([1e-4])]
-    inputs = ibl.LayerInputSchema(["Si", "O"], operations)
+    inputs = ibl.LayerInputSchema(["Si", "O"])
     outputs = ibl.SpectraSchema([ibl.SpectrumSpec("RBS", 5000)])
     forward = ibl.ForwardModelMetadata(setup, inputs, outputs,
-        postprocessing=[ibl.SpectrumProcessing("RBS", [ibl.MultiplyCounts(100), ibl.Rebin()])])
+        input_transform=ibl.TransformPipeline(operations),
+        output_transform=[ibl.SpectrumTransform("RBS", ibl.TransformPipeline([ibl.MultiplyScale([.01])],
+            direction=ibl.TransformDirection.INVERSE))],
+        output_preparation=[ibl.SpectrumProcessing("RBS", [ibl.Rebin()])])
     return ibl.ModelMetadata(forward)
 
 
@@ -25,11 +28,11 @@ def native_interoperability(setup: native.ExperimentalSetup, sample: native.Samp
 
 def invalid_metadata(setup: ibl.ExperimentalSetup) -> None:
     ibl.ParameterSpec("bad", "thickness")  # type: ignore[arg-type]
-    ibl.LayerInputSchema(["Si"], preprocessing=[ibl.MultiplyCounts(100)])  # type: ignore[list-item]
-    ibl.InverseModelMetadata(setup, ibl.SpectraSchema(), ["Si"], "8")  # type: ignore[arg-type]
+    ibl.LayerInputSchema([123])  # type: ignore[list-item]
+    ibl.EdpSchema(["Si"], "8")  # type: ignore[arg-type]
     ibl.ForwardModelMetadata(setup, 123, ibl.SpectraSchema())  # type: ignore[arg-type]
     ibl.ForwardModelMetadata(setup, ibl.LayerInputSchema(["Si"]), ibl.SpectraSchema(),
-        postprocessing=[ibl.MultiplyScale([1])])  # type: ignore[list-item]
+        output_preparation=[ibl.MultiplyScale([1])])  # type: ignore[list-item]
 
 
 def inference_options() -> ibl.InferenceOptions:

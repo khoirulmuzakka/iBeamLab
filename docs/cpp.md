@@ -28,6 +28,20 @@ between measurements; an active external COM calculation cannot be interrupted.
 
 ## Scientific and allocation contracts
 
+Model metadata declares four stages: `input_preparation`, `input_transform`,
+`output_transform` and `output_preparation`. Preparation describes physical
+packing or detector operations; transforms describe fitted numerical training
+operations. Each transform explicitly declares its direction and whether it
+executes in the graph or runtime. Forward output transforms and inverse input
+transforms are independent per detector. See [model-format.md](model-format.md).
+
+`predict_reference` and `predict_reference_batch` skip physical detector
+corrections while retaining numerical transforms. Forward models also expose
+`predict_reference_areal_density` and `predict_reference_areal_density_batch`.
+These APIs return spectra at the package reference setup; ordinary prediction
+applies the requested measurement corrections. Inverse reference prediction
+accepts spectra already at the declared reference setup.
+
 Counts use contiguous `double` storage and represent integrated counts per
 channel, not count density. ONNX tensors use float32. Calibration describes
 channel centers `E(i)=offset+linear*i+quadratic*i*i`; edges are evaluated at half
@@ -58,9 +72,28 @@ Use the overloads taking caller-owned output to reuse spectrum storage; the
 convenience return-by-value overloads create owning results. Instances are not
 concurrently callable. ONNX Runtime may manage its own internal allocations.
 
+`predict_batch(inputs, outputs)` executes one ONNX batch and reuses caller-owned
+result storage. Layer inputs are padded to the largest layer count in the batch.
+Each experiment retains its own detector processing. Inverse batches likewise
+prepare each measured input before one graph call.
+
+For a DE population, `predict_areal_density_batch(ad, population, layers, output,
+setup)` accepts contiguous physical float32 `[population,layers,elements]` and
+writes processed float64 `[population,total_channels]` directly into caller-owned
+storage. `spectrum_channels()` returns each processed detector width in schema
+order; sum them for `total_channels`. The setup defaults to the reference and
+applies to the whole population. AD and output storage must not overlap. This
+path avoids allocating experiment/result objects for candidates and retains its
+preprocessing, graph, and spectrum workspaces between iterations. Empty batches
+skip graph execution. Fixed-batch graphs require the exact declared batch size.
+For reducing populations, warm up the largest batch and pass active input/output
+spans afterward. Native vectors retain capacity as batch size shrinks. Changed
+shapes recreate borrowed ONNX tensor wrappers; internal runtime allocations are
+outside the C++ buffer-reuse guarantee.
+
 Pileup is the documented pair-sum model in `processing/pileup.h`. It requires
-positive acquisition times with live time <= real time and occupancy
-`tau*total/real_time < 1`. Output includes full `2*N-1` support. Removal requires
+positive acquisition times with live time <= real time and finite
+`tau*total/real_time`. Output includes full `2*N-1` support. Removal requires
 that full support and verifies reconstructed counts. Truncated or noisy data
 may have no supported inverse and are rejected. This model sums channel indices;
 its applicability to an instrument must be validated separately.

@@ -20,6 +20,7 @@ class InferenceOptions:
     inter_op_threads: int
     enable_graph_optimizations: bool
     allow_tf32: bool
+    apply_pileup: bool
     def __init__(self) -> None: ...
     def validate(self) -> None: ...
 
@@ -127,10 +128,28 @@ class Parameter:
     unit: str
     def __init__(self, name: str, target: ParameterTarget, unit: str = ...) -> None: ...
 
+class SpectrumState(Enum):
+    BARE = 0
+    PILED_UP = 1
+
+class TransformDirection(Enum):
+    FORWARD = 0
+    INVERSE = 1
+
+class TransformLocation(Enum):
+    RUNTIME = 0
+    GRAPH = 1
+
+class PredictionDomain(Enum):
+    MEASUREMENT = 0
+    REFERENCE = 1
+
 class SpectrumSpec:
     measurement: str
     channels: int
-    def __init__(self, measurement: str, channels: int, /) -> None: ...
+    state: SpectrumState
+    unit: str
+    def __init__(self, measurement: str, channels: int, state: SpectrumState = ..., unit: str = ...) -> None: ...
 
 class SpectraSchema:
     spectra: list[SpectrumSpec]
@@ -166,9 +185,16 @@ class CustomTransform:
 
 TensorTransform: TypeAlias = Log1p | MinMaxScale | StandardScale | MultiplyScale | CustomTransform
 
-class MultiplyCounts:
-    factor: float
-    def __init__(self, factor: float, /) -> None: ...
+class TransformPipeline:
+    steps: list[TensorTransform]
+    direction: TransformDirection
+    location: TransformLocation
+    def __init__(self, steps: Sequence[TensorTransform] = ..., direction: TransformDirection = ..., location: TransformLocation = ...) -> None: ...
+
+class SpectrumTransform:
+    measurement: str
+    transform: TransformPipeline
+    def __init__(self, measurement: str, transform: TransformPipeline, /) -> None: ...
 
 class ExposureScale:
     def __init__(self) -> None: ...
@@ -193,44 +219,45 @@ class RemovePileup:
     acquisition: AcquisitionSource
     def __init__(self, tau_seconds: float, relative_tolerance: float = ..., acquisition: AcquisitionSource = ...) -> None: ...
 
-SpectrumOperation: TypeAlias = MultiplyCounts | ExposureScale | Rebin | Pileup | RemovePileup
+SpectrumOperation: TypeAlias = ExposureScale | Rebin | Pileup | RemovePileup
 
 class SpectrumProcessing:
     measurement: str
     steps: list[SpectrumOperation]
     def __init__(self, measurement: str, steps: Sequence[SpectrumOperation], /) -> None: ...
 
-class ScaleEdp:
-    factor: float
-    def __init__(self, factor: float, /) -> None: ...
+class EdpSchema:
+    elements: list[str]
+    layers: int
+    uncertainty: bool
+    unit: str
+    def __init__(self, elements: Sequence[str], layers: int, uncertainty: bool = ..., unit: str = ...) -> None: ...
 
 class ParameterInputSchema:
     reference_sample: Sample
     parameters: list[Parameter]
-    preprocessing: list[TensorTransform]
     def __init__(self) -> None: ...
 
 class LayerInputSchema:
     elements: list[str]
-    preprocessing: list[TensorTransform]
     def __init__(self) -> None: ...
 
 class ForwardModelMetadata:
     reference_setup: ExperimentalSetup
-    input: ParameterInputSchema | LayerInputSchema
+    input_preparation: ParameterInputSchema | LayerInputSchema
     output_spectra: SpectraSchema
-    postprocessing: list[SpectrumProcessing]
+    input_transform: TransformPipeline
+    output_transform: list[SpectrumTransform]
+    output_preparation: list[SpectrumProcessing]
     def __init__(self) -> None: ...
 
 class InverseModelMetadata:
     reference_setup: ExperimentalSetup
     input_spectra: SpectraSchema
-    elements: list[str]
-    layers: int
-    uncertainty: bool
     input_preparation: list[SpectrumProcessing]
-    preprocessing: list[TensorTransform]
-    postprocessing: list[ScaleEdp]
+    input_transform: list[SpectrumTransform]
+    output_transform: TransformPipeline
+    output_preparation: EdpSchema
     def __init__(self) -> None: ...
 
 class Direction(Enum):

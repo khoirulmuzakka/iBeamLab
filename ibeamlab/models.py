@@ -94,8 +94,46 @@ class ForwardModel(Model):
             raise InferenceError(str(error)) from error
 
     def predict_batch(self, experiments):
+        """Execute one ONNX batch; differing layer counts are zero-padded."""
         try:
             return [result_from_core(r) for r in self._core.predict_batch([to_core(x) for x in experiments])]
+        except (ValueError, RuntimeError) as error:
+            raise InferenceError(str(error)) from error
+
+    def predict_reference(self, experiment):
+        """Physical input to reference-condition spectra; numerical transforms still run."""
+        try:
+            return result_from_core(self._core.predict_reference(to_core(experiment)))
+        except (ValueError, RuntimeError) as error:
+            raise InferenceError(str(error)) from error
+
+    def predict_reference_batch(self, experiments):
+        """One ONNX population call, returning physical reference spectra."""
+        try:
+            return [result_from_core(r) for r in self._core.predict_batch(
+                [to_core(x) for x in experiments], engine().PredictionDomain.REFERENCE)]
+        except (ValueError, RuntimeError) as error:
+            raise InferenceError(str(error)) from error
+
+    def predict_reference_areal_density(self, densities):
+        """Physical AD [layers,elements] to spectra before measurement corrections."""
+        values = np.ascontiguousarray(densities, dtype=np.float32)
+        try:
+            return result_from_core(self._core.predict_areal_density(values, None, engine().PredictionDomain.REFERENCE))
+        except (ValueError, RuntimeError) as error:
+            raise InferenceError(str(error)) from error
+
+    def predict_reference_areal_density_batch(self, densities, *, out=None):
+        """One graph call for AD [population,layers,elements], with reusable output.
+
+        out is writable contiguous float64 [population,sum(reference channels)].
+        Returned per-detector arrays view out; all training transforms execute
+        exactly once at their declared graph/runtime location. No physical output
+        preparation (pileup, exposure or rebinning) is executed.
+        """
+        values = np.ascontiguousarray(densities, dtype=np.float32)
+        try:
+            return dict(self._core.predict_areal_density_batch(values, None, out, engine().PredictionDomain.REFERENCE))
         except (ValueError, RuntimeError) as error:
             raise InferenceError(str(error)) from error
 
@@ -108,6 +146,23 @@ class ForwardModel(Model):
         values = np.ascontiguousarray(densities, dtype=np.float32)
         try:
             return result_from_core(self._core.predict_areal_density(values, to_core(setup)))
+        except (ValueError, RuntimeError) as error:
+            raise InferenceError(str(error)) from error
+
+    def predict_areal_density_batch(self, densities, *, setup=None, out=None):
+        """One ONNX call for physical AD [population,layers,elements].
+
+        Returns {measurement: float64 [population,processed_channels]} arrays.
+        Element order follows metadata. setup applies to the whole population.
+        Pass writable contiguous float64 out [population,total_processed_channels]
+        to reuse output storage across DE iterations. Returned arrays view that
+        storage and change when it is reused. Without out, results own new storage.
+        Contiguous float32 input is borrowed; transforms use retained scratch.
+        One model instance per fitting worker; calls on an instance must serialize.
+        """
+        values = np.ascontiguousarray(densities, dtype=np.float32)
+        try:
+            return dict(self._core.predict_areal_density_batch(values, to_core(setup), out))
         except (ValueError, RuntimeError) as error:
             raise InferenceError(str(error)) from error
 
@@ -134,10 +189,24 @@ class InverseModel(Model):
         except (ValueError, RuntimeError) as error:
             raise InferenceError(str(error)) from error
 
-    def predict_prepared(self, spectra):
-        """Skip physical preparation; retain packed-tensor preprocessing and EDP processing."""
+    def predict_reference(self, spectra):
+        """Reference-condition spectra to physical EDP; training transforms still run."""
         try:
-            return InversePrediction.from_core(self._core.predict_prepared(_spectra(spectra)))
+            return InversePrediction.from_core(self._core.predict_reference(_spectra(spectra)))
+        except (ValueError, RuntimeError) as error:
+            raise InferenceError(str(error)) from error
+
+    def predict_reference_batch(self, spectra):
+        """One ONNX call for a sequence of reference spectrum mappings."""
+        try:
+            inputs = []
+            for item in spectra:
+                value = engine().InverseInput()
+                value.setup = self._package.metadata.model.reference_setup
+                value.spectra = _spectra(item)
+                inputs.append(value)
+            return [InversePrediction.from_core(r) for r in self._core.predict_batch(
+                inputs, engine().PredictionDomain.REFERENCE)]
         except (ValueError, RuntimeError) as error:
             raise InferenceError(str(error)) from error
 

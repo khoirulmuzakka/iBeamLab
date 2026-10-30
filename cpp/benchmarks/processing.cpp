@@ -47,12 +47,12 @@ int main() {
 #ifdef IBEAMLAB_BENCHMARK_ONNX
     using namespace ibeamlab;
     model::ForwardModelMetadata metadata;
-    std::get<model::ParameterInputSchema>(metadata.input).reference_sample.layers = {{100, 0, 0, 0, {{"Si", 1, {}}}}};
+    std::get<model::ParameterInputSchema>(metadata.input_preparation).reference_sample.layers = {{100, 0, 0, 0, {{"Si", 1, {}}}}};
     metadata.reference_setup.measurements = {
         {"single-detector-measurement", {"He", 2000, 0}, {}, {1000, 10, 8}}};
-    std::get<model::ParameterInputSchema>(metadata.input).parameters = {{"thickness", core::LayerThickness{0}, "1e15 atoms/cm2"}};
+    std::get<model::ParameterInputSchema>(metadata.input_preparation).parameters = {{"thickness", core::LayerThickness{0}, "1e15 atoms/cm2"}};
     metadata.output_spectra.spectra = {{"single-detector-measurement", channels}};
-    core::Experiment experiment{std::get<model::ParameterInputSchema>(metadata.input).reference_sample, metadata.reference_setup};
+    core::Experiment experiment{std::get<model::ParameterInputSchema>(metadata.input_preparation).reference_sample, metadata.reference_setup};
     inference::ForwardModel model(
         model::Package::from_onnx(std::filesystem::path(IBEAMLAB_FIXTURES) / "forward_5000.onnx",
                                   model::ModelMetadata(metadata)));
@@ -79,7 +79,8 @@ int main() {
     // independent per-element preprocessing should allocate on the hot path.
     model::ForwardModelMetadata dynamic;
     dynamic.reference_setup = metadata.reference_setup;
-    dynamic.input = model::LayerInputSchema{{"Si", "O"}, {model::MultiplyScale{{.01, .02}}}};
+    dynamic.input_preparation = model::LayerInputSchema{{"Si", "O"}};
+    dynamic.input_transform.steps = {model::MultiplyScale{{.01, .02}}};
     dynamic.output_spectra = metadata.output_spectra;
     auto dynamic_package = model::Package::from_onnx(
         std::filesystem::path(IBEAMLAB_FIXTURES) / "forward_layers.onnx", model::ModelMetadata(dynamic));
@@ -112,7 +113,7 @@ int main() {
     counting = false;
     std::cout << "Direct physical AD with preprocessing: " << allocations << " C++ new allocations after warmup\n";
     passed = passed && allocations == 0;
-    std::get<model::LayerInputSchema>(std::get<model::ForwardModelMetadata>(dynamic_package.metadata.model).input).preprocessing.clear();
+    std::get<model::ForwardModelMetadata>(dynamic_package.metadata.model).input_transform.steps.clear();
     inference::ForwardModel borrowed(dynamic_package);
     for (int i = 0; i < 10; ++i) borrowed.predict_areal_density(ad, 32, layered_result);
     allocations = 0;
@@ -122,6 +123,50 @@ int main() {
     std::cout << "Direct AD without preprocessing (borrowed input): " << allocations << " C++ new allocations after warmup\n";
     passed = passed && allocations == 0 && ad.front() == 50.f &&
         layered_result.spectra[0].counts.back() == 32. * 150 * channels;
+
+    // A DE population uses one graph call and caller-owned physical output.
+    constexpr std::size_t population = 64;
+    std::vector<float> population_ad(population * 8 * 2, 50.f);
+    std::vector<double> population_counts(population * channels);
+    for (auto *network : {&sequence, &borrowed}) {
+        for (int i = 0; i < 5; ++i)
+            network->predict_areal_density_batch(population_ad, population, 8, population_counts);
+        allocations = 0;
+        start = std::chrono::steady_clock::now();
+        counting = true;
+        for (int i = 0; i < iterations; ++i)
+            network->predict_areal_density_batch(population_ad, population, 8, population_counts);
+        counting = false;
+        elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        std::cout << "DE population 64 x 8 layers x 5000 channels ("
+                  << (network == &sequence ? "preprocessed" : "borrowed") << "): "
+                  << elapsed << " ms for " << iterations << " batches, " << allocations
+                  << " C++ new allocations after warmup\n";
+        const double expected = (network == &sequence ? 20. : 1200.) * channels;
+        passed = passed && allocations == 0 && population_counts.back() == expected;
+        // ARRDE reduces the active population without replacing its backing arrays.
+        allocations = 0;
+        counting = true;
+        for (std::size_t active : {64u, 48u, 32u, 16u, 8u, 4u}) {
+            auto input = std::span<const float>(population_ad).first(active * 8 * 2);
+            auto output = std::span<double>(population_counts).first(active * channels);
+            network->predict_areal_density_batch(input, active, 8, output);
+            passed = passed && output.back() == expected;
+        }
+        counting = false;
+        std::cout << "Reducing population 64..4 ("
+                  << (network == &sequence ? "preprocessed" : "borrowed") << "): "
+                  << allocations << " C++ new allocations after warmup\n";
+        passed = passed && allocations == 0;
+    }
+    std::vector<simulation::Result> population_results(cases.size());
+    sequence.predict_batch(cases, population_results);
+    allocations = 0;
+    counting = true;
+    for (int i = 0; i < iterations; ++i) sequence.predict_batch(cases, population_results);
+    counting = false;
+    std::cout << "Mixed-layer experiment batch: " << allocations << " C++ new allocations after warmup\n";
+    passed = passed && allocations == 0;
 #endif
     return passed ? 0 : 1;
 }

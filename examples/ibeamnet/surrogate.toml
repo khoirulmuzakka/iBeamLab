@@ -18,7 +18,8 @@ ad_input_factor = 0.0001
 
 [[spectra]]
 measurement = "RBS"
-channels = 5000
+# Omit channels to infer this detector's maximum length across selected datasets.
+# Set an explicit width only when required by an existing checkpoint.
 count_scale = 100.0
 loss_weight = 1.0
 # Enable only for pileup-free targets linear in particlesSr (the nopu references).
@@ -40,6 +41,12 @@ refiner_kernel = 8
 output = "runs/forward"
 device = "auto"
 batch_size = 512
+# End-of-epoch losses use fixed seeded subsets and frozen weights.
+train_evaluation_samples = 20000
+validation_samples = 20000
+test_samples = 10000
+evaluation_batch_size = 2048
+evaluation_workers = 0
 workers = 0
 weight_decay = 0.00001
 gradient_clip = 5.0
@@ -69,3 +76,10 @@ opset = 17
 # Python ONNX Runtime verification always runs. Enable this additional check
 # with an ONNX-enabled C++ extension to validate the complete deployment path.
 verify_native = true
+
+# Export-only physical correction; does not change training targets or cache.
+# Use only with pileup-free targets, such as the configured nopu reference.
+[export.pileup.RBS]
+enabled = true
+targets_pileup_free = true
+tau_seconds = 0.0000004

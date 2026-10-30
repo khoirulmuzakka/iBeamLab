@@ -38,8 +38,9 @@ def experiment():
 class DomainTests(unittest.TestCase):
     @unittest.skipUnless(core is not None, "compiled extension required")
     def test_metadata_conversion_errors_include_field_paths(self):
-        with self.assertRaisesRegex(ibl.ValidationError, r"LayerInputSchema.preprocessing"):
-            ibl.LayerInputSchema(["Si"], preprocessing=[ibl.MultiplyCounts(2)]).to_core()
+        with self.assertRaisesRegex(ibl.ValidationError, r"ForwardModelMetadata.input_transform"):
+            ibl.ForwardModelMetadata(experiment().setup, ibl.LayerInputSchema(["Si"]),
+                ibl.SpectraSchema([ibl.SpectrumSpec("RBS", 4)]), input_transform=123).to_core()
         with self.assertRaisesRegex(ibl.ValidationError, r"ForwardModelMetadata.input"):
             ibl.ForwardModelMetadata(experiment().setup, 123,
                 ibl.SpectraSchema([ibl.SpectrumSpec("RBS", 4)])).to_core()
@@ -47,8 +48,7 @@ class DomainTests(unittest.TestCase):
             ibl.ParameterSpec("bad", 123).to_core()
         with self.assertRaisesRegex(ibl.ValidationError, r"ParameterSpec.unit"):
             ibl.ParameterSpec("bad", ibl.LayerThickness(0), 123).to_core()
-        invalid = ibl.ModelMetadata(ibl.InverseModelMetadata(experiment().setup,
-            ibl.SpectraSchema([ibl.SpectrumSpec("RBS", 4), ibl.SpectrumSpec("NRA", 3)]), ["Si"], 0))
+        invalid = ibl.ModelMetadata(ibl.InverseModelMetadata(experiment().setup, ibl.SpectraSchema([ibl.SpectrumSpec('RBS', 4), ibl.SpectrumSpec('NRA', 3)]), ibl.EdpSchema(['Si'], 0)))
         with self.assertRaisesRegex(ibl.ValidationError, r"ModelMetadata:.*layers"):
             invalid.validate()
 
@@ -153,10 +153,7 @@ class ModelTests(unittest.TestCase):
     def test_multidetector_packages_and_inference(self):
         x = experiment()
         schema = ibl.SpectraSchema([ibl.SpectrumSpec("RBS", 4), ibl.SpectrumSpec("NRA", 3)])
-        forward = ibl.ForwardModelMetadata(x.setup, ibl.ParameterInputSchema(x.sample,
-            [ibl.ParameterSpec("thickness", ibl.LayerThickness(0))]), schema,
-            postprocessing=[ibl.SpectrumProcessing("RBS", [ibl.ExposureScale()]),
-                            ibl.SpectrumProcessing("NRA", [ibl.MultiplyCounts(.5), ibl.ExposureScale()])])
+        forward = ibl.ForwardModelMetadata(x.setup, ibl.ParameterInputSchema(x.sample, [ibl.ParameterSpec('thickness', ibl.LayerThickness(0))]), schema, output_preparation=[ibl.SpectrumProcessing('RBS', [ibl.ExposureScale()]), ibl.SpectrumProcessing('NRA', [ibl.ExposureScale()])], output_transform=[ibl.SpectrumTransform('NRA', ibl.TransformPipeline([ibl.MultiplyScale([0.5])]))])
         metadata = ibl.ModelMetadata(forward, provenance="python-wrapper-test")
         metadata.validate()
         self.assertEqual((metadata.input_width(), metadata.output_width()), (1, 7))
@@ -172,13 +169,12 @@ class ModelTests(unittest.TestCase):
             model = ibl.load_model(path)
             self.assertIsInstance(model, ibl.ForwardModel)
             self.assertEqual(model.metadata.model.reference_setup, x.setup)
-            self.assertEqual(model.metadata.model.input.reference_sample, x.sample)
+            self.assertEqual(model.metadata.model.input_preparation.reference_sample, x.sample)
             predicted = model.predict(replace(x, setup=requested))
             np.testing.assert_allclose(predicted["RBS"].counts, [200, 400, 600, 800])
             np.testing.assert_allclose(predicted["NRA"].counts, [125, 150, 175])
             self.assertEqual(len(model.predict_batch([x, x])), 2)
-            inverse = ibl.ModelMetadata(ibl.InverseModelMetadata(x.setup, schema, ["Si", "O"], 1, True,
-                input_preparation=[ibl.SpectrumProcessing(label, [ibl.ExposureScale()]) for label in ("RBS", "NRA")]))
+            inverse = ibl.ModelMetadata(ibl.InverseModelMetadata(x.setup, schema, ibl.EdpSchema(['Si', 'O'], 1, True), input_preparation=[ibl.SpectrumProcessing(label, [ibl.ExposureScale()]) for label in ('RBS', 'NRA')]))
             inverse_package = ibl.Package.from_onnx(fixtures / "inverse_multi.onnx", inverse)
             inverse_path = Path(tmp) / "inverse.ibm"
             inverse_package.write(inverse_path)
@@ -194,7 +190,7 @@ class ModelTests(unittest.TestCase):
             del prediction
             gc.collect()
             np.testing.assert_allclose(retained, [[70, 140]])
-            prepared = inverse_model.predict_prepared({"RBS": [1, 2, 3, 4], "NRA": [1, 2, 3]})
+            prepared = inverse_model.predict_reference({"RBS": [1, 2, 3, 4], "NRA": [1, 2, 3]})
             np.testing.assert_allclose(prepared.values, retained)
             with self.assertRaises(ibl.InferenceError):
                 inverse_model.predict(ibl.InverseInput(requested, {"wrong": [1, 2, 3]}))
@@ -214,10 +210,7 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(len(history.validation_loss), 50)
         x = experiment()
         x = replace(x, setup=ibl.ExperimentalSetup([x.setup.measurements[0]]))
-        metadata = ibl.ModelMetadata(ibl.ForwardModelMetadata(x.setup,
-            ibl.ParameterInputSchema(x.sample, [ibl.ParameterSpec("thickness", ibl.LayerThickness(0))],
-                preprocessing=[ibl.MultiplyScale([.01])]),
-            ibl.SpectraSchema([ibl.SpectrumSpec("RBS", 4)])))
+        metadata = ibl.ModelMetadata(ibl.ForwardModelMetadata(x.setup, ibl.ParameterInputSchema(x.sample, [ibl.ParameterSpec('thickness', ibl.LayerThickness(0))]), ibl.SpectraSchema([ibl.SpectrumSpec('RBS', 4)]), input_transform=ibl.TransformPipeline([ibl.MultiplyScale([0.01])])))
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "trained.ibm"
             package = ibl.export_package(model, torch.from_numpy(inputs[:2]), metadata, path)

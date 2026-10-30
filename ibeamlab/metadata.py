@@ -15,9 +15,9 @@ from .sample import Sample, ExperimentalSetup, sample_from_core, setup_from_core
 
 TensorTransform: TypeAlias = Union["core.Log1p", "core.MinMaxScale", "core.StandardScale", "core.MultiplyScale", "core.CustomTransform"]
 TensorPipeline: TypeAlias = Sequence[TensorTransform]
-SpectrumOperation: TypeAlias = Union["core.MultiplyCounts", "core.ExposureScale", "core.Rebin", "core.Pileup", "core.RemovePileup"]
+SpectrumOperation: TypeAlias = Union["core.ExposureScale", "core.Rebin", "core.Pileup", "core.RemovePileup"]
 SpectrumPipeline: TypeAlias = Sequence["core.SpectrumProcessing"]
-EdpPipeline: TypeAlias = Sequence["core.ScaleEdp"]
+SpectrumTransforms: TypeAlias = Sequence["core.SpectrumTransform"]
 T = TypeVar("T")
 
 
@@ -40,11 +40,10 @@ class ParameterInputSchema:
     """Fixed physical columns and unvaried sample properties for parameter models."""
     reference_sample: Sample | core.Sample
     parameters: Sequence[ParameterSpec | core.Parameter]
-    preprocessing: TensorPipeline = field(default_factory=list)
 
     def to_core(self) -> core.ParameterInputSchema:
         return _core_value(engine().ParameterInputSchema, reference_sample=self.reference_sample,
-                           parameters=self.parameters, preprocessing=self.preprocessing)
+                           parameters=self.parameters)
 
 
 @dataclass(slots=True)
@@ -55,47 +54,56 @@ class LayerInputSchema:
     layer; coefficients are scalar or per element. Empty padding stays zero.
     """
     elements: Sequence[str]
-    preprocessing: TensorPipeline = field(default_factory=list)
 
     def to_core(self) -> core.LayerInputSchema:
-        return _core_value(engine().LayerInputSchema, elements=self.elements, preprocessing=self.preprocessing)
+        return _core_value(engine().LayerInputSchema, elements=self.elements)
 
 
 @dataclass(slots=True)
 class ForwardModelMetadata:
-    """Fixed setup, architecture-specific input schema and independent detector outputs."""
+    """Sample packing, training transforms, and independent physical detector corrections.
+
+    input_preparation declares physical parameters or elemental AD packing.
+    input_transform applies numerical training transforms; output_transform
+    restores physical reference spectra before output_preparation maps them to
+    requested measurement conditions. Embedded graph transforms execute only in ONNX.
+    """
     reference_setup: ExperimentalSetup | core.ExperimentalSetup
-    input: ParameterInputSchema | LayerInputSchema | core.ParameterInputSchema | core.LayerInputSchema
+    input_preparation: ParameterInputSchema | LayerInputSchema | core.ParameterInputSchema | core.LayerInputSchema
     output_spectra: core.SpectraSchema
-    postprocessing: SpectrumPipeline = field(default_factory=list)
+    input_transform: core.TransformPipeline = field(default_factory=lambda: engine().TransformPipeline())
+    output_transform: SpectrumTransforms = field(default_factory=list)
+    output_preparation: SpectrumPipeline = field(default_factory=list)
 
     def to_core(self) -> core.ForwardModelMetadata:
         return _core_value(engine().ForwardModelMetadata, reference_setup=self.reference_setup,
-                           input=self.input, output_spectra=self.output_spectra, postprocessing=self.postprocessing)
+            input_preparation=self.input_preparation, output_spectra=self.output_spectra,
+            input_transform=self.input_transform, output_transform=self.output_transform,
+            output_preparation=self.output_preparation)
 
 
 @dataclass(slots=True)
 class InverseModelMetadata:
-    """Measured spectra to an EDP with a fixed maximum output layer count.
+    """Measured spectra to fixed-maximum-layer physical EDPs.
 
-    input_preparation maps measured spectra to the reference setup; tensor
-    preprocessing follows packing. With uncertainty, graph outputs pack means,
-    presence probabilities, then standard deviations in layer-major order.
+    Physical input_preparation precedes per-detector numerical input_transform.
+    output_transform restores densities; affine transforms scale posterior std
+    by absolute scale and leave probabilities untouched. output_preparation
+    declares layer/element layout and physical units. Nonlinear uncertainty
+    transforms are rejected rather than approximated.
     """
     reference_setup: ExperimentalSetup | core.ExperimentalSetup
     input_spectra: core.SpectraSchema
-    elements: Sequence[str]
-    layers: int
-    uncertainty: bool = False
+    output_preparation: core.EdpSchema
     input_preparation: SpectrumPipeline = field(default_factory=list)
-    preprocessing: TensorPipeline = field(default_factory=list)
-    postprocessing: EdpPipeline = field(default_factory=list)
+    input_transform: SpectrumTransforms = field(default_factory=list)
+    output_transform: core.TransformPipeline = field(default_factory=lambda: engine().TransformPipeline())
 
     def to_core(self) -> core.InverseModelMetadata:
         return _core_value(engine().InverseModelMetadata, reference_setup=self.reference_setup,
-            input_spectra=self.input_spectra, elements=self.elements, layers=self.layers,
-            uncertainty=self.uncertainty, input_preparation=self.input_preparation,
-            preprocessing=self.preprocessing, postprocessing=self.postprocessing)
+            input_spectra=self.input_spectra, output_preparation=self.output_preparation,
+            input_preparation=self.input_preparation, input_transform=self.input_transform,
+            output_transform=self.output_transform)
 
 
 @dataclass(slots=True)
@@ -139,15 +147,16 @@ class ModelMetadata:
         m = value.model
         if isinstance(m, core.ForwardModelMetadata):
             schema: ParameterInputSchema | LayerInputSchema
-            if isinstance(m.input, core.LayerInputSchema):
-                schema = LayerInputSchema(m.input.elements, m.input.preprocessing)
+            if isinstance(m.input_preparation, core.LayerInputSchema):
+                schema = LayerInputSchema(m.input_preparation.elements)
             else:
-                schema = ParameterInputSchema(sample_from_core(m.input.reference_sample),
-                    [ParameterSpec(p.name, p.target, p.unit) for p in m.input.parameters], m.input.preprocessing)
+                schema = ParameterInputSchema(sample_from_core(m.input_preparation.reference_sample),
+                    [ParameterSpec(p.name, p.target, p.unit) for p in m.input_preparation.parameters])
             directional: ForwardModelMetadata | InverseModelMetadata = ForwardModelMetadata(
-                setup_from_core(m.reference_setup), schema, m.output_spectra, m.postprocessing)
+                setup_from_core(m.reference_setup), schema, m.output_spectra,
+                m.input_transform, m.output_transform, m.output_preparation)
         else:
             directional = InverseModelMetadata(setup_from_core(m.reference_setup),
-                m.input_spectra, m.elements, m.layers, m.uncertainty,
-                m.input_preparation, m.preprocessing, m.postprocessing)
+                m.input_spectra, m.output_preparation, m.input_preparation,
+                m.input_transform, m.output_transform)
         return cls(directional, value.input_name, value.output_name, value.provenance)

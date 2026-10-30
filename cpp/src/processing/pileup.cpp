@@ -52,8 +52,8 @@ void apply_pileup(std::span<const double> input, std::span<double> output, doubl
     disjoint(input, output);
     const double total = std::accumulate(input.begin(), input.end(), 0.);
     const double u = tau * total / t;
-    if (!std::isfinite(total) || !std::isfinite(u) || u >= 1)
-        throw std::invalid_argument("pileup outside supported low-occupancy regime");
+    if (!std::isfinite(total) || !std::isfinite(u))
+        throw std::invalid_argument("pileup count rate overflow");
     const double a = tau / t * std::exp(-u);
     std::size_t n = 1;
     while (n < output.size())
@@ -93,8 +93,8 @@ void remove_pileup(std::span<const double> input, std::span<double> output, doub
             hi = mid;
     }
     const double total = (lo + hi) / 2, u = tau * total / t;
-    if (!std::isfinite(u) || u >= 1)
-        throw std::invalid_argument("pileup inverse outside low-occupancy regime");
+    if (!std::isfinite(u))
+        throw std::invalid_argument("pileup inverse count rate overflow");
     const double a = tau / t * std::exp(-u), b = 1 - 2 * a * total;
     double x0 = input[0] * t / l;
     output[0] = a == 0 ? x0 : 2 * x0 / (b + std::sqrt(b * b + 4 * a * x0));

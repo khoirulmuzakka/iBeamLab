@@ -3,6 +3,7 @@
 #include <ibeamlab/core/parameter.h>
 #include <ibeamlab/simulation/simulator.h>
 #include <memory>
+#include <map>
 namespace ibeamlab::datasets {
 using Parameter = core::ParameterSpec;
 /** @brief Dataset reference, ordered physical parameter columns and outcome counters.
@@ -62,6 +63,11 @@ class IBEAMLAB_API Reader {
     bool next(Record &output);
     /** @brief Reset the cursor so the next read returns the first stored record. */
     void rewind();
+    /** @brief Maximum successful spectrum length per label across all records.
+     * Uses an independent cursor and reuses record buffers; this cursor is unchanged.
+     * Loads at most one shard at a time. No spectrum arrays escape the scan.
+     */
+    std::map<std::string, std::size_t> maximum_spectrum_lengths() const;
 
   private:
     struct Impl;

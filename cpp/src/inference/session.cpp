@@ -102,7 +102,8 @@ void Session::run(std::span<const float> input, std::span<float> output, std::si
         static_cast<std::int64_t>(s.layer_input ? layers : s.in), static_cast<std::int64_t>(s.in)};
     std::array<std::int64_t, 2> out_shape{static_cast<std::int64_t>(batch), static_cast<std::int64_t>(s.out)};
     // Tensor wrappers borrow caller memory. Retain their OrtValue handles while
-    // addresses and shapes stay valid; no wrapper construction on a warm call.
+    // addresses and shapes stay valid. Changing batch size recreates only the
+    // wrappers; backing vectors retain capacity when populations shrink.
     if (s.input_pointer != input.data() || s.input_batch != batch || s.input_layers != layers) {
         s.input_tensor = Ort::Value::CreateTensor<float>(s.memory, const_cast<float *>(input.data()),
             input.size(), in_shape.data(), s.layer_input ? 3 : 2);

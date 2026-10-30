@@ -1,4 +1,5 @@
 #include "io.h"
+#include <algorithm>
 #include <ibeamlab/datasets/dataset.h>
 #include <unordered_set>
 namespace ibeamlab::datasets {
@@ -182,6 +183,19 @@ Reader::Reader(const std::filesystem::path &path) : impl_(std::make_unique<Impl>
 }
 Reader::~Reader() = default;
 const Metadata &Reader::metadata() const { return impl_->metadata; }
+std::map<std::string, std::size_t> Reader::maximum_spectrum_lengths() const {
+    Reader cursor(impl_->path);
+    Record record;
+    std::map<std::string, std::size_t> lengths;
+    while (cursor.next(record)) {
+        if (record.result.failure) continue;
+        for (const auto &spectrum : record.result.spectra) {
+            auto &length = lengths[spectrum.measurement];
+            length = std::max(length, spectrum.counts.size());
+        }
+    }
+    return lengths;
+}
 void Reader::rewind() {
     auto &r = *impl_;
     r.index = r.remaining = 0;

@@ -201,6 +201,8 @@ PYBIND11_MODULE(_ibeamlab, m) {
         .def_property_readonly("metadata", &datasets::Reader::metadata,
                                py::return_value_policy::copy)
         .def("rewind", &datasets::Reader::rewind)
+        .def("maximum_spectrum_lengths", &datasets::Reader::maximum_spectrum_lengths,
+             py::call_guard<py::gil_scoped_release>())
         .def(
             "__iter__", [](datasets::Reader &r) -> datasets::Reader & { return r; },
             py::return_value_policy::reference_internal)
@@ -261,9 +263,13 @@ PYBIND11_MODULE(_ibeamlab, m) {
     py::enum_<model::Direction>(m, "Direction")
         .value("FORWARD", model::Direction::Forward)
         .value("INVERSE", model::Direction::Inverse);
+    py::enum_<model::SpectrumState>(m, "SpectrumState")
+        .value("BARE", model::SpectrumState::Bare).value("PILED_UP", model::SpectrumState::PiledUp);
     py::class_<model::SpectrumSpec>(m, "SpectrumSpec")
-        .def(py::init<std::string, std::size_t>()) FIELD(model::SpectrumSpec, measurement)
-            FIELD(model::SpectrumSpec, channels);
+        .def(py::init<std::string, std::size_t, model::SpectrumState, std::string>(),
+             py::arg("measurement"), py::arg("channels"), py::arg("state") = model::SpectrumState::Bare,
+             py::arg("unit") = "counts") FIELD(model::SpectrumSpec, measurement)
+            FIELD(model::SpectrumSpec, channels) FIELD(model::SpectrumSpec, state) FIELD(model::SpectrumSpec, unit);
     py::class_<model::SpectraSchema>(m, "SpectraSchema")
         .def(py::init<>())
         .def(py::init<std::vector<model::SpectrumSpec>>()) FIELD(model::SpectraSchema, spectra)
@@ -284,8 +290,18 @@ PYBIND11_MODULE(_ibeamlab, m) {
     py::class_<model::CustomTransform>(m, "CustomTransform")
         .def(py::init<>()) FIELD(model::CustomTransform, identifier)
             FIELD(model::CustomTransform, version) FIELD(model::CustomTransform, parameters);
-    py::class_<model::MultiplyCounts>(m, "MultiplyCounts")
-        .def(py::init<double>()) FIELD(model::MultiplyCounts, factor);
+    py::enum_<model::TransformDirection>(m, "TransformDirection")
+        .value("FORWARD", model::TransformDirection::Forward).value("INVERSE", model::TransformDirection::Inverse);
+    py::enum_<model::TransformLocation>(m, "TransformLocation")
+        .value("RUNTIME", model::TransformLocation::Runtime).value("GRAPH", model::TransformLocation::Graph);
+    py::class_<model::TransformPipeline>(m, "TransformPipeline")
+        .def(py::init<model::TensorPipeline, model::TransformDirection, model::TransformLocation>(),
+            py::arg("steps") = model::TensorPipeline{}, py::arg("direction") = model::TransformDirection::Forward,
+            py::arg("location") = model::TransformLocation::Runtime)
+        FIELD(model::TransformPipeline, steps) FIELD(model::TransformPipeline, direction) FIELD(model::TransformPipeline, location);
+    py::class_<model::SpectrumTransform>(m, "SpectrumTransform")
+        .def(py::init<std::string, model::TransformPipeline>())
+        FIELD(model::SpectrumTransform, measurement) FIELD(model::SpectrumTransform, transform);
     py::class_<model::ExposureScale>(m, "ExposureScale").def(py::init<>());
     py::class_<model::Rebin>(m, "Rebin")
         .def(py::init<std::size_t, bool>(), py::arg("channels") = 0,
@@ -307,27 +323,28 @@ PYBIND11_MODULE(_ibeamlab, m) {
     py::class_<model::SpectrumProcessing>(m, "SpectrumProcessing")
         .def(py::init<std::string, std::vector<model::SpectrumOperation>>())
             FIELD(model::SpectrumProcessing, measurement) FIELD(model::SpectrumProcessing, steps);
-    py::class_<model::ScaleEdp>(m, "ScaleEdp")
-        .def(py::init<double>()) FIELD(model::ScaleEdp, factor);
+    py::class_<model::EdpSchema>(m, "EdpSchema")
+        .def(py::init<std::vector<std::string>, std::size_t, bool, std::string>(),
+             py::arg("elements"), py::arg("layers"), py::arg("uncertainty") = false,
+             py::arg("unit") = "1e15 atoms/cm2")
+        FIELD(model::EdpSchema, elements) FIELD(model::EdpSchema, layers)
+        FIELD(model::EdpSchema, uncertainty) FIELD(model::EdpSchema, unit);
     py::class_<model::ParameterInputSchema>(m, "ParameterInputSchema")
         .def(py::init<>()) FIELD(model::ParameterInputSchema, reference_sample)
-            FIELD(model::ParameterInputSchema, parameters) FIELD(model::ParameterInputSchema, preprocessing);
+            FIELD(model::ParameterInputSchema, parameters);
     py::class_<model::LayerInputSchema>(m, "LayerInputSchema")
-        .def(py::init<>()) FIELD(model::LayerInputSchema, elements) FIELD(model::LayerInputSchema, preprocessing);
+        .def(py::init<>()) FIELD(model::LayerInputSchema, elements);
     py::class_<model::ForwardModelMetadata>(m, "ForwardModelMetadata")
         .def(py::init<>()) FIELD(model::ForwardModelMetadata, reference_setup)
-            FIELD(model::ForwardModelMetadata, input)
+            FIELD(model::ForwardModelMetadata, input_preparation)
                 FIELD(model::ForwardModelMetadata, output_spectra)
-                        FIELD(model::ForwardModelMetadata, postprocessing);
+                        FIELD(model::ForwardModelMetadata, input_transform)
+            FIELD(model::ForwardModelMetadata, output_transform) FIELD(model::ForwardModelMetadata, output_preparation);
     py::class_<model::InverseModelMetadata>(m, "InverseModelMetadata")
         .def(py::init<>()) FIELD(model::InverseModelMetadata, reference_setup)
-            FIELD(model::InverseModelMetadata, input_spectra)
-                FIELD(model::InverseModelMetadata, elements)
-                    FIELD(model::InverseModelMetadata, layers)
-                        FIELD(model::InverseModelMetadata, uncertainty)
-                            FIELD(model::InverseModelMetadata, input_preparation)
-                                FIELD(model::InverseModelMetadata, preprocessing)
-                                    FIELD(model::InverseModelMetadata, postprocessing);
+        FIELD(model::InverseModelMetadata, input_spectra) FIELD(model::InverseModelMetadata, input_preparation)
+        FIELD(model::InverseModelMetadata, input_transform) FIELD(model::InverseModelMetadata, output_transform)
+        FIELD(model::InverseModelMetadata, output_preparation);
     py::class_<model::ModelMetadata>(m, "ModelMetadata")
         .def(py::init<>())
         .def(py::init<model::ForwardModelMetadata>())
@@ -341,7 +358,7 @@ PYBIND11_MODULE(_ibeamlab, m) {
         .def("layer_input", &model::ModelMetadata::layer_input)
         .def("output_width", &model::ModelMetadata::output_width);
     py::class_<model::Package>(m, "Package")
-        .def_static("open", &model::Package::open)
+        .def_static("open", &model::Package::open, py::call_guard<py::gil_scoped_release>())
         .def_static("from_onnx", &model::Package::from_onnx)
         .def("write", &model::Package::write) FIELD(model::Package, metadata);
     py::enum_<inference::ExecutionProvider>(m, "ExecutionProvider")
@@ -351,29 +368,81 @@ PYBIND11_MODULE(_ibeamlab, m) {
         .def(py::init<>()) FIELD(inference::InferenceOptions, execution_provider)
             FIELD(inference::InferenceOptions, device_id) FIELD(inference::InferenceOptions, intra_op_threads)
                 FIELD(inference::InferenceOptions, inter_op_threads) FIELD(inference::InferenceOptions, enable_graph_optimizations)
-                    FIELD(inference::InferenceOptions, allow_tf32)
+                    FIELD(inference::InferenceOptions, allow_tf32) FIELD(inference::InferenceOptions, apply_pileup)
         .def("validate", &inference::InferenceOptions::validate);
     m.def("available_execution_providers", &inference::available_execution_providers);
+    py::enum_<inference::PredictionDomain>(m, "PredictionDomain")
+        .value("MEASUREMENT", inference::PredictionDomain::Measurement)
+        .value("REFERENCE", inference::PredictionDomain::Reference);
     py::class_<inference::ForwardModel>(m, "ForwardModel")
         .def(py::init<model::Package, inference::InferenceOptions>(), py::arg("package"),
-             py::arg("options") = inference::InferenceOptions{})
+             py::arg("options") = inference::InferenceOptions{}, py::call_guard<py::gil_scoped_release>())
         .def_property_readonly("options", &inference::ForwardModel::options, py::return_value_policy::copy)
         .def("predict",
-             py::overload_cast<const core::Experiment &>(&inference::ForwardModel::predict),
+             py::overload_cast<const core::Experiment &, inference::PredictionDomain>(&inference::ForwardModel::predict),
+             py::arg("experiment"), py::arg("domain") = inference::PredictionDomain::Measurement,
+             py::call_guard<py::gil_scoped_release>())
+        .def("predict_reference", py::overload_cast<const core::Experiment &>(&inference::ForwardModel::predict_reference),
              py::call_guard<py::gil_scoped_release>())
         .def("predict_areal_density", [](inference::ForwardModel &model,
-             py::array_t<float, py::array::c_style> values, const core::ExperimentalSetup *setup) {
+             py::array_t<float, py::array::c_style> values, const core::ExperimentalSetup *setup, inference::PredictionDomain domain) {
             if (values.ndim() != 2 || static_cast<std::size_t>(values.shape(1)) != model.metadata().input_width())
                 throw std::invalid_argument("AD must have shape [layers,elements]");
             py::gil_scoped_release release;
             return model.predict_areal_density({values.data(), static_cast<std::size_t>(values.size())},
-                                               static_cast<std::size_t>(values.shape(0)), setup);
-        }, py::arg("densities").noconvert(), py::arg("setup") = nullptr)
+                                               static_cast<std::size_t>(values.shape(0)), setup, domain);
+        }, py::arg("densities").noconvert(), py::arg("setup") = nullptr,
+           py::arg("domain") = inference::PredictionDomain::Measurement)
+        .def("predict_areal_density_batch", [](inference::ForwardModel &model,
+             py::array_t<float, py::array::c_style> values, const core::ExperimentalSetup *setup,
+             py::object destination, inference::PredictionDomain domain) {
+            if (values.ndim() != 3 || static_cast<std::size_t>(values.shape(2)) != model.metadata().input_width())
+                throw std::invalid_argument("AD must have shape [batch,layers,elements]");
+            const auto channels = model.spectrum_channels(domain);
+            std::size_t width = 0;
+            for (auto count : channels) width += count;
+            py::array_t<double, py::array::c_style> output;
+            if (destination.is_none())
+                output = py::array_t<double>({values.shape(0), static_cast<py::ssize_t>(width)});
+            else {
+                if (!py::isinstance<py::array_t<double>>(destination))
+                    throw std::invalid_argument("out must be a writable contiguous float64 array");
+                auto array = destination.cast<py::array>();
+                if (!(array.flags() & py::array::c_style) || !array.writeable())
+                    throw std::invalid_argument("out must be a writable contiguous float64 array");
+                output = destination.cast<py::array_t<double, py::array::c_style>>();
+                if (output.ndim() != 2 || output.shape(0) != values.shape(0) ||
+                    output.shape(1) != static_cast<py::ssize_t>(width))
+                    throw std::invalid_argument("out must have shape [batch,total_processed_channels]");
+            }
+            const auto input_begin = reinterpret_cast<std::uintptr_t>(values.data());
+            const auto output_begin = reinterpret_cast<std::uintptr_t>(output.data());
+            if (values.nbytes() && output.nbytes() && input_begin < output_begin + output.nbytes() &&
+                output_begin < input_begin + values.nbytes())
+                throw std::invalid_argument("AD input and out must not overlap");
+            {
+                py::gil_scoped_release release;
+                model.predict_areal_density_batch({values.data(), static_cast<std::size_t>(values.size())},
+                    static_cast<std::size_t>(values.shape(0)), static_cast<std::size_t>(values.shape(1)),
+                    {output.mutable_data(), static_cast<std::size_t>(output.size())}, setup, domain);
+            }
+            py::dict result;
+            const auto &f = std::get<model::ForwardModelMetadata>(model.metadata().model);
+            std::size_t offset = 0;
+            for (std::size_t i = 0; i < channels.size(); ++i) {
+                result[py::str(f.output_spectra.spectra[i].measurement)] = py::array_t<double>(
+                    {values.shape(0), static_cast<py::ssize_t>(channels[i])},
+                    {static_cast<py::ssize_t>(width * sizeof(double)), static_cast<py::ssize_t>(sizeof(double))},
+                    output.data() + offset, output);
+                offset += channels[i];
+            }
+            return result;
+        }, py::arg("densities").noconvert(), py::arg("setup") = nullptr, py::arg("out") = py::none(), py::arg("domain") = inference::PredictionDomain::Measurement)
         .def("predict_batch",
-             [](inference::ForwardModel &model, const std::vector<core::Experiment> &inputs) {
+             [](inference::ForwardModel &model, const std::vector<core::Experiment> &inputs, inference::PredictionDomain domain) {
                  py::gil_scoped_release release;
-                 return model.predict_batch(inputs);
-             });
+                 return model.predict_batch(inputs, domain);
+             }, py::arg("inputs"), py::arg("domain") = inference::PredictionDomain::Measurement);
     py::class_<inference::InverseInput>(m, "InverseInput")
         .def(py::init<>()) FIELD(inference::InverseInput, setup)
             FIELD(inference::InverseInput, spectra)
@@ -410,23 +479,23 @@ PYBIND11_MODULE(_ibeamlab, m) {
         });
     py::class_<inference::InverseModel>(m, "InverseModel")
         .def(py::init<model::Package, inference::InferenceOptions>(), py::arg("package"),
-             py::arg("options") = inference::InferenceOptions{})
+             py::arg("options") = inference::InferenceOptions{}, py::call_guard<py::gil_scoped_release>())
         .def_property_readonly("options", &inference::InverseModel::options, py::return_value_policy::copy)
         .def("predict",
              py::overload_cast<const inference::InverseInput &>(&inference::InverseModel::predict),
              py::call_guard<py::gil_scoped_release>())
         .def(
             "predict_batch",
-            [](inference::InverseModel &model, const std::vector<inference::InverseInput> &inputs) {
+            [](inference::InverseModel &model, const std::vector<inference::InverseInput> &inputs, inference::PredictionDomain domain) {
                 py::gil_scoped_release release;
-                return model.predict_batch(inputs);
-            })
-        .def("predict_prepared",
+                return model.predict_batch(inputs, domain);
+            }, py::arg("inputs"), py::arg("domain") = inference::PredictionDomain::Measurement)
+        .def("predict_reference",
              [](inference::InverseModel &model, const std::vector<core::Spectrum> &spectra) {
                  inference::Prediction out;
                  {
                      py::gil_scoped_release release;
-                     model.predict_prepared(spectra, out);
+                     model.predict_reference(spectra, out);
                  }
                  return out;
              });

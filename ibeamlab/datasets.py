@@ -58,6 +58,17 @@ class Dataset:
     def __len__(self):
         return self.metadata.accepted + self.metadata.failed
 
+    def maximum_spectrum_lengths(self):
+        """Scan successful records for each label's maximum stored spectrum length.
+
+        Uses native streaming and reusable record buffers, without materializing
+        Python spectra or dataset matrices. Existing iterators are unaffected.
+        """
+        try:
+            return dict(engine().DatasetReader(self.path).maximum_spectrum_lengths())
+        except (ValueError, RuntimeError) as error:
+            raise DatasetError(f"cannot scan {self.path}: {error}") from error
+
     def __iter__(self):
         try:
             reader = engine().DatasetReader(self.path)

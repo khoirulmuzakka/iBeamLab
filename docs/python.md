@@ -98,60 +98,125 @@ remain stable. CUDA transfers use ONNX Runtime's device arena and complete befor
 physical CPU postprocessing begins. `native.run_graph` also accepts native
 `InferenceOptions` as its third argument for raw batched graph execution.
 
-Metadata fields have concrete Python/native types and typed ordered pipelines:
-`TensorPipeline`, `SpectrumPipeline` and `EdpPipeline`. Native descriptor stubs
-ship with the package, while normal imports remain lazy. Wrapper conversion
-failures raise `ValidationError` with a field path such as
-`LayerInputSchema.preprocessing`; physical consistency checks stay in C++.
+Metadata separates physical measurement preparation from numerical training
+transforms. The four stages execute as input_preparation, input_transform,
+ONNX, output_transform, output_preparation. Forward input preparation packs
+physical sample parameters or elemental AD; inverse output preparation is an
+`EdpSchema` with ordered elements and a fixed maximum layer count.
 
 ```python
 schema = ibl.SpectraSchema([
-    ibl.SpectrumSpec("RBS", 5000), ibl.SpectrumSpec("NRA", 3000),
+    ibl.SpectrumSpec("RBS", 2998, state=ibl.SpectrumState.BARE),
+    ibl.SpectrumSpec("NRA", 3000, state=ibl.SpectrumState.BARE),
 ])
 forward = ibl.ForwardModelMetadata(
     reference_setup=experiment.setup,
-    input=ibl.ParameterInputSchema(
-        reference_sample=experiment.sample,
-        parameters=plan.parameters,
-        preprocessing=[ibl.StandardScale([0, 2000], [100, 100])],
-    ),
+    input_preparation=ibl.LayerInputSchema(["Si", "O"]),
     output_spectra=schema,
-    postprocessing=[
-        ibl.SpectrumProcessing("RBS", [ibl.ExposureScale(), ibl.Rebin()]),
-        ibl.SpectrumProcessing("NRA", [ibl.MultiplyCounts(100), ibl.Rebin()]),
+    input_transform=ibl.TransformPipeline([ibl.MultiplyScale([1e-4])]),
+    output_transform=[
+        ibl.SpectrumTransform("RBS", ibl.TransformPipeline(
+            [ibl.MultiplyScale([.01])], direction=ibl.TransformDirection.INVERSE)),
+        ibl.SpectrumTransform("NRA", ibl.TransformPipeline(
+            [ibl.StandardScale([0], [25])], direction=ibl.TransformDirection.INVERSE)),
+    ],
+    output_preparation=[
+        ibl.SpectrumProcessing("RBS", [ibl.Rebin(), ibl.ExposureScale(), ibl.Pileup(4e-7)]),
+        ibl.SpectrumProcessing("NRA", [ibl.Rebin(), ibl.ExposureScale()]),
     ],
 )
 metadata = ibl.ModelMetadata(forward, provenance="training-run-42")
 metadata.validate()
 # package = ibl.Package.from_onnx("model.onnx", metadata)
 # package.write("forward.ibm")
-# model = ibl.load_model("forward.ibm")
-# predicted = model.predict(experiment)
 ```
 
-Graph outputs concatenate spectra in schema order; lengths may differ.
-For a variable-layer forward model, replace the input with
-`ibl.LayerInputSchema(["Si", "O"], preprocessing=[ibl.MultiplyScale([1e-5])])`.
-Its graph accepts `[batch,layers,elements]`, and the package stores no layer count.
-`model.predict(experiment)` packs physical AD automatically;
-`model.predict_areal_density(ad)` accepts physical `[layers,elements]` arrays
-directly. Contiguous float32 inputs avoid a Python copy; an optional `setup=`
-selects requested acquisition/calibration settings. Raw `run_graph` bypasses
-physical preprocessing and expects graph-ready, already-scaled values.
-Layer export requires an architecture-specific `graph_exporter` callback to
-`export_package`; applications choose how to represent dynamic layer computation.
-A symbolic dimension alone does not make a traced Python loop dynamic. The
-framework does not select, construct or train a particular network architecture.
-Each forward output has its own labelled physical processing pipeline.
-Inverse metadata similarly defines `reference_setup`, `input_spectra`, elements
-and layers. Its `input_preparation` applies physical operations per measurement;
-its current `preprocessing` applies to the complete packed tensor. Independent
-per-spectrum tensor-transform sequences are not yet implemented in the core.
+Store the actual fitted training coefficients. `direction=INVERSE` undoes
+operations in reverse order; clipped scaling is not invertible. `location=GRAPH`
+declares a transform already embedded in ONNX; the default RUNTIME executes it
+outside ONNX. Exporters must declare the graph boundary accurately. A transform
+is never fitted or applied in both places by the runtime.
+
+Forward layer graphs accept `[batch,layers,elements]` and have no layer maximum.
+`predict(experiment)` packs physical AD; `predict_areal_density(ad)` accepts
+contiguous float32 `[layers,elements]`. Runtime transforms skip padding rows.
+Each output spectrum has its own numerical transform and physical corrections.
+
+Inverse models use per-detector `input_transform` pipelines after physical
+`input_preparation`. Their `output_transform` restores physical EDP units before
+`output_preparation=ibl.EdpSchema(elements, layers, uncertainty)` decodes arrays.
+With uncertainty, only affine numerical transforms are supported: std is scaled
+by absolute scale and probabilities are unchanged.
+
+Reference-condition inference keeps numerical transforms while bypassing physical
+measurement corrections:
+
+```python
+reference_spectra = forward_model.predict_reference(experiment)
+reference_population = forward_model.predict_reference_areal_density_batch(ad_population)
+edp = inverse_model.predict_reference({"RBS": reference_counts})
+edps = inverse_model.predict_reference_batch(reference_measurements)
+```
+
+Use `predict` for measured/requested conditions, and `predict_reference` for
+physical inputs/outputs at the packaged reference response. All batch variants
+execute one ONNX call. Raw `native.run_graph` expects graph-boundary values and
+skips all runtime stages. Layer export still requires an architecture-specific
+dynamic `graph_exporter` callback; symbolic axis names do not make a traced loop
+dynamic. Model architectures remain application/example code.
+
+The surrogate notebook exposes training scalers separately from export-time
+pileup controls. Its output preparation uses rebinning, exposure scaling and
+optional requested-time pileup. The full result may have `2*N-1` channels.
+`InferenceOptions(apply_pileup=False)` remains a selective override of declared
+forward pileup steps; prefer reference prediction when all physical corrections
+must be bypassed together.
+
+For differential evolution, evaluate the entire candidate population in one
+ONNX call, without constructing sample objects:
+
+```python
+# Physical AD, not pre-scaled: [population,layers,elements], metadata element order.
+ad = np.ascontiguousarray(candidate_areal_densities, dtype=np.float32)
+# Sum of processed detector widths; 2998 is an example for one RBS detector.
+out = np.empty((len(ad), 2998), dtype=np.float64)
+spectra = model.predict_areal_density_batch(ad, setup=requested_setup, out=out)
+rbs = spectra["RBS"]  # [population,processed_channels], a view into out.
+```
+
+For population reduction, allocate input/output arrays for the maximum population
+and pass contiguous active slices such as `ad[:n]` and `out[:n]`. Native buffers
+retain their capacity when the population shrinks. ONNX tensor wrappers are
+recreated when shapes change; this does not copy their backing arrays and does
+not guarantee allocation-free execution inside ONNX Runtime.
+
+Reuse `out` for subsequent iterations. Returned
+arrays change when that storage is overwritten; omit `out` for independently
+owned results. An empty preprocessing pipeline borrows compatible float32 AD;
+otherwise the model retains its preprocessing scratch. The graph output and
+detector-processing workspaces are also retained. Python dictionary/view objects
+are still created per call; ONNX Runtime manages its own internal allocations.
+`setup` applies to every candidate in this population. Different fitting workers
+can each own their own model with CPU or CUDA options and run concurrently.
+
+`ForwardModel.predict_batch(experiments)` also executes one graph call, padding
+layer inputs to the batch's maximum layer count and applying each experiment's
+requested detector processing afterward. `InverseModel.predict_batch(inputs)`
+prepares inputs independently, then executes one graph call. Empty batches return
+empty results without running ONNX. A graph with a fixed batch axis must receive
+that exact batch size; unsupported sizes raise an error rather than running a
+hidden loop over individual predictions. Model loading releases the Python GIL,
+as do graph execution and native population processing.
+
+Inverse metadata defines `reference_setup`, `input_spectra` and a fixed-layer
+`EdpSchema` in `output_preparation`. Physical `input_preparation` and numerical
+`input_transform` are independently configured per detector. `output_transform`
+restores physical elemental areal densities after the graph.
 
 Inverse input uses `InverseInput(setup, {"RBS": counts, "NRA": other_counts})`.
 Spectra are matched by label independently of caller order. Predictions expose
 `values`, `presence_probability` and `posterior_std` as `[layer, element]` arrays.
-`predict_prepared` skips physical preparation while retaining tensor and EDP
+`predict_reference` skips physical preparation while retaining tensor and EDP
 processing. Model instances must not be called concurrently; use one per worker.
 `Package.metadata` is a snapshot; assign an edited snapshot back to update it.
 

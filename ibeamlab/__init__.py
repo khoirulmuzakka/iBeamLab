@@ -15,7 +15,7 @@ from .parameters import ParameterSpec, Parameter, ParameterTarget, vary
 from .generation import FailurePolicy, GenerationPlan, GenerationSummary, generate
 from .datasets import Dataset, DatasetMetadata, DatasetRecord, open_dataset
 from .metadata import ForwardModelMetadata, InverseModelMetadata, ModelMetadata, ParameterInputSchema, LayerInputSchema
-from .metadata import TensorTransform, TensorPipeline, SpectrumOperation, SpectrumPipeline, EdpPipeline
+from .metadata import TensorTransform, TensorPipeline, SpectrumOperation, SpectrumPipeline, SpectrumTransforms
 from .package import Package
 from .models import Model, ForwardModel, InverseInput, InverseModel, InversePrediction, load_model
 from .inference import InferenceOptions, available_execution_providers
@@ -30,10 +30,12 @@ if TYPE_CHECKING:
         DetectorResolution as DetectorResolution, ParticlesSr as ParticlesSr,
         SpectrumSpec as SpectrumSpec, SpectraSchema as SpectraSchema, Log1p as Log1p,
         MinMaxScale as MinMaxScale, StandardScale as StandardScale, MultiplyScale as MultiplyScale,
-        CustomTransform as CustomTransform, MultiplyCounts as MultiplyCounts, ExposureScale as ExposureScale,
+        CustomTransform as CustomTransform, ExposureScale as ExposureScale,
         Rebin as Rebin, Pileup as Pileup, RemovePileup as RemovePileup,
         AcquisitionSource as AcquisitionSource, SpectrumProcessing as SpectrumProcessing,
-        ScaleEdp as ScaleEdp, Direction as Direction,
+        Direction as Direction, TransformPipeline as TransformPipeline, SpectrumTransform as SpectrumTransform,
+        TransformDirection as TransformDirection, TransformLocation as TransformLocation,
+        SpectrumState as SpectrumState, EdpSchema as EdpSchema, PredictionDomain as PredictionDomain,
     )
 
 try:
@@ -45,8 +47,9 @@ _DESCRIPTORS = {
     "LayerThickness", "SpeciesConcentration", "BeamEnergy", "BeamSpread", "CalibrationLinear",
     "CalibrationOffset", "CalibrationQuadratic", "DetectorResolution", "ParticlesSr",
     "ParameterBounds", "SpectrumSpec", "SpectraSchema", "Log1p", "MinMaxScale", "StandardScale",
-    "MultiplyScale", "CustomTransform", "MultiplyCounts", "ExposureScale", "Rebin", "Pileup",
-    "RemovePileup", "AcquisitionSource", "SpectrumProcessing", "ScaleEdp", "Direction", "PileupWorkspace",
+    "MultiplyScale", "CustomTransform", "ExposureScale", "Rebin", "Pileup",
+    "RemovePileup", "AcquisitionSource", "SpectrumProcessing", "TransformPipeline", "SpectrumTransform", "TransformDirection",
+    "TransformLocation", "SpectrumState", "EdpSchema", "PredictionDomain", "Direction", "PileupWorkspace",
 }
 
 
@@ -69,7 +72,7 @@ __all__ = [
     "FailurePolicy", "GenerationPlan", "GenerationSummary", "generate", "Dataset", "DatasetMetadata",
     "DatasetRecord", "open_dataset", "ForwardModelMetadata", "InverseModelMetadata", "ModelMetadata",
     "ParameterInputSchema", "LayerInputSchema",
-    "ParameterTarget", "TensorTransform", "TensorPipeline", "SpectrumOperation", "SpectrumPipeline", "EdpPipeline",
+    "ParameterTarget", "TensorTransform", "TensorPipeline", "SpectrumOperation", "SpectrumPipeline", "SpectrumTransforms",
     "Package", "Model", "ForwardModel", "InverseInput", "InverseModel", "InversePrediction", "load_model",
     "InferenceOptions", "available_execution_providers",
     "export_package", "rebin", "apply_pileup", "remove_pileup", "fit", "TrainingHistory",

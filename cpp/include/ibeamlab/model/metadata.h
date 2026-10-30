@@ -8,10 +8,17 @@
 namespace ibeamlab::model {
 /** @brief Mapping represented by the graph: parameters to spectra, or spectra to EDP. */
 enum class Direction { Forward, Inverse };
-/** @brief One labelled slice of a packed spectrum tensor, before spectrum processing. */
+/** @brief Physical pileup state of reference-condition spectra. */
+enum class SpectrumState { Bare, PiledUp };
+/** @brief Reference spectrum shape, physical units and pileup state.
+ * The matching reference measurement supplies the energy calibration, keV units,
+ * particlesSr and real/live times. Numerical transforms never change this shape.
+ */
 struct SpectrumSpec {
     std::string measurement;
     std::size_t channels = 0;
+    SpectrumState state = SpectrumState::Bare;
+    std::string unit = "counts";
 };
 /** @brief Ordered layout of spectra in one packed graph tensor.
  * Spectra occupy consecutive slices of potentially different lengths. Labels
@@ -56,14 +63,29 @@ struct CustomTransform {
     CustomParameters parameters;
 };
 // Scalar coefficients broadcast; otherwise one value per ordered tensor feature.
-// Operations run in place, in order, outside ONNX. Fitted values are never refit.
+// Logical training operations. TransformPipeline declares direction and execution location.
 using TensorTransform =
     std::variant<Log1p, MinMaxScale, StandardScale, MultiplyScale, CustomTransform>;
 using TensorPipeline = std::vector<TensorTransform>;
-/** @brief Multiply every channel of one spectrum by a nonnegative factor. */
-struct MultiplyCounts {
-    double factor = 1;
+/** @brief Apply stored training operations, or undo them in reverse order. */
+enum class TransformDirection { Forward, Inverse };
+/** @brief Runtime operations execute outside ONNX; Graph operations are already embedded. */
+enum class TransformLocation { Runtime, Graph };
+/** @brief Fitted numerical training transforms and their explicit execution boundary.
+ * Inverse reverses step order and inverts each operation. Coefficients are never
+ * refitted. Graph placement is a declaration by the exporter; runtime skips it.
+ */
+struct TransformPipeline {
+    TensorPipeline steps;
+    TransformDirection direction = TransformDirection::Forward;
+    TransformLocation location = TransformLocation::Runtime;
 };
+/** @brief Independent numerical transforms for one labelled spectrum. */
+struct SpectrumTransform {
+    std::string measurement;
+    TransformPipeline transform;
+};
+using SpectrumTransforms = std::vector<SpectrumTransform>;
 /** @brief Scale by the ratio of particlesSr exposures, both of which must be positive.
  * Forward maps reference to requested exposure; inverse maps measured to reference.
  */
@@ -95,66 +117,70 @@ struct RemovePileup {
     double relative_tolerance = 1e-7;
     AcquisitionSource acquisition = AcquisitionSource::Requested;
 };
-using SpectrumOperation = std::variant<MultiplyCounts, ExposureScale, Rebin, Pileup, RemovePileup>;
+using SpectrumOperation = std::variant<ExposureScale, Rebin, Pileup, RemovePileup>;
 /** @brief Ordered operations for one measurement label; omitted labels are unchanged. */
 struct SpectrumProcessing {
     std::string measurement;
     std::vector<SpectrumOperation> steps;
 };
 using SpectrumPipeline = std::vector<SpectrumProcessing>;
-/** @brief Multiply EDP means and standard deviations by a positive factor.
- * Presence probabilities remain dimensionless and unchanged.
+/** @brief Decode physical EDP outputs with a fixed maximum number of layers.
+ * Graph uncertainty packs means, presence probabilities and posterior standard
+ * deviations. Numerical output transforms affect means/std, never probabilities.
  */
-struct ScaleEdp {
-    double factor = 1;
+struct EdpSchema {
+    std::vector<std::string> elements;
+    std::size_t layers = 0;
+    bool uncertainty = false;
+    std::string unit = "1e15 atoms/cm2";
 };
-using EdpPipeline = std::vector<ScaleEdp>;
 /** @brief Fixed-width physical parameters for architectures that require a fixed sample.
  * Columns follow parameters. Unvaried sample properties come from reference_sample.
  */
 struct ParameterInputSchema {
     core::Sample reference_sample;
     std::vector<core::ParameterSpec> parameters;
-    TensorPipeline preprocessing;
 };
 /** @brief Variable-length surface-to-depth sequence of elemental areal densities.
  * Graph inputs are float32 [batch,layers,elements]. Physical densities use
  * 1e15 atoms/cm2, with exactly one feature per ordered element and no thickness
  * column. No layer count is stored. Missing supported elements are zero; unknown
  * elements and explicit isotopes/roughness/porosity are unsupported.
- * Preprocessing runs independently per nonempty layer; zero padding stays zero.
+ * input_transform runs independently per nonempty layer; zero padding stays zero.
  * Coefficients broadcast from one value or have one value per element.
  */
 struct LayerInputSchema {
     std::vector<std::string> elements;
-    TensorPipeline preprocessing;
 };
 using ForwardInputSchema = std::variant<ParameterInputSchema, LayerInputSchema>;
 /** @brief Architecture-independent forward input contract and labelled spectra.
  * reference_setup defines fixed experimental conditions, independent of sample
- * layer count. The input variant defines graph rank and physical packing.
+ * layer count. input_preparation defines graph rank and physical packing;
+ * input_transform and output_transform describe fitted training operations.
+ * output_preparation contains only measurement corrections, in execution order.
  */
 struct IBEAMLAB_API ForwardModelMetadata {
     core::ExperimentalSetup reference_setup;
-    ForwardInputSchema input;
+    ForwardInputSchema input_preparation;
     SpectraSchema output_spectra;
-    SpectrumPipeline postprocessing;
+    TransformPipeline input_transform;
+    SpectrumTransforms output_transform;
+    SpectrumPipeline output_preparation;
 };
 /** @brief Contract for a multi-spectrum-to-elemental-depth-profile model.
  * input_preparation maps measured spectra to the reference setup, followed by
- * schema packing and tensor preprocessing. Graph outputs are flat [layer,element]
+ * schema packing and per-detector input_transform. Graph outputs are flat [layer,element]
  * means, followed by probabilities and standard deviations when uncertainty is
- * enabled. postprocessing converts density outputs to physical areal densities.
+ * enabled. output_transform restores physical densities; output_preparation
+ * decodes their layout/units. Nonlinear uncertainty transforms are unsupported.
  */
 struct IBEAMLAB_API InverseModelMetadata {
     core::ExperimentalSetup reference_setup;
     SpectraSchema input_spectra;
-    std::vector<std::string> elements;
-    std::size_t layers = 0;
-    bool uncertainty = false;
     SpectrumPipeline input_preparation;
-    TensorPipeline preprocessing;
-    EdpPipeline postprocessing;
+    SpectrumTransforms input_transform;
+    TransformPipeline output_transform;
+    EdpSchema output_preparation;
 };
 /** @brief Direction-specific scientific contract and shared graph tensor names.
  * Direction is derived from the active variant. validate() checks physical
@@ -170,14 +196,13 @@ struct IBEAMLAB_API ModelMetadata {
     Direction direction() const noexcept;
     const core::ExperimentalSetup &reference_setup() const;
     const std::vector<SpectrumSpec> &spectra() const;
-    const TensorPipeline &preprocessing() const;
     /** @brief Last-axis feature count: parameters, elements or packed spectrum channels. */
     std::size_t input_width() const;
     /** @brief True for a variable-length [batch,layers,elements] forward graph. */
     bool layer_input() const noexcept;
     /** @brief Graph input rank, 3 for layer sequences and 2 otherwise. */
     std::size_t input_rank() const noexcept { return layer_input() ? 3 : 2; }
-    /** @brief Feature count of one graph output row, before postprocessing. */
+    /** @brief Feature count of one graph output row, before output transforms and preparation. */
     std::size_t output_width() const;
     void validate() const;
 };

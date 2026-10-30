@@ -24,14 +24,14 @@ class ParameterPlan {
 
   public:
     ParameterPlan(const model::ForwardModelMetadata &metadata)
-        : reference_{std::get<model::ParameterInputSchema>(metadata.input).reference_sample,
+        : reference_{std::get<model::ParameterInputSchema>(metadata.input_preparation).reference_sample,
                      metadata.reference_setup} {
         const auto &reference = reference_;
         actual_.resize(reference.setup.measurements.size());
         for (std::size_t i = 0; i < actual_.size(); ++i)
             actual_[i] = &reference.setup.measurements[i];
         std::vector<std::string> keys;
-        for (const auto &parameter : std::get<model::ParameterInputSchema>(metadata.input).parameters)
+        for (const auto &parameter : std::get<model::ParameterInputSchema>(metadata.input_preparation).parameters)
             keys.push_back(core::parameter_key(parameter.target));
         auto add = [&](auto read, double minimum, double maximum,
                        std::optional<core::ParameterTarget> target = {}, bool variable = false) {
@@ -65,7 +65,7 @@ class ParameterPlan {
         for (std::size_t i = 0; i < actual_.size(); ++i) {
             const auto &label = reference.setup.measurements[i].label;
             bool rebin = false, exposure = false, times = false;
-            for (const auto &pipeline : metadata.postprocessing)
+            for (const auto &pipeline : metadata.output_preparation)
                 if (pipeline.measurement == label)
                     for (const auto &step : pipeline.steps) {
                         rebin |= std::holds_alternative<model::Rebin>(step);
@@ -173,12 +173,12 @@ class LayerPlan {
 
   public:
     explicit LayerPlan(const model::ForwardModelMetadata &metadata) : metadata_(metadata) {
-        const auto &schema = std::get<model::LayerInputSchema>(metadata.input);
+        const auto &schema = std::get<model::LayerInputSchema>(metadata.input_preparation);
         seen_.resize(schema.elements.size());
         for (std::size_t i = 0; i < schema.elements.size(); ++i) columns_.emplace(schema.elements[i], i);
         measurements_.resize(metadata.reference_setup.measurements.size());
         for (std::size_t i = 0; i < measurements_.size(); ++i)
-            for (const auto &pipeline : metadata.postprocessing)
+            for (const auto &pipeline : metadata.output_preparation)
                 if (pipeline.measurement == metadata.reference_setup.measurements[i].label)
                     for (const auto &step : pipeline.steps) {
                         measurements_[i].rebin |= std::holds_alternative<model::Rebin>(step);

@@ -60,10 +60,10 @@ for epoch in range(200):
 model.load_state_dict(best_state)
 torch.save({'model_state_dict':best_state,'input_scale':scale,'seed':42},args.output/'checkpoint.pt')
 forward=ibl.ForwardModelMetadata();forward.reference_setup=x.setup
-schema=ibl.ParameterInputSchema();schema.reference_sample=x.sample;schema.parameters=plan.parameters;forward.input=schema
+schema=ibl.ParameterInputSchema();schema.reference_sample=x.sample;schema.parameters=plan.parameters;forward.input_preparation=schema
 forward.output_spectra=ibl.SpectraSchema([ibl.SpectrumSpec('RBS',16)])
-schema.preprocessing=[ibl.StandardScale([0.],[scale])];forward.input=schema
-forward.postprocessing=[ibl.SpectrumProcessing('RBS',[ibl.MultiplyCounts(1000.)])]
+forward.input_transform=ibl.TransformPipeline([ibl.StandardScale([0.],[scale])])
+forward.output_transform=[ibl.SpectrumTransform('RBS',ibl.TransformPipeline([ibl.MultiplyScale([1000.])]))]
 metadata=ibl.ModelMetadata(forward)
 metadata.provenance='example-forward;seed=42;split_seed=123;best-validation-checkpoint'
 ibl.export_package(model,inputs[train[:2]],metadata,args.output/'forward.ibm')

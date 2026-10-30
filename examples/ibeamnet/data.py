@@ -8,7 +8,8 @@ import numpy as np
 from tqdm import tqdm
 import ibeamlab as ibl
 from ibeamlab._engine import engine
-from .validation import validate_config
+from .validation import validate_data_config
+from .splits import cap_split_indices
 
 
 def write_json(path, value):
@@ -80,11 +81,17 @@ def prepare(config):
     """Prepare one scaled elemental-AD row per record; detectors share a split.
 
     Cache arrays are float32 and disk-backed. Spectra are padded with zeros to
-    the configured grid. Nonzero tails are never silently cropped. Failed
+    each detector's maximum stored length unless channels is explicitly supplied.
+    Nonzero tails are never silently cropped. Failed
     records are skipped; incomplete layer systems are rejected before allocation.
     """
-    validate_config(config)
-    settings, spectra = config["data"], config["spectra"]
+    validate_data_config(config)
+    settings = config["data"]
+    spectra = [dict(spec) for spec in config["spectra"]]
+    automatic = {spec["measurement"] for spec in spectra if "channels" not in spec}
+    for spec in spectra:
+        if spec["measurement"] in automatic:
+            spec["channels"] = 0
     cache = Path(settings["cache"])
     sources, datasets, elements, reference_setup = [], [], None, None
     offset = 0
@@ -119,6 +126,15 @@ def prepare(config):
             count = min(count, settings["max_records_per_source"])
         if count < 3:
             raise ValueError("each layer system needs at least three successful records for train/validation/test")
+        if automatic:
+            print(f"Scanning spectrum lengths: {path}", flush=True)
+            lengths = dataset.maximum_spectrum_lengths()
+            for spec in spectra:
+                if spec["measurement"] in automatic:
+                    length = lengths.get(spec["measurement"], 0)
+                    if length <= 0:
+                        raise ValueError(f"missing successful spectrum: {spec['measurement']} in {path}")
+                    spec["channels"] = max(spec["channels"], length)
         sources.append({"path": str(path.resolve()), "layer_count": layer_count,
             "start": offset, "records": count, "columns": columns.tolist(), "parameters": parameters,
             "reference": {"sample": asdict(metadata.reference.sample), "setup": asdict(metadata.reference.setup)},
@@ -126,6 +142,7 @@ def prepare(config):
             "manifest_sha256": digest(path / "manifest.ibd")})
         datasets.append(dataset)
         offset += count
+    print("Spectrum widths: " + ", ".join(f"{s['measurement']}={s['channels']}" for s in spectra), flush=True)
     cache.parent.mkdir(parents=True, exist_ok=True)
     maximum = max(settings["layer_counts"])
     required = offset * (4 * (maximum * len(elements) + sum(s["channels"] for s in spectra)) + 24)
@@ -188,14 +205,16 @@ def prepare(config):
             splits["test"].append(source["start"] + order[validation:validation + test])
             splits["train"].append(source["start"] + order[validation + test:])
     features.flush(); targets.flush(); original_indices.flush()
-    for name, parts in splits.items():
-        np.save(cache / f"{name}_indices.npy", np.concatenate(parts))
+    split_indices = cap_split_indices({name: np.concatenate(parts) for name, parts in splits.items()}, settings["seed"])
+    for name, indices in split_indices.items():
+        np.save(cache / f"{name}_indices.npy", indices)
     manifest = {"format": "ibeamlab.surrogate-cache", "format_version": 1, "complete": True,
         "records": offset, "maximum_layers": maximum, "elements": list(elements),
-        "spectra": spectra, "input_representation": "scaled_elemental_areal_density",
+        "spectra": spectra, "automatic_spectrum_lengths": sorted(automatic),
+        "input_representation": "scaled_elemental_areal_density",
         "ad_input_factor": config["preprocessing"]["ad_input_factor"],
         "sources": sources, "split_seed": settings["seed"],
-        "split_sizes": {name: sum(map(len, parts)) for name, parts in splits.items()}}
+        "split_sizes": {name: len(indices) for name, indices in split_indices.items()}}
     write_json(cache / "manifest.tmp", manifest)
     (cache / "manifest.tmp").rename(cache / "manifest.json")
     (cache / "incomplete").unlink()

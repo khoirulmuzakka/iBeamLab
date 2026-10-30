@@ -17,6 +17,7 @@ struct IBEAMLAB_API InferenceOptions {
     int inter_op_threads = 1;
     bool enable_graph_optimizations = true;
     bool allow_tf32 = false; ///< CUDA only: opt in to reduced-mantissa tensor-core arithmetic.
+    bool apply_pileup = true; ///< Forward only: apply declared Pileup steps; false skips them.
     /** @brief Reject unknown providers, negative devices and nonpositive thread counts. */
     void validate() const;
 };

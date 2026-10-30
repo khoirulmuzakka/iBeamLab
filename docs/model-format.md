@@ -32,26 +32,41 @@ explicitly. Readers hold one bounded shard and reuse a caller's record buffers.
 
 ## Model packages
 
-A `.ibm` envelope uses magic `IBMODEL1`; only format 1 is supported. Its payload
-starts with direction (uint64: forward=0, inverse=1) followed by exactly one
-schema and its ordered pipelines:
+A `.ibm` envelope uses magic `IBMODEL1`; the scientific package format remains
+**1**. Its payload begins with the text `ibeamlab.model.stages` and uint64 `1`,
+then direction (forward=0, inverse=1). Previous development layouts are rejected;
+export existing weights again with the staged contract. Dataset encoding is unchanged.
 
-- Forward: reference measurement setup, input-schema tag and fields, spectra
-  schema, input preprocessing, per-spectrum postprocessing. Input tag 0 stores
-  a reference sample and ordered parameter targets/units; tag 1 stores ordered
-  element names only, with no sample or layer count.
-- Inverse: reference measurement setup, spectra schema, EDP element names/layers/
-  uncertainty, per-spectrum input preparation, tensor preprocessing, EDP scaling.
+The logical execution order is:
 
-The spectra schema is a count followed by label/channel-count pairs. Each graph
-spectrum occupies a contiguous slice in that declared order, irrespective of the
-caller's container order. Labels must be unique and resolve to reference
-measurements. Their channel counts may differ. The schema describes graph
-channels; physical postprocessing such as pileup may extend the returned spectrum.
+```text
+physical input -> input_preparation -> input_transform -> ONNX
+               -> output_transform -> output_preparation -> physical result
+```
 
-A tensor pipeline is an ordered list of tagged steps:
+Forward metadata encodes reference setup, input-preparation schema tag/fields,
+reference spectra, numerical input transform, per-detector numerical output
+transforms, and per-detector physical output preparation. Input tag 0 stores a
+reference sample and parameter targets/units; tag 1 stores ordered elements,
+without a sample or layer limit. Packing computes physical elemental AD from
+thickness/fractions; direct AD avoids sample construction.
 
-| Tag | Operation | Encoded parameters |
+Inverse metadata encodes reference setup, reference input spectra, EDP output
+schema, physical input preparation, per-detector numerical input transforms, and
+numerical output transform. The EDP schema contains ordered elements, fixed
+maximum layers, uncertainty flag and unit `1e15 atoms/cm2`.
+
+Each reference spectrum stores measurement label, channel count, pileup state
+(bare=0, piled-up=1) and unit `counts`. The matching reference measurement supplies
+calibration coefficients, beam conditions, particlesSr and real/live acquisition
+times. The channel count plus calibration defines its reference energy grid.
+
+### Numerical training transforms
+
+`TransformPipeline` stores direction (forward=0, inverse=1), execution location
+(runtime=0, graph=1), then an ordered list of numerical operations:
+
+| Tag | Operation | Stored coefficients |
 | --- | --- | --- |
 | 0 | Log1p | None |
 | 1 | MinMaxScale | minimum/maximum arrays, low/high range, clip flag |
@@ -59,44 +74,65 @@ A tensor pipeline is an ordered list of tagged steps:
 | 3 | MultiplyScale | factors array |
 | 4 | CustomTransform | identifier, implementation version, named numeric arrays |
 
-A spectrum pipeline contains labelled entries, each with an ordered list of:
+Inverse direction reverses operation order and applies each inverse. Scalars
+broadcast; arrays match feature width. Clipped min-max scaling and zero
+multipliers cannot be inverted. Fitted coefficients are never refitted at load
+or inference. A labelled `SpectrumTransform` associates a pipeline with one
+detector, allowing independent input/output scalers and execution locations.
+
+Runtime transforms execute outside ONNX; Graph transforms declare computation
+already embedded in the exported graph and are skipped by the runtime. Exporters
+must declare placement honestly: an opaque graph cannot prove that it contains
+a particular training scaler. Raw graph parity and full reference/physical parity
+are separate checks. The supplied example exports AD/count scaling at Runtime.
+
+Inverse uncertainty packs graph means, presence probabilities and posterior
+standard deviations. Affine output transforms shift/scale means and multiply
+standard deviations by absolute scale. Probabilities remain unchanged. Nonlinear,
+custom or clipped uncertainty transforms are rejected, rather than applying a
+nonlinear function to a standard deviation.
+
+### Physical measurement preparation
+
+Physical pipelines contain labelled entries with ordered operations:
 
 | Tag | Operation | Encoded parameters |
 | --- | --- | --- |
-| 0 | MultiplyCounts | factor |
-| 1 | ExposureScale | None; reference/requested ratio follows model direction |
-| 2 | Rebin | destination channel count, require-full-coverage flag |
-| 3 | Pileup | tau seconds, acquisition source |
-| 4 | RemovePileup | tau seconds, relative tolerance, acquisition source |
+| 0 | ExposureScale | Reference/requested ratio follows model direction |
+| 1 | Rebin | Destination channel count and coverage policy |
+| 2 | Pileup | Resolving time in seconds and acquisition source |
+| 3 | RemovePileup | Resolving time, tolerance and acquisition source |
 
-Acquisition source is requested/measured=0 or reference=1. EDP postprocessing is
-an ordered list of positive scaling factors applied to means and std only.
-Unknown operation tags are rejected. Unavailable custom implementations fail at
-inference model construction; package inspection does not require the plugin.
-All pipeline/list lengths and array sizes are bounded before decoding allocations.
+Acquisition source is requested/measured=0 or reference=1. Constant count scaling
+belongs to numerical output transforms, not physical preparation. Operation order
+is explicit; pileup and exposure scaling generally cannot be rearranged. Reference
+pileup states are validated to reject repeated pileup or inconsistent preparation.
+Pileup expands N channels to full `2*N-1` support; removal needs that full support.
 
-Input tensor name, output tensor name and provenance follow the active schema
-and pipelines. Finally the payload contains graph byte length and embedded ONNX
-bytes. Shared/direction-specific metadata is declared in [model/metadata.h](../cpp/include/ibeamlab/model/metadata.h);
-[model/package.h](../cpp/include/ibeamlab/model/package.h) contains the package I/O interface.
+`predict` executes all applicable stages. `predict_reference` bypasses physical
+measurement preparation while retaining numerical transforms and physical output
+decoding. Both have batch paths; direct AD population APIs support caller-owned
+packed float64 outputs. `native.run_graph` bypasses every runtime stage.
 
-Graph loading verifies one float32 input/output, names and feature widths.
-Parameter forward models and inverse models use rank-2 `[batch,width]` inputs.
-Layer forward models use `[batch,layers,elements]`, with dynamic batch and layer
-axes and a fixed ordered element width. Outputs use rank-2 `[batch,width]`.
-Layer models consume physical elemental AD in 1e15 atoms/cm2; packing an
-Experiment computes thickness times fraction into retained float32 storage.
-Direct AD inference avoids sample construction; contiguous float32 input can be
-borrowed when preprocessing is empty. Unknown elements, explicit isotopes and
-roughness/porosity are rejected. Missing supported elements become zero.
-Layer preprocessing applies per nonempty row; scalar/per-element coefficients
-are independent of layer count and empty padding stays zero. The graph consumes
-the preprocessed tensor, so metadata scaling is applied exactly once. Model
-architectures and their exporters live in applications or examples; the
-framework validates and executes their declared input/output contracts.
-Fitted transformations run outside ONNX in their recorded order and are never
-refit at inference. Physical outputs must be finite/nonnegative and probabilities
-must remain in [0,1]. Standard deviations use the same physical scale as means.
+### Loading and allocation
 
-Writes reject existing destinations. Callers exclusively own output paths;
-concurrent writers to the same destination are unsupported.
+Model loading validates shapes, units, labels, coefficient widths, directions,
+placement and supported operations, then resolves kernels and detector slices.
+Custom Runtime kernels must be registered in C++ before loading; inverse custom
+operations require an inverse kernel. Graph custom operations need no runtime
+transform registration. Pipelines are compiled once and fitted arrays stay owned
+by immutable model metadata. Workspaces and ONNX tensor handles are retained.
+
+Parameter forward and inverse graphs use rank-2 `[batch,width]` inputs; layer
+forward graphs use rank-3 `[batch,layers,elements]` with dynamic batch/layer axes.
+Outputs are packed rank-2 float32 tensors. Logical transforms preserve width.
+Layer Runtime transforms skip empty rows; a transform that turns a nonempty
+layer into the all-zero padding sentinel is rejected. Empty/Graph input stages
+borrow direct contiguous float32 AD without an input copy. Caller-owned results
+avoid additional spectrum storage allocations after warmup.
+
+Input/output tensor names, provenance and embedded standalone ONNX bytes follow
+the directional schema. External ONNX tensor files are unsupported. All counts
+and array sizes are bounded before decoding allocations. See
+[metadata.h](../cpp/include/ibeamlab/model/metadata.h) and
+[package.cpp](../cpp/src/model/package.cpp) for the exact field encoding.

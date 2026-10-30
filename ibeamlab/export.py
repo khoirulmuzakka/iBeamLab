@@ -48,9 +48,13 @@ def export_package(model, example, metadata, destination, *, opset=17, verify=Tr
                    graph_exporter=None):
     """Export one input tensor and a packed [batch,width] output; verify raw parity.
 
-    Metadata preprocessing runs outside the graph. `example` is therefore an
-    already-preprocessed float32 CPU tensor. Inverse uncertainty output packs
-    [mean cells, probabilities, posterior std cells] before EDP postprocessing.
+    `example` is a float32 CPU tensor at the declared ONNX input boundary.
+    Runtime input transforms have already been applied; Graph input transforms
+    remain embedded in the supplied model and must not be applied a second time.
+    Output transforms declare whether graph outputs are numerical or already
+    restored to physical reference units. Physical preparation is always runtime.
+    Inverse uncertainty packs [means, probabilities, posterior std]. Only affine
+    output transforms can propagate its standard deviations outside the graph.
     External-data graphs are deliberately rejected: packages embed one graph.
     Layer models require graph_exporter(model, example, path, options), an
     architecture-specific callback that writes an ONNX graph with a runtime loop

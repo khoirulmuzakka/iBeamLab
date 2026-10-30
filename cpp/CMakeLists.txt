@@ -165,6 +165,9 @@ if(IBEAMLAB_BUILD_PYTHON)
             "$<TARGET_FILE_DIR:_ibeamlab>")
         set_tests_properties(python-data-generation PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}" LABELS "integration;python")
         if(IBEAMLAB_ENABLE_ONNX)
+            add_test(NAME python-model-stages COMMAND "${Python_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tests/test_model_stages.py" "$<TARGET_FILE_DIR:_ibeamlab>")
+            set_tests_properties(python-model-stages PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}" LABELS "integration;python")
             add_test(NAME python-inference-providers COMMAND "${Python_EXECUTABLE}"
                 "${PROJECT_SOURCE_DIR}/tests/test_inference_providers.py" "$<TARGET_FILE_DIR:_ibeamlab>")
             set_tests_properties(python-inference-providers PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}" LABELS "integration;python")

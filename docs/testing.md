@@ -26,7 +26,7 @@ Ordinary hosted CI verifies CPU and unavailable-CUDA behavior without requiring 
 | `installed-consumer` | integration, deployment | Install the library, configure/build an independent C++ consumer with `find_package`, then run it |
 | `python-api` | integration, python | Python domain API, dummy simulation, caller-owned NumPy buffers, dtype rejection, generation callbacks, dataset reads; with ONNX: multi-measurement deployment and PyTorch export parity at two batch sizes |
 | `python-wrapper` | integration, python | Root Python package, independent measurement settings, cached experiment conversion, NumPy result lifetime/read-only views, buffer reuse, streaming datasets, failure/cancellation policies; with ONNX: multi-detector metadata/inference, optional training and export |
-| `python-surrogate` | integration, python (ONNX builds) | Recurrent surrogate training, staged rates, exact resume/partial-epoch replay, single-package variable layers, dynamic ONNX Loop at opsets 17/18, physical/direct AD parity, per-detector processing and shape validation |
+| `python-surrogate` | integration, python (ONNX builds) | Recurrent surrogate training, staged rates, exact in-epoch resume, safe forced-interrupt fallback, notebook controls without TOML, single-package variable layers, dynamic ONNX Loop at opsets 17/18, physical/direct AD parity, per-detector processing and shape validation |
 | `python-data-generation` | integration, python | Multilayer configuration validation without an extension, exact method budgets, compounds/shared 2–8 element sets/independent layerwise 1–13 element sets, reproducibility, pure samples, parameter columns, dummy generation and selected-element audit artifacts |
 | `allocation-benchmark` | performance | 100 rebin+pileup iterations at 5,000 channels; with ONNX, 100 single-detector predictions into reused output at 5,000 channels, checking no counted C++ allocations after warmup |
 | `simnra-reference` | integration, licensed, simnra | Five repository XNRA projects; independent fresh COM calculations, two workers, session reuse, forced append-before-delete rebuilds, a 10% layer-thickness change and pileup flags |
@@ -97,6 +97,24 @@ composition serialization sensitivity discussed in [SIMNRA notes](simnra.md).
 Run standalone SIMNRA diagnostics separately from the integration suite.
 
 ## Live generation throughput
+
+The inference provider suite checks population batching, reusable output arrays,
+mixed layer counts, independent detector processing, and concurrent loading of
+the same package into independent workers. A batch-dependent graph detects
+regressions to repeated single-sample execution. With `IBEAMLAB_TEST_CUDA=1`, the
+suite also runs mixed CPU/CUDA workers and compares physical population results.
+The allocation benchmark checks caller-owned population output and experiment
+batch results after warmup, in addition to the single-prediction paths.
+
+Benchmark a layer-input package with the public physical population API:
+
+```console
+python cpp/benchmarks/surrogate_inference.py forward.ibm --extension-dir build/local/Release/bin --provider cuda --population 128 --layers 8 --report build/population-throughput.json
+```
+
+Use `--provider cpu` for CPU. This compares one population call with repeated
+single predictions after warmup, includes host processing/transfers, checks
+relative L1 agreement, and reuses output storage. It does not time model loading.
 
 The manual benchmark exercises the actual sampled generation path, including
 dataset writing, with separate cold warmup and timed intervals:

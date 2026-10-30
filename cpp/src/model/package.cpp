@@ -24,6 +24,8 @@ void encode_spectra(detail::Encoder &e, const SpectraSchema &schema) {
     for (const auto &s : schema.spectra) {
         e.text(s.measurement);
         e.integer(s.channels);
+        e.integer(static_cast<std::uint64_t>(s.state));
+        e.text(s.unit);
     }
 }
 SpectraSchema decode_spectra(detail::Decoder &d) {
@@ -31,6 +33,8 @@ SpectraSchema decode_spectra(detail::Decoder &d) {
     for (auto &s : spectra) {
         s.measurement = d.text();
         s.channels = d.count(1000000);
+        s.state = static_cast<SpectrumState>(d.count(1));
+        s.unit = d.text();
     }
     return SpectraSchema{std::move(spectra)};
 }
@@ -40,19 +44,21 @@ bool boolean(detail::Decoder &d) {
         throw std::runtime_error("invalid boolean");
     return value != 0;
 }
-void encode_edp(detail::Encoder &e, const InverseModelMetadata &m) {
+void encode_edp(detail::Encoder &e, const EdpSchema &m) {
     e.integer(m.elements.size());
     for (const auto &element : m.elements)
         e.text(element);
     e.integer(m.layers);
     e.integer(m.uncertainty);
+    e.text(m.unit);
 }
-void decode_edp(detail::Decoder &d, InverseModelMetadata &m) {
+void decode_edp(detail::Decoder &d, EdpSchema &m) {
     m.elements.resize(d.count(256));
     for (auto &element : m.elements)
         element = d.text();
     m.layers = d.count(10000);
     m.uncertainty = boolean(d);
+    m.unit = d.text();
 }
 
 void encode_tensor(detail::Encoder &e, const TensorPipeline &pipeline) {
@@ -144,9 +150,7 @@ void encode_spectrum_pipeline(detail::Encoder &e, const SpectrumPipeline &pipeli
             std::visit(
                 [&](const auto &op) {
                     using T = std::decay_t<decltype(op)>;
-                    if constexpr (std::is_same_v<T, MultiplyCounts>)
-                        e.real(op.factor);
-                    else if constexpr (std::is_same_v<T, Rebin>) {
+                    if constexpr (std::is_same_v<T, Rebin>) {
                         e.integer(op.channels);
                         e.integer(op.require_full_coverage);
                     } else if constexpr (std::is_same_v<T, Pileup>) {
@@ -177,26 +181,23 @@ SpectrumPipeline decode_spectrum_pipeline(detail::Decoder &d) {
         for (std::size_t j = 0; j < n; ++j)
             switch (d.integer()) {
             case 0:
-                entry.steps.emplace_back(MultiplyCounts{d.real()});
-                break;
-            case 1:
                 entry.steps.emplace_back(ExposureScale{});
                 break;
-            case 2: {
+            case 1: {
                 Rebin op;
                 op.channels = d.count(1000000);
                 op.require_full_coverage = boolean(d);
                 entry.steps.emplace_back(op);
                 break;
             }
-            case 3: {
+            case 2: {
                 Pileup op;
                 op.tau_seconds = d.real();
                 op.acquisition = acquisition(d);
                 entry.steps.emplace_back(op);
                 break;
             }
-            case 4: {
+            case 3: {
                 RemovePileup op;
                 op.tau_seconds = d.real();
                 op.relative_tolerance = d.real();
@@ -210,32 +211,60 @@ SpectrumPipeline decode_spectrum_pipeline(detail::Decoder &d) {
     }
     return result;
 }
+void encode_stage(detail::Encoder &e, const TransformPipeline &pipeline) {
+    e.integer(static_cast<std::uint64_t>(pipeline.direction));
+    e.integer(static_cast<std::uint64_t>(pipeline.location));
+    encode_tensor(e, pipeline.steps);
+}
+TransformPipeline decode_stage(detail::Decoder &d) {
+    TransformPipeline pipeline;
+    pipeline.direction = static_cast<TransformDirection>(d.count(1));
+    pipeline.location = static_cast<TransformLocation>(d.count(1));
+    pipeline.steps = decode_tensor(d);
+    return pipeline;
+}
+void encode_transforms(detail::Encoder &e, const SpectrumTransforms &pipelines) {
+    e.integer(pipelines.size());
+    for (const auto &entry : pipelines) {
+        e.text(entry.measurement);
+        encode_stage(e, entry.transform);
+    }
+}
+SpectrumTransforms decode_transforms(detail::Decoder &d) {
+    SpectrumTransforms pipelines(d.count(1024));
+    for (auto &entry : pipelines) {
+        entry.measurement = d.text();
+        entry.transform = decode_stage(d);
+    }
+    return pipelines;
+}
 void encode(detail::Encoder &e, const ModelMetadata &m) {
+    e.text("ibeamlab.model.stages");
+    e.integer(1);
     e.integer(m.direction() == Direction::Forward ? 0 : 1);
     if (const auto *f = std::get_if<ForwardModelMetadata>(&m.model)) {
         detail::encode(e, f->reference_setup);
-        e.integer(f->input.index());
-        if (const auto *p = std::get_if<ParameterInputSchema>(&f->input)) {
+        e.integer(f->input_preparation.index());
+        if (const auto *p = std::get_if<ParameterInputSchema>(&f->input_preparation)) {
             detail::encode(e, p->reference_sample);
             encode_parameters(e, p->parameters);
         } else {
-            const auto &layers = std::get<LayerInputSchema>(f->input);
+            const auto &layers = std::get<LayerInputSchema>(f->input_preparation);
             e.integer(layers.elements.size());
             for (const auto &element : layers.elements) e.text(element);
         }
         encode_spectra(e, f->output_spectra);
-        encode_tensor(e, m.preprocessing());
-        encode_spectrum_pipeline(e, f->postprocessing);
+        encode_stage(e, f->input_transform);
+        encode_transforms(e, f->output_transform);
+        encode_spectrum_pipeline(e, f->output_preparation);
     } else {
         const auto &i = std::get<InverseModelMetadata>(m.model);
         detail::encode(e, i.reference_setup);
         encode_spectra(e, i.input_spectra);
-        encode_edp(e, i);
+        encode_edp(e, i.output_preparation);
         encode_spectrum_pipeline(e, i.input_preparation);
-        encode_tensor(e, i.preprocessing);
-        e.integer(i.postprocessing.size());
-        for (const auto &step : i.postprocessing)
-            e.real(step.factor);
+        encode_transforms(e, i.input_transform);
+        encode_stage(e, i.output_transform);
     }
     e.text(m.input_name);
     e.text(m.output_name);
@@ -243,6 +272,8 @@ void encode(detail::Encoder &e, const ModelMetadata &m) {
 }
 ModelMetadata decode(detail::Decoder &d) {
     ModelMetadata m;
+    if (d.text() != "ibeamlab.model.stages" || d.integer() != 1)
+        throw std::runtime_error("unsupported model contract; export a format-1 staged package");
     auto direction = d.integer();
     if (direction == 0) {
         ForwardModelMetadata f;
@@ -252,27 +283,26 @@ ModelMetadata decode(detail::Decoder &d) {
             ParameterInputSchema p;
             p.reference_sample = detail::sample(d);
             p.parameters = decode_parameters(d);
-            f.input = std::move(p);
+            f.input_preparation = std::move(p);
         } else if (kind == 1) {
             LayerInputSchema layers;
             layers.elements.resize(d.count(256));
             for (auto &element : layers.elements) element = d.text();
-            f.input = std::move(layers);
+            f.input_preparation = std::move(layers);
         } else throw std::runtime_error("unknown forward input schema");
         f.output_spectra = decode_spectra(d);
-        std::visit([&](auto &input) { input.preprocessing = decode_tensor(d); }, f.input);
-        f.postprocessing = decode_spectrum_pipeline(d);
+        f.input_transform = decode_stage(d);
+        f.output_transform = decode_transforms(d);
+        f.output_preparation = decode_spectrum_pipeline(d);
         m.model = std::move(f);
     } else if (direction == 1) {
         InverseModelMetadata i;
         i.reference_setup = detail::setup(d);
         i.input_spectra = decode_spectra(d);
-        decode_edp(d, i);
+        decode_edp(d, i.output_preparation);
         i.input_preparation = decode_spectrum_pipeline(d);
-        i.preprocessing = decode_tensor(d);
-        i.postprocessing.resize(d.count(1024));
-        for (auto &step : i.postprocessing)
-            step.factor = d.real();
+        i.input_transform = decode_transforms(d);
+        i.output_transform = decode_stage(d);
         m.model = std::move(i);
     } else
         throw std::runtime_error("unknown model direction");
