@@ -136,6 +136,10 @@ events.out.tfevents.*
 *~
 examples/datasets*
 /examples/DataGeneration/datasets/
+/examples/DataGeneration/test_generalization_layers/layers_*/
+/examples/DataGeneration/test_generalization_layers/generalization-summary.json
+/examples/DataGeneration/test_generalization_layers/verification.json
+/examples/DataGeneration/test_generalization_layers/comparisons/
 xnra/backup.xnra
 /autonra/
 /ibamlkit/

@@ -187,10 +187,12 @@ def export(config, checkpoint=None):
                 with torch.no_grad():
                     expected = network(torch.from_numpy(scaled)).numpy()
                 actual = session.run(None, {"inputs": scaled})[0]
-                np.testing.assert_allclose(actual, expected, rtol=1e-4, atol=1e-5)
+                # Match native reference parity tolerance: float32 recurrent
+                # accumulation differs slightly between PyTorch and ORT kernels.
+                np.testing.assert_allclose(actual, expected, rtol=2e-4, atol=1e-5)
                 if native:
                     from ibeamlab._engine import engine
-                    np.testing.assert_allclose(engine().run_graph(package.to_core(), scaled), expected, rtol=1e-4, atol=1e-5)
+                    np.testing.assert_allclose(engine().run_graph(package.to_core(), scaled), expected, rtol=2e-4, atol=1e-5)
                     population = native.predict_reference_areal_density_batch(physical)
                     offset = 0
                     for spec in manifest["spectra"]:
@@ -213,12 +215,13 @@ def export(config, checkpoint=None):
         empty = np.zeros((3, 5, len(manifest["elements"])), dtype=np.float32)
         with torch.no_grad():
             np.testing.assert_allclose(session.run(None, {"inputs": empty})[0],
-                                       network(torch.from_numpy(empty)).numpy(), rtol=1e-4, atol=1e-5)
+                                       network(torch.from_numpy(empty)).numpy(), rtol=2e-4, atol=1e-5)
         output.mkdir(parents=True, exist_ok=False)
         package.write(output / "forward.ibm")
     write_json(output / "manifest.json", {"format": "ibeamlab.forward-export", "format_version": 1,
         "architecture": "RecurrentSurrogate", "ad_input_factor": factor, "package": "forward.ibm",
         "training_layer_counts": trained_counts, "native_verified": native is not None,
         "checkpoint_sha256": digest(checkpoint), "pileup": pileup_settings,
+        "graph_parity_tolerance": {"rtol": 2e-4, "atol": 1e-5},
         "checks": reports})
     return reports
