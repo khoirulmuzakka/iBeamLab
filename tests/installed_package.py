@@ -1,4 +1,5 @@
 """Smoke test run with python -I against an installed wheel, outside source imports."""
+from dataclasses import replace
 from pathlib import Path
 from importlib.resources import files
 import gc
@@ -35,7 +36,12 @@ with tempfile.TemporaryDirectory() as tmp:
     package.write(Path(tmp) / "forward.ibm")
     loaded = ibl.Package.open(Path(tmp) / "forward.ibm")
     assert loaded.metadata.model.reference_setup == x.setup
-    assert loaded.metadata.model.input.reference_sample == x.sample
+    expected_sample = ibl.Sample([ibl.Layer(layer.thickness, [
+        replace(species, isotopes=species.isotopes or ibl.natural_isotopes(species.element))
+        for species in layer.species], roughness=layer.roughness,
+        porosity_fraction=layer.porosity_fraction, pore_diameter=layer.pore_diameter)
+        for layer in x.sample.layers])
+    assert loaded.metadata.model.input_preparation.reference_sample == expected_sample
     if "--onnx" in sys.argv:
         predicted = ibl.ForwardModel(loaded).predict(x)
         np.testing.assert_allclose(predicted["RBS"].counts, [100, 200, 300, 400])

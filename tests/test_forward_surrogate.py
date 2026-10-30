@@ -117,6 +117,21 @@ class SurrogateTests(unittest.TestCase):
             self.assertIn(name + " =", training)
         self.assertNotIn("load_cache(", training)
         self.assertNotIn("np.load(", training)
+        # Notebook controls are user-editable. Exercise this test's new-run and
+        # resume scenarios independently of the saved personal run settings.
+        tree = ast.parse(training)
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                    isinstance(target, ast.Name) and target.id == "RESUME_TRAINING"
+                    for target in node.targets):
+                node.value = ast.Constant("auto")
+            elif isinstance(node, ast.Assign) and any(
+                    isinstance(target, ast.Name) and target.id == "INITIAL_WEIGHTS"
+                    for target in node.targets):
+                node.value = ast.parse(
+                    'globals().get("SCHEMA_CHECKPOINT", globals().get("INITIAL_WEIGHTS"))',
+                    mode="eval").body
+        training = ast.unparse(tree)
         with tempfile.TemporaryDirectory() as tmp:
             config = load_config(ROOT / "examples/ibeamnet/surrogate.toml")
             config["training"]["output"] = Path(tmp) / "run"
