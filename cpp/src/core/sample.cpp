@@ -1,5 +1,6 @@
 #include <ibeamlab/core/experiment.h>
 
+#include <ibeamlab/core/isotopes.h>
 #include <cmath>
 #include <stdexcept>
 #include <unordered_set>
@@ -34,18 +35,9 @@ void Sample::validate() const {
                     throw std::invalid_argument("layer element names must be non-empty and unique");
                 finiteNonnegative(species.concentration, "species concentration");
                 sum += species.concentration;
-                double isotopeSum = 0.0;
-                for (const auto &isotope : species.isotopes) {
-                    if (isotope.massNumber < 0)
-                        throw std::invalid_argument("isotope mass number cannot be negative");
-                    finiteNonnegative(isotope.exactMass, "isotope exact mass");
-                    finiteNonnegative(isotope.fraction, "isotope fraction");
-                    isotopeSum += isotope.fraction;
-                }
-                if (!species.isotopes.empty() && std::abs(isotopeSum - 1.0) > 1e-6)
-                    throw std::invalid_argument("isotope fractions must sum to one");
+                validate_isotopes(species.element, species.isotopes);
             }
-            if (std::abs(sum - 1.0) > 1e-6)
+            if (!std::isfinite(sum) || std::abs(sum - 1.0) > 1e-6)
                 throw std::invalid_argument("species concentrations must sum to one");
         } catch (const std::invalid_argument &error) {
             throw std::invalid_argument("sample.layers[" + std::to_string(index) +

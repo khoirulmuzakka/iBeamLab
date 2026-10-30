@@ -169,7 +169,12 @@ class ModelTests(unittest.TestCase):
             model = ibl.load_model(path)
             self.assertIsInstance(model, ibl.ForwardModel)
             self.assertEqual(model.metadata.model.reference_setup, x.setup)
-            self.assertEqual(model.metadata.model.input_preparation.reference_sample, x.sample)
+            frozen_sample = ibl.Sample([ibl.Layer(layer.thickness, [
+                replace(species, isotopes=species.isotopes or ibl.natural_isotopes(species.element))
+                for species in layer.species], roughness=layer.roughness,
+                porosity_fraction=layer.porosity_fraction, pore_diameter=layer.pore_diameter)
+                for layer in x.sample.layers])
+            self.assertEqual(model.metadata.model.input_preparation.reference_sample, frozen_sample)
             predicted = model.predict(replace(x, setup=requested))
             np.testing.assert_allclose(predicted["RBS"].counts, [200, 400, 600, 800])
             np.testing.assert_allclose(predicted["NRA"].counts, [125, 150, 175])

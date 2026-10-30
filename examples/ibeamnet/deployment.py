@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import ibeamlab as ibl
 from ibeamlab.export import validate_onnx_contract
-from .data import digest, reference_from_dict, write_json
+from .data import digest, reference_from_dict, write_json, model_isotope_compositions
 from .validation import validate_checkpoint_contract, validate_pileup
 from .workflow import load_cache
 from .training import load_checkpoint, make_model
@@ -131,7 +131,7 @@ def build_export_metadata(manifest, settings, *, provenance=""):
     reference = reference_from_dict(manifest["sources"][0]["reference"])
     return ibl.ModelMetadata(ibl.ForwardModelMetadata(
         reference_setup=reference.setup,
-        input_preparation=ibl.LayerInputSchema(manifest["elements"]),
+        input_preparation=ibl.LayerInputSchema(manifest["elements"], model_isotope_compositions(manifest)),
         input_transform=ibl.TransformPipeline([ibl.MultiplyScale([manifest["ad_input_factor"]])]),
         output_spectra=ibl.SpectraSchema([
             ibl.SpectrumSpec(s["measurement"], s["channels"]) for s in manifest["spectra"]]),

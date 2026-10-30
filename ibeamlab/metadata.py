@@ -11,7 +11,7 @@ from . import native as core
 from ._engine import engine, to_core
 from .exceptions import ValidationError
 from .parameters import ParameterSpec
-from .sample import Sample, ExperimentalSetup, sample_from_core, setup_from_core
+from .sample import Isotope, Sample, ExperimentalSetup, sample_from_core, setup_from_core
 
 TensorTransform: TypeAlias = Union["core.Log1p", "core.MinMaxScale", "core.StandardScale", "core.MultiplyScale", "core.CustomTransform"]
 TensorPipeline: TypeAlias = Sequence[TensorTransform]
@@ -47,6 +47,21 @@ class ParameterInputSchema:
 
 
 @dataclass(slots=True)
+class ElementComposition:
+    """Isotope mixture assumed by a model element; empty uses the natural default."""
+    element: str
+    isotopes: Sequence[Isotope] = ()
+
+    def to_core(self) -> core.ElementComposition:
+        values = []
+        for isotope in self.isotopes:
+            raw = engine().Isotope()
+            raw.massNumber, raw.fraction = isotope.mass_number, isotope.fraction
+            values.append(raw)
+        return _core_value(engine().ElementComposition, element=self.element, isotopes=values)
+
+
+@dataclass(slots=True)
 class LayerInputSchema:
     """Unbounded layer sequence of physical elemental AD (1e15 atoms/cm2).
 
@@ -54,9 +69,11 @@ class LayerInputSchema:
     layer; coefficients are scalar or per element. Empty padding stays zero.
     """
     elements: Sequence[str]
+    isotope_compositions: Sequence[ElementComposition] = ()
 
     def to_core(self) -> core.LayerInputSchema:
-        return _core_value(engine().LayerInputSchema, elements=self.elements)
+        return _core_value(engine().LayerInputSchema, elements=self.elements,
+                           isotope_compositions=[to_core(c) for c in self.isotope_compositions])
 
 
 @dataclass(slots=True)
@@ -148,7 +165,9 @@ class ModelMetadata:
         if isinstance(m, core.ForwardModelMetadata):
             schema: ParameterInputSchema | LayerInputSchema
             if isinstance(m.input_preparation, core.LayerInputSchema):
-                schema = LayerInputSchema(m.input_preparation.elements)
+                schema = LayerInputSchema(m.input_preparation.elements, [
+                    ElementComposition(c.element, tuple(Isotope(i.massNumber, i.fraction) for i in c.isotopes))
+                    for c in m.input_preparation.isotope_compositions])
             else:
                 schema = ParameterInputSchema(sample_from_core(m.input_preparation.reference_sample),
                     [ParameterSpec(p.name, p.target, p.unit) for p in m.input_preparation.parameters])

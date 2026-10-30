@@ -70,7 +70,6 @@ def load_reference(path, ibl, isotope_masses=None, effective_fractions=None):
                     isotope.massNumber = mass
                     if isotope_masses is None or (symbol, mass) not in isotope_masses:
                         raise ValueError(f'Exact isotope mass missing for {mass}{symbol}')
-                    isotope.exactMass = isotope_masses[symbol, mass]
                     isotope.fraction = fraction/entry['fraction'] if entry['fraction'] else float(not isotopes)
                     isotopes.append(isotope)
                 value.isotopes = isotopes

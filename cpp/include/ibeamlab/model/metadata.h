@@ -2,6 +2,8 @@
 #include <ibeamlab/core/parameter.h>
 #include <ibeamlab/core/spectrum.h>
 #include <map>
+#include <span>
+#include <string_view>
 #include <utility>
 #include <variant>
 
@@ -141,16 +143,28 @@ struct ParameterInputSchema {
     core::Sample reference_sample;
     std::vector<core::ParameterSpec> parameters;
 };
+/** @brief Fixed isotope mixture assumed for one model element; empty resolves to natural. */
+struct ElementComposition {
+    std::string element;
+    std::vector<core::Isotope> isotopes;
+};
 /** @brief Variable-length surface-to-depth sequence of elemental areal densities.
  * Graph inputs are float32 [batch,layers,elements]. Physical densities use
  * 1e15 atoms/cm2, with exactly one feature per ordered element and no thickness
  * column. No layer count is stored. Missing supported elements are zero; unknown
- * elements and explicit isotopes/roughness/porosity are unsupported.
+ * elements and roughness/porosity are unsupported. Isotope mixtures must match
+ * the declared per-element assumptions.
  * input_transform runs independently per nonempty layer; zero padding stays zero.
  * Coefficients broadcast from one value or have one value per element.
  */
 struct LayerInputSchema {
     std::vector<std::string> elements;
+    /** @brief Optional per-element assumptions; omitted entries use natural composition.
+     * Packages always store resolved fractions for every element, independent of database updates.
+     */
+    std::vector<ElementComposition> isotope_compositions;
+    /** @brief Allocation-free resolved assumption for a supported element. */
+    IBEAMLAB_API std::span<const core::Isotope> composition(std::string_view element) const;
 };
 using ForwardInputSchema = std::variant<ParameterInputSchema, LayerInputSchema>;
 /** @brief Architecture-independent forward input contract and labelled spectra.

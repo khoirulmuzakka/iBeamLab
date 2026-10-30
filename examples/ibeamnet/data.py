@@ -34,6 +34,38 @@ def reference_from_dict(value):
     return ibl.Experiment(ibl.Sample(layers), setup)
 
 
+def model_isotope_compositions(manifest):
+    """Resolve fixed mixtures from all training reference layers, rejecting conflicts.
+
+    Explicit mixtures are retained. Empty sample lists resolve through the shared
+    database. A model with elemental inputs cannot represent changing enrichment.
+    """
+    mixtures = {}
+    for source in manifest["sources"]:
+        reference = reference_from_dict(source["reference"])
+        reference.sample.to_core()
+        for layer in reference.sample.layers:
+            for species in layer.species:
+                composition = species.isotopes or ibl.natural_isotopes(species.element)
+                if not composition:
+                    raise ValueError(f"explicit isotope composition required for {species.element}")
+                values = {i.mass_number: i.fraction for i in composition}
+                if len(values) != len(composition):
+                    raise ValueError(f"duplicate isotopes for {species.element}")
+                if species.element in mixtures:
+                    expected = mixtures[species.element]
+                    if any(abs(values.get(m, 0) - expected.get(m, 0)) > 1e-8
+                           for m in values.keys() | expected.keys()):
+                        raise ValueError(f"training isotope compositions differ for {species.element}")
+                else:
+                    mixtures[species.element] = values
+    missing = set(manifest["elements"]) - mixtures.keys()
+    if missing:
+        raise ValueError(f"training references lack isotope assumptions for {sorted(missing)}")
+    return [ibl.ElementComposition(element, tuple(ibl.Isotope(mass, fraction)
+                for mass, fraction in sorted(mixtures[element].items()))) for element in manifest["elements"]]
+
+
 def parameter_layout(metadata, elements):
     """Map declared physical columns to [layer, thickness+ordered concentrations]."""
     core = engine()
@@ -104,9 +136,8 @@ def prepare(config):
         if len(metadata.reference.sample.layers) != layer_count:
             raise ValueError(f"wrong layer count in {path}")
         for layer in metadata.reference.sample.layers:
-            if (layer.roughness != 0 or layer.porosity_fraction != 0 or layer.pore_diameter != 0
-                    or any(s.isotopes for s in layer.species)):
-                raise ValueError("elemental AD models require natural elements without roughness/porosity")
+            if layer.roughness != 0 or layer.porosity_fraction != 0 or layer.pore_diameter != 0:
+                raise ValueError("elemental AD models require layers without roughness/porosity")
         current = tuple(s.element for s in metadata.reference.sample.layers[0].species)
         if elements is None:
             elements = current
@@ -142,6 +173,8 @@ def prepare(config):
             "manifest_sha256": digest(path / "manifest.ibd")})
         datasets.append(dataset)
         offset += count
+    # Reject enrichment conflicts before allocating or writing cache arrays.
+    compositions = model_isotope_compositions({"sources": sources, "elements": elements})
     print("Spectrum widths: " + ", ".join(f"{s['measurement']}={s['channels']}" for s in spectra), flush=True)
     cache.parent.mkdir(parents=True, exist_ok=True)
     maximum = max(settings["layer_counts"])
@@ -213,7 +246,7 @@ def prepare(config):
         "spectra": spectra, "automatic_spectrum_lengths": sorted(automatic),
         "input_representation": "scaled_elemental_areal_density",
         "ad_input_factor": config["preprocessing"]["ad_input_factor"],
-        "sources": sources, "split_seed": settings["seed"],
+        "sources": sources, "isotope_compositions": [asdict(c) for c in compositions], "split_seed": settings["seed"],
         "split_sizes": {name: len(indices) for name, indices in split_indices.items()}}
     write_json(cache / "manifest.tmp", manifest)
     (cache / "manifest.tmp").rename(cache / "manifest.json")

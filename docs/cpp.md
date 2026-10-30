@@ -137,3 +137,18 @@ with IBEAMLAB_BUILD_EXAMPLES=ON from the root.
 See [model-format.md](model-format.md) for the package contract and the public
 [metadata header](../cpp/include/ibeamlab/model/metadata.h) for directional schemas
 and processing descriptors.
+
+### Isotope compositions
+
+`core::Isotope` stores a positive `massNumber` and a `fraction`. The containing
+`Species.element` supplies the atomic identity. Empty `Species.isotopes` means
+natural composition. `core::natural_isotopes(element)`, `isotope_data(element)`
+and `resolved_isotopes(species)` in `<ibeamlab/core/isotopes.h>` return immutable
+views without allocating. Explicit mixtures are validated against the database;
+no natural default is invented for elements without a defined mixture.
+
+`model::LayerInputSchema::isotope_compositions` supplies optional
+`ElementComposition` assumptions. Packages store resolved mixtures for all input
+elements. Inference resolves and caches model assumptions once and compares sample
+compositions without temporary vectors, including explicitly supplied natural
+mixtures. Direct AD inputs imply the package's isotope assumptions.

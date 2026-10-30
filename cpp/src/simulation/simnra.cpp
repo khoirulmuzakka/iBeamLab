@@ -1,5 +1,8 @@
+#include <ibeamlab/core/isotopes.h>
 #include "io.h"
 #include <cctype>
+#include <algorithm>
+#include <cmath>
 #include <condition_variable>
 #include <deque>
 #include <future>
@@ -211,7 +214,15 @@ struct Session {
                             .text();
                     while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back())))
                         name.pop_back();
-                    species[static_cast<std::size_t>(ei - 1)].element = std::move(name);
+                    auto &entry = species[static_cast<std::size_t>(ei - 1)];
+                    entry.element = std::move(name);
+                    const int count = static_cast<int>(target.get(L"NumberOfIsotopes", {Value(li), Value(ei)}));
+                    if (count < 1 || count > 512) throw std::runtime_error("invalid reference isotope count");
+                    for (int ii = 1; ii <= count; ++ii) {
+                        auto mass = target.get(L"IsotopeMass", {Value(li), Value(ei), Value(ii)});
+                        auto fraction = target.get(L"IsotopeConcentration", {Value(li), Value(ei), Value(ii)});
+                        entry.isotopes.push_back({static_cast<std::int32_t>(std::lround(mass)), fraction});
+                    }
                 }
             }
             topology = std::move(loaded);
@@ -231,16 +242,17 @@ struct Session {
                     rebuild = true;
                     break;
                 }
-                for (std::size_t j = 0; j < a.size(); ++j)
-                    if (a[j].element != b[j].element ||
-                        a[j].isotopes.size() != b[j].isotopes.size() ||
-                        ((a[j].isotopes.size() == 1 && a[j].isotopes[0].massNumber == 0 &&
-                          a[j].isotopes[0].exactMass == 0) !=
-                         (b[j].isotopes.size() == 1 && b[j].isotopes[0].massNumber == 0 &&
-                          b[j].isotopes[0].exactMass == 0))) {
+                for (std::size_t j = 0; j < a.size(); ++j) {
+                    if (a[j].element != b[j].element) { rebuild = true; break; }
+                    const auto previous = core::resolved_isotopes(a[j]);
+                    const auto requested = core::resolved_isotopes(b[j]);
+                    if (previous.size() != requested.size() ||
+                        !std::equal(previous.begin(), previous.end(), requested.begin(),
+                                    [](auto &p, auto &r) { return p.massNumber == r.massNumber; })) {
                         rebuild = true;
                         break;
                     }
+                }
             }
         // Keep every old element present until replacement layers are populated:
         // SIMNRA otherwise discards its selected cross sections for that element.
@@ -265,14 +277,13 @@ struct Session {
                 ++ei;
                 if (rebuild)
                     target.set(L"ElementName", {Value(li), Value(ei), Value(wide(s.element))});
-                const bool natural = s.isotopes.size() == 1 && s.isotopes[0].massNumber == 0 &&
-                                     s.isotopes[0].exactMass == 0;
-                if (!natural)
-                    for (const auto &isotope : s.isotopes)
-                        if (isotope.massNumber == 0 && isotope.exactMass == 0)
-                            throw std::invalid_argument(
-                                "natural abundance cannot be mixed with explicit isotopes");
-                if (!s.isotopes.empty() && !natural) {
+                {
+                    const auto composition = core::resolved_isotopes(s);
+                    // Fixed mixtures need no per-isotope COM calls on subsequent spectra.
+                    if (configured_measurement && !rebuild && core::same_isotopes(composition,
+                            core::resolved_isotopes(topology->layers[static_cast<std::size_t>(li - 1)]
+                                .species[static_cast<std::size_t>(ei - 1)]), 0.0))
+                        continue;
                     if (rebuild) {
                         int count = static_cast<int>(
                             target.get(L"NumberOfIsotopes", {Value(li), Value(ei)}));
@@ -280,14 +291,17 @@ struct Session {
                             target.method(L"DeleteIsotope", {Value(li), Value(ei), Value(1)});
                     }
                     int ii = 0;
-                    for (auto &i : s.isotopes) {
+                    for (const auto &i : composition) {
                         if (rebuild)
                             target.method(L"AddIsotope", {Value(li), Value(ei)});
                         ++ii;
-                        target.set(L"IsotopeMass",
-                                   {Value(li), Value(ei), Value(ii),
-                                    Value(i.exactMass > 0 ? i.exactMass
-                                                          : static_cast<double>(i.massNumber))});
+                        if (rebuild || !configured_measurement) {
+                            const auto records = core::isotope_data(s.element);
+                            const auto mass = std::find_if(records.begin(), records.end(), [&](const auto &r) {
+                                return r.massNumber == i.massNumber;
+                            })->exactMass;
+                            target.set(L"IsotopeMass", {Value(li), Value(ei), Value(ii), Value(mass)});
+                        }
                         target.set(L"IsotopeConcentration",
                                    {Value(li), Value(ei), Value(ii), Value(i.fraction)});
                     }

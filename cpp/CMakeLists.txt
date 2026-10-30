@@ -1,7 +1,7 @@
 # Targets for the iBeamLab C++ library, bindings, examples and tests.
 # Configure the project through the repository root CMakeLists.txt.
 add_library(ibeamlab
-    src/core/sample.cpp src/core/parameter.cpp src/core/validation.cpp
+    src/core/sample.cpp src/core/isotopes.cpp src/core/parameter.cpp src/core/validation.cpp
     src/processing/rebin.cpp src/processing/pileup.cpp src/processing/transforms.cpp
     src/simulation/simulator.cpp src/simulation/simnra.cpp
     src/datasets/dataset.cpp src/generation/generator.cpp
@@ -154,6 +154,18 @@ if(IBEAMLAB_BUILD_PYTHON)
         install(FILES ${ONNXRUNTIME_RUNTIME_FILES} DESTINATION ibeamlab)
     endif()
     if(IBEAMLAB_BUILD_TESTS)
+        if(IBEAMLAB_ENABLE_ONNX)
+            add_test(NAME isotope-contract COMMAND "${Python_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tests/test_isotopes.py" "$<TARGET_FILE_DIR:_ibeamlab>")
+            set_tests_properties(isotope-contract PROPERTIES LABELS "unit;integration")
+        endif()
+        if(WIN32 AND IBEAMLAB_ENABLE_SIMNRA AND EXISTS "${PROJECT_SOURCE_DIR}/xnra/Ref_RBS_LiCOFNaAlSiPSTiMnFeCoNiCuH_nopu.xnra")
+            add_test(NAME simnra-isotopes COMMAND "${Python_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tests/test_isotopes.py" "$<TARGET_FILE_DIR:_ibeamlab>"
+                IsotopeTests.test_simnra_natural_enriched_and_restored)
+            set_tests_properties(simnra-isotopes PROPERTIES ENVIRONMENT "IBEAMLAB_TEST_SIMNRA=1"
+                LABELS "integration;licensed;simnra" RUN_SERIAL TRUE TIMEOUT 90)
+        endif()
         add_test(NAME python-api COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/python_api.py" "$<TARGET_FILE_DIR:_ibeamlab>" "${IBEAMLAB_ENABLE_ONNX}")
         set_tests_properties(python-api PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}" LABELS "integration;python")
         add_test(NAME python-wrapper COMMAND "${Python_EXECUTABLE}"

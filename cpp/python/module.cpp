@@ -1,4 +1,5 @@
 #include "inference/session.h"
+#include <ibeamlab/core/isotopes.h>
 #include <ibeamlab/core/validation.h>
 #include <ibeamlab/generation/generator.h>
 #include <ibeamlab/inference/models.h>
@@ -30,8 +31,22 @@ py::array_t<double> readonly_array(py::object owner, std::span<const double> val
 PYBIND11_MODULE(_ibeamlab, m) {
     m.doc() = "iBeamLab C++ library; fitting is not implemented.";
     py::class_<core::Isotope>(m, "Isotope")
-        .def(py::init<>()) FIELD(core::Isotope, massNumber) FIELD(core::Isotope, exactMass)
+        .def(py::init<>()) FIELD(core::Isotope, massNumber)
             FIELD(core::Isotope, fraction);
+    py::class_<core::IsotopeData>(m, "IsotopeData")
+        .def_readonly("massNumber", &core::IsotopeData::massNumber)
+        .def_readonly("exactMass", &core::IsotopeData::exactMass);
+    m.def("natural_isotopes", [](const std::string &element) {
+        auto values = core::natural_isotopes(element);
+        return std::vector<core::Isotope>(values.begin(), values.end());
+    });
+    m.def("isotope_data", [](const std::string &element) {
+        auto values = core::isotope_data(element);
+        return std::vector<core::IsotopeData>(values.begin(), values.end());
+    });
+    m.def("validate_isotopes", [](const std::string &element, const std::vector<core::Isotope> &values) {
+        core::validate_isotopes(element, values);
+    });
     py::class_<core::Species>(m, "Species")
         .def(py::init<>()) FIELD(core::Species, element) FIELD(core::Species, concentration)
             FIELD(core::Species, isotopes);
@@ -332,8 +347,10 @@ PYBIND11_MODULE(_ibeamlab, m) {
     py::class_<model::ParameterInputSchema>(m, "ParameterInputSchema")
         .def(py::init<>()) FIELD(model::ParameterInputSchema, reference_sample)
             FIELD(model::ParameterInputSchema, parameters);
+    py::class_<model::ElementComposition>(m, "ElementComposition")
+        .def(py::init<>()) FIELD(model::ElementComposition, element) FIELD(model::ElementComposition, isotopes);
     py::class_<model::LayerInputSchema>(m, "LayerInputSchema")
-        .def(py::init<>()) FIELD(model::LayerInputSchema, elements);
+        .def(py::init<>()) FIELD(model::LayerInputSchema, elements) FIELD(model::LayerInputSchema, isotope_compositions);
     py::class_<model::ForwardModelMetadata>(m, "ForwardModelMetadata")
         .def(py::init<>()) FIELD(model::ForwardModelMetadata, reference_setup)
             FIELD(model::ForwardModelMetadata, input_preparation)

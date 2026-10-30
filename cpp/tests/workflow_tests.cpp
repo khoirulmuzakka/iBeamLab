@@ -313,7 +313,7 @@ void forward_contract_tests() {
     auto m = metadata(model::Direction::Forward);
     auto &f = std::get<model::ForwardModelMetadata>(m.model);
     f.output_preparation.clear();
-    parameter_input(f).reference_sample.layers[0].species[0].isotopes = {{28, 28, 1}};
+    parameter_input(f).reference_sample.layers[0].species[0].isotopes = {{28, 1}};
     auto package =
         model::Package::from_onnx(std::filesystem::path(IBEAMLAB_FIXTURES) / "forward.onnx", m);
     inference::ForwardModel forward(package);
@@ -376,7 +376,6 @@ void forward_contract_tests() {
     });
     invalid([](auto &x) { x.sample.layers[0].species[0].isotopes.clear(); });
     invalid([](auto &x) { x.sample.layers[0].species[0].isotopes[0].massNumber = 29; });
-    invalid([](auto &x) { x.sample.layers[0].species[0].isotopes[0].exactMass = 29; });
     invalid([](auto &x) { x.sample.layers[0].species[0].isotopes[0].fraction = .5; });
     invalid([](auto &x) { x.setup.measurements.clear(); });
     invalid([](auto &x) { x.setup.measurements[0].label = "unknown"; });
@@ -505,6 +504,8 @@ void package_tests(const std::filesystem::path &root) {
     require(layer_schema.elements == std::vector<std::string>{"Si", "O"} &&
                 std::get<model::MultiplyScale>(std::get<model::ForwardModelMetadata>(layer_loaded.metadata.model).input_transform.steps[0]).factors == core::Counts{.01, .02},
             "layer element order and per-element preprocessing round trip");
+    require(layer_schema.isotope_compositions.size() == 2 &&
+            !layer_schema.isotope_compositions[0].isotopes.empty(), "package stores explicit isotope assumptions");
     auto &invalid_layers = std::get<model::LayerInputSchema>(layer_forward.input_preparation);
     invalid_layers.elements = {"Si", "Si"};
     rejects([&] { layer_package.validate(); });

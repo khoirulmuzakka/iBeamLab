@@ -33,7 +33,7 @@ explicitly. Readers hold one bounded shard and reuse a caller's record buffers.
 ## Model packages
 
 A `.ibm` envelope uses magic `IBMODEL1`; the scientific package format remains
-**1**. Its payload begins with the text `ibeamlab.model.stages` and uint64 `1`,
+**1**. Its payload begins with the text `ibeamlab.model` and uint64 `1`,
 then direction (forward=0, inverse=1). Previous development layouts are rejected;
 export existing weights again with the staged contract. Dataset encoding is unchanged.
 
@@ -47,7 +47,8 @@ physical input -> input_preparation -> input_transform -> ONNX
 Forward metadata encodes reference setup, input-preparation schema tag/fields,
 reference spectra, numerical input transform, per-detector numerical output
 transforms, and per-detector physical output preparation. Input tag 0 stores a
-reference sample and parameter targets/units; tag 1 stores ordered elements,
+reference sample and parameter targets/units; tag 1 stores ordered elements and
+explicit isotope fractions for each element,
 without a sample or layer limit. Packing computes physical elemental AD from
 thickness/fractions; direct AD avoids sample construction.
 
@@ -136,3 +137,32 @@ the directional schema. External ONNX tensor files are unsupported. All counts
 and array sizes are bounded before decoding allocations. See
 [metadata.h](../cpp/include/ibeamlab/model/metadata.h) and
 [package.cpp](../cpp/src/model/package.cpp) for the exact field encoding.
+
+### Isotope assumptions
+
+Samples use an empty isotope list for iBeamLab's natural composition. An explicit
+entry is identified by element symbol and positive mass number; exact masses come
+from `core/isotopes.h`. Fractions are finite, nonnegative, unique by mass number,
+and sum to one. Elements without a defined natural mixture require explicit
+isotopes. The initial database is the mass/abundance snapshot used by AutoNRA,
+covering supported isotopes of H through Es; it is a fixed convention rather than
+a sample-specific measurement of natural variation.
+
+Layer input schemas accept optional `isotope_compositions` keyed by element.
+Omitted assumptions resolve to the framework natural mixture during construction.
+Export writes every assumption explicitly; loading never substitutes new natural
+fractions for stored fractions. Fixed-parameter packages likewise freeze their
+reference sample's compositions. The package contract remains format 1; packages
+from earlier development layouts must be exported again from their weights.
+
+Inference compares isotope identities and fractions independently of ordering.
+Explicit zero-fraction entries do not change composition. Elemental AD inputs use
+the stored mixtures and cannot express varying enrichment. A different requested
+mixture is rejected with the element name. Direct AD tensors carry no isotope
+information and are interpreted using the package assumptions.
+
+Dataset sample encoding retains its existing field layout, including a reserved
+mass slot, but newly written samples store resolved isotope lists. This records
+the generation convention. SIMNRA receives the same resolved fractions, with no
+per-isotope COM updates when the mixture is unchanged. Existing layer replacement
+continues to append new layers before removing old layers.

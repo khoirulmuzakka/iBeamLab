@@ -1,3 +1,4 @@
+#include <ibeamlab/core/isotopes.h>
 #include <algorithm>
 #include <ibeamlab/model/metadata.h>
 #include <unordered_set>
@@ -167,6 +168,15 @@ const std::vector<SpectrumSpec> &ModelMetadata::spectra() const {
         return f->output_spectra.spectra;
     return std::get<InverseModelMetadata>(model).input_spectra.spectra;
 }
+std::span<const core::Isotope> LayerInputSchema::composition(std::string_view element) const {
+    if (std::find(elements.begin(), elements.end(), element) == elements.end())
+        throw std::invalid_argument("unsupported model element: " + std::string(element));
+    for (const auto &entry : isotope_compositions)
+        if (entry.element == element && !entry.isotopes.empty()) return entry.isotopes;
+    auto natural = core::natural_isotopes(element);
+    if (natural.empty()) throw std::invalid_argument("model requires explicit isotopes for " + std::string(element));
+    return natural;
+}
 std::size_t ModelMetadata::input_width() const {
     if (const auto *f = std::get_if<ForwardModelMetadata>(&model))
         return std::visit([](const auto &input) -> std::size_t {
@@ -209,6 +219,14 @@ void ModelMetadata::validate() const {
             for (const auto &e : layers.elements)
                 if (e.empty() || !names.insert(e).second)
                     throw std::invalid_argument("invalid layer input elements");
+            std::unordered_set<std::string> assumptions;
+            for (const auto &entry : layers.isotope_compositions) {
+                if (!names.contains(entry.element) || !assumptions.insert(entry.element).second)
+                    throw std::invalid_argument("unknown or duplicate model isotope assumption");
+                core::validate_isotopes(entry.element, entry.isotopes);
+            }
+            for (const auto &element : layers.elements)
+                core::validate_isotopes(element, layers.composition(element));
         }
     } else {
         const auto &i = std::get<InverseModelMetadata>(model);

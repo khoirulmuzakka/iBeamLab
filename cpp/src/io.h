@@ -1,4 +1,5 @@
 #pragma once
+#include <ibeamlab/core/isotopes.h>
 #include <array>
 #include <bit>
 #include <filesystem>
@@ -146,10 +147,11 @@ inline void encode(Encoder &e, const core::Sample &x) {
         for (const auto &s : l.species) {
             e.text(s.element);
             e.real(s.concentration);
-            e.integer(s.isotopes.size());
-            for (auto &i : s.isotopes) {
+            const auto composition = core::resolved_isotopes(s);
+            e.integer(composition.size());
+            for (const auto &i : composition) {
                 e.integer(i.massNumber);
-                e.real(i.exactMass);
+                e.real(0.0); // Reserved mass slot; identity is element plus mass number.
                 e.real(i.fraction);
             }
         }
@@ -198,7 +200,7 @@ inline core::Sample sample(Decoder &d) {
                 if (mass > 10000)
                     throw std::runtime_error("invalid isotope mass");
                 i.massNumber = static_cast<std::int32_t>(mass);
-                i.exactMass = d.real();
+                (void)d.real(); // Reserved mass slot.
                 i.fraction = d.real();
             }
         }

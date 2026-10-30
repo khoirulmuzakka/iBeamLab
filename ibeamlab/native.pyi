@@ -28,7 +28,6 @@ def available_execution_providers() -> list[str]: ...
 
 class Isotope:
     massNumber: int
-    exactMass: float
     fraction: float
     def __init__(self) -> None: ...
 
@@ -238,8 +237,22 @@ class ParameterInputSchema:
     parameters: list[Parameter]
     def __init__(self) -> None: ...
 
+class IsotopeData:
+    massNumber: int
+    exactMass: float
+
+def natural_isotopes(element: str) -> list[Isotope]: ...
+def isotope_data(element: str) -> list[IsotopeData]: ...
+def validate_isotopes(element: str, isotopes: list[Isotope]) -> None: ...
+
+class ElementComposition:
+    element: str
+    isotopes: list[Isotope]
+    def __init__(self) -> None: ...
+
 class LayerInputSchema:
     elements: list[str]
+    isotope_compositions: list[ElementComposition]
     def __init__(self) -> None: ...
 
 class ForwardModelMetadata:

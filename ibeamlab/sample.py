@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from math import isfinite
-from typing import Mapping, Sequence
+from typing import TYPE_CHECKING, Mapping, Sequence
+
+if TYPE_CHECKING:
+    from .native import IsotopeData
 
 from .exceptions import ValidationError
 
@@ -20,15 +23,17 @@ def _nonnegative(name: str, value: float) -> None:
 
 @dataclass(frozen=True, slots=True)
 class Isotope:
-    """One isotope; ``mass_number=0`` selects natural abundance."""
-    mass_number: int = 0
-    exact_mass: float = 0.0
+    """Explicit isotope identity and atomic fraction within its element.
+
+    Natural composition is represented by an empty Species.isotopes tuple.
+    Exact atomic masses are supplied by the shared iBeamLab database.
+    """
+    mass_number: int
     fraction: float = 1.0
 
     def __post_init__(self) -> None:
-        if self.mass_number < 0:
-            raise ValidationError("mass_number cannot be negative")
-        _nonnegative("exact_mass", self.exact_mass)
+        if isinstance(self.mass_number, bool) or not isinstance(self.mass_number, int) or self.mass_number <= 0:
+            raise ValidationError("mass_number must be a positive integer")
         _nonnegative("fraction", self.fraction)
 
 
@@ -114,7 +119,7 @@ class Sample:
                 isotopes = []
                 for isotope in entry.isotopes:
                     raw = core.Isotope()
-                    raw.massNumber, raw.exactMass, raw.fraction = isotope.mass_number, isotope.exact_mass, isotope.fraction
+                    raw.massNumber, raw.fraction = isotope.mass_number, isotope.fraction
                     isotopes.append(raw)
                 value.isotopes = isotopes
                 species.append(value)
@@ -256,7 +261,7 @@ def setup_from_core(value):
 def sample_from_core(value):
     """Convert C++ sample metadata to Python value objects."""
     return Sample(tuple(Layer(l.thickness, tuple(Species(s.element, s.concentration,
-        tuple(Isotope(i.massNumber, i.exactMass, i.fraction) for i in s.isotopes))
+        tuple(Isotope(i.massNumber, i.fraction) for i in s.isotopes))
         for s in l.species), roughness=l.roughness, porosity_fraction=l.porosityFraction,
         pore_diameter=l.poreDiameter) for l in value.layers))
 
@@ -266,3 +271,16 @@ def experiment_from_core(value):
     return Experiment(sample_from_core(value.sample), setup_from_core(value.setup))
 
 
+def natural_isotopes(element: str) -> tuple[Isotope, ...]:
+    """Return the framework's natural fractions; empty means no natural default.
+
+    C++ callers receive immutable static views. Python receives owned values.
+    """
+    from ._engine import engine
+    return tuple(Isotope(i.massNumber, i.fraction) for i in engine().natural_isotopes(element))
+
+
+def isotope_data(element: str) -> tuple[IsotopeData, ...]:
+    """Return supported isotope identities and their database exact masses (u)."""
+    from ._engine import engine
+    return tuple(engine().isotope_data(element))

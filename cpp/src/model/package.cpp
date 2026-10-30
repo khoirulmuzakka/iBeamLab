@@ -1,3 +1,4 @@
+#include <ibeamlab/core/isotopes.h>
 #include "io.h"
 #include <ibeamlab/model/package.h>
 namespace ibeamlab::model {
@@ -239,7 +240,7 @@ SpectrumTransforms decode_transforms(detail::Decoder &d) {
     return pipelines;
 }
 void encode(detail::Encoder &e, const ModelMetadata &m) {
-    e.text("ibeamlab.model.stages");
+    e.text("ibeamlab.model");
     e.integer(1);
     e.integer(m.direction() == Direction::Forward ? 0 : 1);
     if (const auto *f = std::get_if<ForwardModelMetadata>(&m.model)) {
@@ -251,7 +252,14 @@ void encode(detail::Encoder &e, const ModelMetadata &m) {
         } else {
             const auto &layers = std::get<LayerInputSchema>(f->input_preparation);
             e.integer(layers.elements.size());
-            for (const auto &element : layers.elements) e.text(element);
+            for (const auto &element : layers.elements) {
+                e.text(element);
+                auto composition = layers.composition(element);
+                e.integer(composition.size());
+                for (const auto &isotope : composition) {
+                    e.integer(isotope.massNumber); e.real(isotope.fraction);
+                }
+            }
         }
         encode_spectra(e, f->output_spectra);
         encode_stage(e, f->input_transform);
@@ -272,8 +280,8 @@ void encode(detail::Encoder &e, const ModelMetadata &m) {
 }
 ModelMetadata decode(detail::Decoder &d) {
     ModelMetadata m;
-    if (d.text() != "ibeamlab.model.stages" || d.integer() != 1)
-        throw std::runtime_error("unsupported model contract; export a format-1 staged package");
+    if (d.text() != "ibeamlab.model" || d.integer() != 1)
+        throw std::runtime_error("unsupported model contract; export a format-1 package with isotope assumptions");
     auto direction = d.integer();
     if (direction == 0) {
         ForwardModelMetadata f;
@@ -287,7 +295,20 @@ ModelMetadata decode(detail::Decoder &d) {
         } else if (kind == 1) {
             LayerInputSchema layers;
             layers.elements.resize(d.count(256));
-            for (auto &element : layers.elements) element = d.text();
+            for (auto &element : layers.elements) {
+                element = d.text();
+                ElementComposition composition;
+                composition.element = element;
+                composition.isotopes.resize(d.count(512));
+                if (composition.isotopes.empty()) throw std::runtime_error("package isotope assumption must be explicit");
+                for (auto &isotope : composition.isotopes) {
+                    const auto mass = d.integer();
+                    if (mass > 10000) throw std::runtime_error("invalid isotope mass number");
+                    isotope.massNumber = static_cast<std::int32_t>(mass);
+                    isotope.fraction = d.real();
+                }
+                layers.isotope_compositions.push_back(std::move(composition));
+            }
             f.input_preparation = std::move(layers);
         } else throw std::runtime_error("unknown forward input schema");
         f.output_spectra = decode_spectra(d);
@@ -319,11 +340,31 @@ void Package::validate() const {
         throw std::invalid_argument("invalid graph size");
 }
 Package Package::from_onnx(const std::filesystem::path &path, ModelMetadata metadata) {
+    metadata.validate();
     auto size = std::filesystem::file_size(path);
     if (size == 0 || size > detail::max_payload - 1024)
         throw std::invalid_argument("invalid ONNX file size");
     Package p;
     p.metadata = std::move(metadata);
+    if (auto *forward = std::get_if<ForwardModelMetadata>(&p.metadata.model)) {
+        if (auto *schema = std::get_if<LayerInputSchema>(&forward->input_preparation)) {
+            std::vector<ElementComposition> resolved;
+            resolved.reserve(schema->elements.size());
+            for (const auto &element : schema->elements) {
+                auto values = schema->composition(element);
+                resolved.push_back({element, {values.begin(), values.end()}});
+            }
+            schema->isotope_compositions = std::move(resolved);
+        } else {
+            auto &sample = std::get<ParameterInputSchema>(forward->input_preparation).reference_sample;
+            for (auto &layer : sample.layers)
+                for (auto &species : layer.species)
+                    if (species.isotopes.empty()) {
+                        auto values = core::resolved_isotopes(species);
+                        species.isotopes.assign(values.begin(), values.end());
+                    }
+        }
+    }
     p.graph.resize(static_cast<std::size_t>(size));
     std::ifstream f(path, std::ios::binary);
     f.read(reinterpret_cast<char *>(p.graph.data()), static_cast<std::streamsize>(size));

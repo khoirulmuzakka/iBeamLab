@@ -1,4 +1,5 @@
 #pragma once
+#include <ibeamlab/core/isotopes.h>
 #include <algorithm>
 #include <functional>
 #include <ibeamlab/model/metadata.h>
@@ -130,15 +131,9 @@ class ParameterPlan {
             for (std::size_t j = 0; j < species.size(); ++j) {
                 const auto &s = species[j];
                 const auto &e = expected[j];
-                if (s.element != e.element || s.isotopes.size() != e.isotopes.size())
-                    mismatch();
-                for (std::size_t k = 0; k < s.isotopes.size(); ++k) {
-                    const auto &a = s.isotopes[k];
-                    const auto &b = e.isotopes[k];
-                    if (a.massNumber != b.massNumber || a.exactMass != b.exactMass ||
-                        a.fraction != b.fraction)
-                        mismatch();
-                }
+                if (s.element != e.element) mismatch();
+                core::validate_isotopes(s.element, s.isotopes);
+                if (!core::same_isotopes(core::resolved_isotopes(s), core::resolved_isotopes(e))) mismatch();
                 sum += s.concentration;
             }
             if (!std::isfinite(sum) || std::abs(sum - 1) > 1e-6)
@@ -165,6 +160,9 @@ class LayerPlan {
     const model::ForwardModelMetadata &metadata_;
     std::unordered_map<std::string, std::size_t> columns_;
     std::vector<unsigned char> seen_;
+    // Views borrow immutable package metadata or the static natural database.
+    std::vector<std::span<const core::Isotope>> compositions_;
+    std::vector<bool> natural_matches_;
     struct MeasurementPlan {
         bool rebin = false, exposure = false, times = false;
         const core::Measurement *actual = nullptr;
@@ -175,7 +173,16 @@ class LayerPlan {
     explicit LayerPlan(const model::ForwardModelMetadata &metadata) : metadata_(metadata) {
         const auto &schema = std::get<model::LayerInputSchema>(metadata.input_preparation);
         seen_.resize(schema.elements.size());
-        for (std::size_t i = 0; i < schema.elements.size(); ++i) columns_.emplace(schema.elements[i], i);
+        columns_.reserve(schema.elements.size());
+        compositions_.reserve(schema.elements.size());
+        natural_matches_.reserve(schema.elements.size());
+        for (std::size_t i = 0; i < schema.elements.size(); ++i) {
+            columns_.emplace(schema.elements[i], i);
+            auto expected = schema.composition(schema.elements[i]);
+            compositions_.push_back(expected);
+            const auto natural = core::natural_isotopes(schema.elements[i]);
+            natural_matches_.push_back(!natural.empty() && core::same_isotopes(natural, expected));
+        }
         measurements_.resize(metadata.reference_setup.measurements.size());
         for (std::size_t i = 0; i < measurements_.size(); ++i)
             for (const auto &pipeline : metadata.output_preparation)
@@ -236,8 +243,16 @@ class LayerPlan {
                 const auto found = columns_.find(s.element);
                 if (found == columns_.end()) throw std::invalid_argument("unsupported element: " + s.element);
                 const auto column = found->second;
-                if (seen_[column]++ || !std::isfinite(s.concentration) || s.concentration < 0 || !s.isotopes.empty())
+                if (seen_[column]++ || !std::isfinite(s.concentration) || s.concentration < 0)
                     throw std::invalid_argument("invalid or unsupported species in AD input");
+                if (s.isotopes.empty()) {
+                    if (!natural_matches_[column])
+                        throw std::invalid_argument("natural isotope composition does not match model assumption for " + s.element);
+                } else {
+                    core::validate_isotopes(s.element, s.isotopes);
+                    if (!core::same_isotopes(s.isotopes, compositions_[column]))
+                        throw std::invalid_argument("isotope composition does not match model assumption for " + s.element);
+                }
                 sum += s.concentration;
                 const float value = static_cast<float>(layer.thickness * s.concentration);
                 if (!std::isfinite(value)) throw std::invalid_argument("areal density exceeds float32 range");

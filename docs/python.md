@@ -253,3 +253,22 @@ avoid repeated Python buffer allocation.
 metadata, readers/writers and model execution. It does not use the archived
 extension from `old/`. See [test_wrapper.py](../tests/test_wrapper.py) for executable examples and
 [testing.md](testing.md) for test commands.
+
+### Isotope compositions
+
+```python
+natural_si = ibl.Species("Si", 1.0)  # Empty list uses iBeamLab's natural mixture.
+enriched_si = ibl.Species("Si", 1.0, (ibl.Isotope(28, 0.9), ibl.Isotope(29, 0.1)))
+natural_fractions = ibl.natural_isotopes("Si")
+atomic_masses = ibl.isotope_data("Si")
+
+schema = ibl.LayerInputSchema(["Si", "O"], isotope_compositions=[
+    ibl.ElementComposition("Si", enriched_si.isotopes),
+])
+```
+
+Element concentration and isotope fraction have separate normalization: element
+concentrations sum to one per layer, isotope fractions sum to one per element.
+The schema above declares enriched silicon and natural oxygen at any layer count.
+Inference accepts only compositions matching those assumptions. Package export
+freezes all fractions explicitly. Re-export packages produced with earlier metadata.

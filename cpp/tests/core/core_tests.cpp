@@ -1,4 +1,6 @@
 #include <ibeamlab/core/parameter.h>
+#include <ibeamlab/core/isotopes.h>
+#include <cmath>
 #include <ibeamlab/core/units.h>
 #include <ibeamlab/core/validation.h>
 #include <iostream>
@@ -20,6 +22,22 @@ template <class F> void rejects(F f) {
     require(rejected);
 }
 int main() {
+    const auto silicon = natural_isotopes("Si");
+    require(silicon.size() == 3 && silicon.data() == natural_isotopes("Si").data());
+    validate_isotopes("Si", silicon);
+    auto reversed = std::vector<Isotope>(silicon.rbegin(), silicon.rend());
+    require(same_isotopes(silicon, reversed));
+    require(!same_isotopes(silicon, std::vector<Isotope>{{28, 1}}));
+    validate_isotopes("Si", std::vector<Isotope>{{28, .9}, {29, .1}});
+    rejects([] { validate_isotopes("Si", std::vector<Isotope>{{0, 1}}); });
+    rejects([] { validate_isotopes("Si", std::vector<Isotope>{{999, 1}}); });
+    rejects([] { validate_isotopes("Si", std::vector<Isotope>{{28, .5}, {28, .5}}); });
+    rejects([] { validate_isotopes("Si", std::vector<Isotope>{{28, std::numeric_limits<double>::quiet_NaN()}}); });
+    rejects([] { validate_isotopes("Si", std::vector<Isotope>{{28, .9}}); });
+    rejects([] { natural_isotopes("Unknown"); });
+    require(natural_isotopes("Tc").empty());
+    rejects([] { validate_isotopes("Tc", {}); });
+    for (const auto &isotope : isotope_data("Si")) require(isotope.exactMass > 0);
     Experiment experiment;
     Layer layer;
     layer.thickness = 500;

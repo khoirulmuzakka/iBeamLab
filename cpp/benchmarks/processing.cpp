@@ -1,3 +1,4 @@
+#include <ibeamlab/core/isotopes.h>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -166,6 +167,19 @@ int main() {
     for (int i = 0; i < iterations; ++i) sequence.predict_batch(cases, population_results);
     counting = false;
     std::cout << "Mixed-layer experiment batch: " << allocations << " C++ new allocations after warmup\n";
+    passed = passed && allocations == 0;
+    for (auto &experiment : cases)
+        for (auto &layer : experiment.sample.layers)
+            for (auto &species : layer.species) {
+                auto natural = core::natural_isotopes(species.element);
+                species.isotopes.assign(natural.rbegin(), natural.rend());
+            }
+    sequence.predict_batch(cases, population_results);
+    allocations = 0;
+    counting = true;
+    for (int i = 0; i < iterations; ++i) sequence.predict_batch(cases, population_results);
+    counting = false;
+    std::cout << "Explicit natural-isotope batch: " << allocations << " C++ new allocations after warmup\n";
     passed = passed && allocations == 0;
 #endif
     return passed ? 0 : 1;

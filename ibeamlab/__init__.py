@@ -9,12 +9,12 @@ from .exceptions import (
     IBeamLabError, ValidationError, ConfigurationError, NativeExtensionError,
     SimulationError, SimnraUnavailableError, DatasetError, ModelPackageError, InferenceError,
 )
-from .sample import Isotope, Species, Layer, Sample, Beam, Detector, Acquisition, Measurement, ExperimentalSetup, Experiment
+from .sample import natural_isotopes, isotope_data, Isotope, Species, Layer, Sample, Beam, Detector, Acquisition, Measurement, ExperimentalSetup, Experiment
 from .simulator import Spectrum, SimulationFailure, SimulationResult, Simulator, DummySimulator, SimnraMethod, SimnraSimulator
 from .parameters import ParameterSpec, Parameter, ParameterTarget, vary
 from .generation import FailurePolicy, GenerationPlan, GenerationSummary, generate
 from .datasets import Dataset, DatasetMetadata, DatasetRecord, open_dataset
-from .metadata import ForwardModelMetadata, InverseModelMetadata, ModelMetadata, ParameterInputSchema, LayerInputSchema
+from .metadata import ElementComposition, ForwardModelMetadata, InverseModelMetadata, ModelMetadata, ParameterInputSchema, LayerInputSchema
 from .metadata import TensorTransform, TensorPipeline, SpectrumOperation, SpectrumPipeline, SpectrumTransforms
 from .package import Package
 from .models import Model, ForwardModel, InverseInput, InverseModel, InversePrediction, load_model
@@ -66,7 +66,7 @@ def __getattr__(name):
 
 
 __all__ = [
-    "Isotope", "Species", "Layer", "Sample", "Beam", "Detector", "Acquisition", "Measurement",
+    "ElementComposition", "natural_isotopes", "isotope_data", "Isotope", "Species", "Layer", "Sample", "Beam", "Detector", "Acquisition", "Measurement",
     "ExperimentalSetup", "Experiment", "Spectrum", "SimulationFailure", "SimulationResult", "Simulator",
     "DummySimulator", "SimnraMethod", "SimnraSimulator", "ParameterSpec", "Parameter", "vary",
     "FailurePolicy", "GenerationPlan", "GenerationSummary", "generate", "Dataset", "DatasetMetadata",

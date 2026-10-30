@@ -9,7 +9,8 @@ from ibeamlab import native
 
 def valid_metadata(setup: ibl.ExperimentalSetup) -> ibl.ModelMetadata:
     operations: ibl.TensorPipeline = [ibl.MultiplyScale([1e-4])]
-    inputs = ibl.LayerInputSchema(["Si", "O"])
+    inputs = ibl.LayerInputSchema(["Si", "O"], [
+        ibl.ElementComposition("Si", (ibl.Isotope(28, 0.9), ibl.Isotope(29, 0.1)))])
     outputs = ibl.SpectraSchema([ibl.SpectrumSpec("RBS", 5000)])
     forward = ibl.ForwardModelMetadata(setup, inputs, outputs,
         input_transform=ibl.TransformPipeline(operations),
@@ -29,6 +30,8 @@ def native_interoperability(setup: native.ExperimentalSetup, sample: native.Samp
 def invalid_metadata(setup: ibl.ExperimentalSetup) -> None:
     ibl.ParameterSpec("bad", "thickness")  # type: ignore[arg-type]
     ibl.LayerInputSchema([123])  # type: ignore[list-item]
+    ibl.Isotope("Si")  # type: ignore[arg-type]
+    ibl.LayerInputSchema(["Si"], ["natural"])  # type: ignore[list-item]
     ibl.EdpSchema(["Si"], "8")  # type: ignore[arg-type]
     ibl.ForwardModelMetadata(setup, 123, ibl.SpectraSchema())  # type: ignore[arg-type]
     ibl.ForwardModelMetadata(setup, ibl.LayerInputSchema(["Si"]), ibl.SpectraSchema(),
