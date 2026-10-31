@@ -5,10 +5,28 @@ import inspect
 
 
 def validate_onnx_contract(graph, metadata):
-    """Validate exported tensor names/types/shapes without constructing a runtime.
+    """Check a standalone ONNX graph against its scientific tensor contract.
 
-    ONNX is needed only for export. Native package I/O remains runtime independent;
-    the C++ inference session repeats shape checks when loading an executable graph.
+    Parameters
+    ----------
+    graph : onnx.ModelProto
+        Graph loaded without resolving external tensor files.
+    metadata : ModelMetadata or native ModelMetadata
+        Directional scientific contract, including tensor identifiers and widths.
+
+    Raises
+    ------
+    ValueError
+        Metadata or graph names, types, ranks, dimensions or external-data use
+        violate the contract.
+
+    Notes
+    -----
+    Requires ONNX only when called. Checks exactly one float32 graph input and
+    one output, fixed feature widths, and dynamic batch/layer axes for layer graphs.
+    Runs the ONNX structural checker, including nested graph validation for external
+    initializers. Does not execute the graph or prove provider/operator support.
+    Errors from the ONNX checker are propagated.
     """
     import onnx
     from ._engine import to_core
@@ -46,19 +64,59 @@ def validate_onnx_contract(graph, metadata):
 
 def export_package(model, example, metadata, destination, *, opset=17, verify=True,
                    graph_exporter=None):
-    """Export one input tensor and a packed [batch,width] output; verify raw parity.
+    """Export a CPU PyTorch model and its scientific contract to a new .ibm file.
 
-    `example` is a float32 CPU tensor at the declared ONNX input boundary.
-    Runtime input transforms have already been applied; Graph input transforms
-    remain embedded in the supplied model and must not be applied a second time.
-    Output transforms declare whether graph outputs are numerical or already
-    restored to physical reference units. Physical preparation is always runtime.
-    Inverse uncertainty packs [means, probabilities, posterior std]. Only affine
-    output transforms can propagate its standard deviations outside the graph.
-    External-data graphs are deliberately rejected: packages embed one graph.
-    Layer models require graph_exporter(model, example, path, options), an
-    architecture-specific callback that writes an ONNX graph with a runtime loop
-    or other truly dynamic layer computation. Package writing stays generic.
+    Parameters
+    ----------
+    model : torch.nn.Module
+        CPU float32 model with one tensor input and one packed two-dimensional output.
+    example : torch.Tensor
+        Float32 CPU example shaped (batch, features) or (batch, layers, elements).
+        It must be at the declared ONNX input boundary, after runtime input transforms.
+    metadata : ModelMetadata or native ModelMetadata
+        Fitted scientific contract. Numerical transforms must use the coefficients
+        used for training; physical preparation is declared for runtime execution.
+    destination : str or pathlib.Path
+        New .ibm file. The parent directory must exist; existing files are rejected.
+    opset : int, default=17
+        ONNX operator-set version passed to the graph exporter.
+    verify : bool, default=True
+        Compare PyTorch outputs with native ONNX execution for the example batch
+        and a second batch size. Requires an ONNX-enabled native build.
+    graph_exporter : callable(model, example, path, options), optional
+        Architecture-specific exporter that writes the ONNX graph. Required for
+        layer-sequence models so the layer computation is truly dynamic.
+
+    Returns
+    -------
+    Package or native Package
+        Written package. Python metadata inputs return the Python Package facade;
+        native metadata preserves the native package return type.
+
+    Raises
+    ------
+    FileExistsError
+        destination already exists.
+    ValueError
+        Example shape/device/dtype or the scientific graph contract is invalid.
+    RuntimeError
+        Native graph execution or package writing fails.
+
+    Notes
+    -----
+    PyTorch and ONNX are imported on use. Structural graph validation always
+    runs; verify controls numerical parity only. Export errors from those
+    dependencies are propagated. The original model train/eval mode is restored
+    on completion or failure.
+
+    Transforms marked GRAPH must already be embedded and must not be applied
+    twice. Output-transform placement declares whether graph values are numerical
+    or restored physical reference units. Physical spectrum preparation remains
+    at runtime. Inverse uncertainty includes means, probabilities and standard
+    deviations, with affine-only runtime propagation of deviations.
+
+    External tensor files are unsupported. Dynamic shape declarations and numerical
+    parity checks do not establish scientific accuracy at untested layer counts.
     """
     import torch
     import numpy as np

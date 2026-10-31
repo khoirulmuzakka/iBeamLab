@@ -1,7 +1,14 @@
-"""Ion-beam simulation, generation, model packaging and inference.
+"""Python API for ion-beam simulation, dataset generation and model inference.
 
-Physical values use keV, seconds and 1e15 atoms/cm2. The compiled extension and
-optional PyTorch dependency are loaded only when their capabilities are used.
+Physical descriptions use keV, degrees, seconds and 1e15 atoms/cm2. Element
+concentrations and isotope fractions have separate normalization constraints.
+The main workflow uses Sample, Experiment, Simulator, GenerationPlan, Package
+and ForwardModel/InverseModel. Native descriptors are loaded lazily on access;
+optional PyTorch and ONNX dependencies are imported when their features are used.
+
+Numerical training transforms and physical detector preparation are separate
+model stages. Device/thread settings belong to InferenceOptions. See each public
+class for array shapes, ownership and fixed scientific assumptions.
 """
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING
@@ -9,7 +16,7 @@ from .exceptions import (
     IBeamLabError, ValidationError, ConfigurationError, NativeExtensionError,
     SimulationError, SimnraUnavailableError, DatasetError, ModelPackageError, InferenceError,
 )
-from .sample import natural_isotopes, isotope_data, Isotope, Species, Layer, Sample, Beam, Detector, Acquisition, Measurement, ExperimentalSetup, Experiment
+from .sample import natural_isotopes, isotope_data, Geometry, Isotope, Species, Layer, Sample, Beam, Detector, Acquisition, Measurement, ExperimentalSetup, Experiment
 from .simulator import Spectrum, SimulationFailure, SimulationResult, Simulator, DummySimulator, SimnraMethod, SimnraSimulator
 from .parameters import ParameterSpec, Parameter, ParameterTarget, vary
 from .generation import FailurePolicy, GenerationPlan, GenerationSummary, generate
@@ -28,6 +35,7 @@ if TYPE_CHECKING:
         BeamEnergy as BeamEnergy, BeamSpread as BeamSpread, CalibrationLinear as CalibrationLinear,
         CalibrationOffset as CalibrationOffset, CalibrationQuadratic as CalibrationQuadratic,
         DetectorResolution as DetectorResolution, ParticlesSr as ParticlesSr,
+        IncidenceAngle as IncidenceAngle, ExitAngle as ExitAngle, ScatteringAngle as ScatteringAngle,
         SpectrumSpec as SpectrumSpec, SpectraSchema as SpectraSchema, Log1p as Log1p,
         MinMaxScale as MinMaxScale, StandardScale as StandardScale, MultiplyScale as MultiplyScale,
         CustomTransform as CustomTransform, ExposureScale as ExposureScale,
@@ -45,7 +53,7 @@ except PackageNotFoundError:
 
 _DESCRIPTORS = {
     "LayerThickness", "SpeciesConcentration", "BeamEnergy", "BeamSpread", "CalibrationLinear",
-    "CalibrationOffset", "CalibrationQuadratic", "DetectorResolution", "ParticlesSr",
+    "CalibrationOffset", "CalibrationQuadratic", "DetectorResolution", "ParticlesSr", "IncidenceAngle", "ExitAngle", "ScatteringAngle",
     "ParameterBounds", "SpectrumSpec", "SpectraSchema", "Log1p", "MinMaxScale", "StandardScale",
     "MultiplyScale", "CustomTransform", "ExposureScale", "Rebin", "Pileup",
     "RemovePileup", "AcquisitionSource", "SpectrumProcessing", "TransformPipeline", "SpectrumTransform", "TransformDirection",
@@ -66,7 +74,7 @@ def __getattr__(name):
 
 
 __all__ = [
-    "ElementComposition", "natural_isotopes", "isotope_data", "Isotope", "Species", "Layer", "Sample", "Beam", "Detector", "Acquisition", "Measurement",
+    "Geometry", "ElementComposition", "natural_isotopes", "isotope_data", "Isotope", "Species", "Layer", "Sample", "Beam", "Detector", "Acquisition", "Measurement",
     "ExperimentalSetup", "Experiment", "Spectrum", "SimulationFailure", "SimulationResult", "Simulator",
     "DummySimulator", "SimnraMethod", "SimnraSimulator", "ParameterSpec", "Parameter", "vary",
     "FailurePolicy", "GenerationPlan", "GenerationSummary", "generate", "Dataset", "DatasetMetadata",

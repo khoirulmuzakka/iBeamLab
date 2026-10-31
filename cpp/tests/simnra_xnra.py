@@ -94,6 +94,11 @@ def load_reference(path, ibl, isotope_masses=None, effective_fractions=None):
     detector = ibl.Detector()
     detector.calibrationOffset, detector.calibrationLinear, detector.calibrationQuadratic = map(lambda e: float(e.text), calibration)
     detector.resolution = float(text(source, 'calibrations/detectorresolutions/detectorresolution/resolutionparameters/resolutionparameter'))
+    geometry = ibl.Geometry()
+    geometry.incidenceAngle = float(text(source, 'geometry/incidenceangle'))
+    geometry.exitAngle = float(text(source, 'geometry/exitangle'))
+    geometry.scatteringAngle = float(text(source, 'geometry/scatteringangle'))
+    detector.geometry = geometry
     measurement.detector = detector
     acquisition = ibl.Acquisition()
     solid_angle = source.find('detection/detector/solidangle')
@@ -115,7 +120,7 @@ def load_reference(path, ibl, isotope_masses=None, effective_fractions=None):
 
 
 
-def recalculate_reference(path, first_layer_scale=1.0, fast=False):
+def recalculate_reference(path, first_layer_scale=1.0, fast=False, geometry=None):
     """Independent COM calculation with the saved target/setup left untouched."""
     import pythoncom
     import win32com.client
@@ -126,8 +131,17 @@ def recalculate_reference(path, first_layer_scale=1.0, fast=False):
     try:
         copied = Path(temporary.name)/path.name
         shutil.copy2(path, copied)
-        for name in ['App', 'Setup', 'Target', 'Spectrum']:
-            objects.append(win32com.client.Dispatch('SIMNRA.'+name))
+        for _ in range(1024):
+            app = win32com.client.DispatchEx('SIMNRA.App')
+            if not app.OLEUser:
+                app.OLEUser = 'iBeamLab-reference-test'
+                break
+            app = None
+        else:
+            raise RuntimeError('Cannot acquire an unclaimed SIMNRA instance')
+        objects.append(app)
+        for name in ['Setup', 'Target', 'Spectrum']:
+            objects.append(win32com.client.DispatchEx('SIMNRA.'+name))
         app, setup, target, spectrum = objects
         if not app.Open(str(copied), -1):
             raise RuntimeError('SIMNRA could not open baseline reference')
@@ -152,10 +166,12 @@ def recalculate_reference(path, first_layer_scale=1.0, fast=False):
             target._oleobj_.Invoke(target._oleobj_.GetIDsOfNames('LayerThickness'), 0,
                                   pythoncom.DISPATCH_PROPERTYPUT, False, 1, thickness)
         if fast:
-            calculation = win32com.client.Dispatch('SIMNRA.Calc')
+            calculation = win32com.client.DispatchEx('SIMNRA.Calc')
             calculation.ElementSpectra = False
             objects.append(calculation)
             calculation = None
+        if geometry is not None:
+            setup.Alpha, setup.Theta, setup.Beta = geometry[0], geometry[2], geometry[1]
         calculate = app.CalculateSpectrumFast if fast else app.CalculateSpectrum
         if not calculate():
             raise RuntimeError('SIMNRA baseline calculation failed')
@@ -164,6 +180,9 @@ def recalculate_reference(path, first_layer_scale=1.0, fast=False):
     finally:
         # Explicitly drop local aliases before uninitializing their apartment.
         calculate = None
+        if objects:
+            try: objects[0].OLEUser = ''
+            except Exception: pass
         app = setup = target = spectrum = None
         objects.clear()
         pythoncom.CoUninitialize()

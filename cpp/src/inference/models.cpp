@@ -45,6 +45,8 @@ bool same_calibration(const core::Detector &a, const core::Detector &b) {
            a.calibrationQuadratic == b.calibrationQuadratic;
 }
 void same_beam(const core::Measurement &a, const core::Measurement &b) {
+    if (a.detector.geometry != b.detector.geometry)
+        throw std::invalid_argument("unsupported detector geometry change: " + a.label);
     if (a.beam.particle != b.beam.particle || a.beam.energy != b.beam.energy ||
         a.beam.spread != b.beam.spread || a.detector.resolution != b.detector.resolution)
         throw std::invalid_argument("unsupported beam or resolution change: " + a.label);

@@ -2,6 +2,7 @@
 
 #include <ibeamlab/core/isotopes.h>
 #include <cmath>
+#include <numbers>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -46,6 +47,18 @@ void Sample::validate() const {
     }
 }
 
+void Geometry::validate() const {
+    if (!std::isfinite(incidenceAngle) || incidenceAngle < 0 || incidenceAngle >= 90 ||
+        !std::isfinite(exitAngle) || exitAngle < 0 || exitAngle > 180 ||
+        !std::isfinite(scatteringAngle) || scatteringAngle < 0 || scatteringAngle > 180)
+        throw std::invalid_argument("geometry requires incidence in [0,90), exit/scattering in [0,180] degrees");
+    const auto radians = std::numbers::pi / 180.;
+    const double a = incidenceAngle * radians, b = exitAngle * radians, t = scatteringAngle * radians;
+    // Existence of an azimuth, including non-coplanar and transmission geometry.
+    if (std::abs(std::cos(t) + std::cos(a) * std::cos(b)) > std::sin(a) * std::sin(b) + 1e-10)
+        throw std::invalid_argument("inconsistent incidence, exit and scattering angles");
+}
+
 void ExperimentalSetup::validate() const {
     if (measurements.empty())
         throw std::invalid_argument("experimental setup requires a measurement");
@@ -60,6 +73,7 @@ void ExperimentalSetup::validate() const {
             if (!std::isfinite(measurement.beam.energy) || measurement.beam.energy <= 0.0)
                 throw std::invalid_argument("beam energy must be finite and positive");
             finiteNonnegative(measurement.beam.spread, "beam spread");
+            measurement.detector.geometry.validate();
             finiteNonnegative(measurement.detector.resolution, "detector resolution");
             finiteNonnegative(measurement.acquisition.particlesSr, "particles per steradian");
             finiteNonnegative(measurement.acquisition.realTime, "real time");

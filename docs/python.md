@@ -272,3 +272,63 @@ concentrations sum to one per layer, isotope fractions sum to one per element.
 The schema above declares enriched silicon and natural oxygen at any layer count.
 Inference accepts only compositions matching those assumptions. Package export
 freezes all fractions explicitly. Re-export packages produced with earlier metadata.
+
+## Detector geometry
+
+Each `Detector` owns a `Geometry`; different measurements may use different angles.
+All values are degrees, with the conventions described in the
+[SIMNRA User's Guide](https://mam.home.ipp.mpg.de/SIMNRA-Users-Guide.pdf).
+
+```python
+detector = ibl.Detector(resolution=15, geometry=ibl.Geometry(
+    incidence_angle=0, exit_angle=15, scattering_angle=165))
+method = ibl.SimnraMethod("RBS", "reference.xnra", "H")
+reference_geometry = method.reference_geometry()  # Reads the actual XNRA values.
+```
+
+The incidence angle is measured from the inward surface normal; the exit angle
+from the outward normal; scattering is between incident and outgoing paths.
+Incidence is in `[0,90)`, exit/scattering in `[0,180]`. Exit values above 90 support
+transmission. Validation checks whether the three directions can coexist, including
+non-coplanar arrangements. It does not impose `alpha + beta + theta = 180`.
+Default geometry is `(0,0,180)`; supply actual angles for physical simulations.
+XNRA reference helpers reject ambiguous multiple-spectrum references. The
+DataGeneration example imports reference angles when its configuration omits them.
+
+Use `vary.incidence_angle`, `vary.exit_angle`, and `vary.scattering_angle` for
+physical parameter columns. Coupled angle rows must remain physically consistent.
+A forward parameter model can declare angle inputs; variable-layer elemental AD
+and inverse models currently require their package reference geometry. Rebinning,
+exposure and pileup operations do not allow changes to fixed model angles.
+
+## Python-defined simulation backends
+
+```python
+class MySimulator(ibl.Simulator):
+    def simulate(self, experiment):
+        # Call your Python simulator using experiment.sample and experiment.setup.
+        return {m.label: calculate_spectrum(experiment, m)
+                for m in experiment.setup.measurements}
+
+backend = MySimulator()
+summary = plan.generate(rows, backend, "datasets/custom", batch_size=256)
+```
+
+No base constructor, binding classes or explicit conversions are needed. Each
+result can be a mapping from measurement labels to count arrays, or a
+`SimulationResult`. Successful results must include exactly the requested labels.
+Override the `provenance` property to record simulator version and physics settings.
+
+The default `simulate_batch` calls `simulate` for each input and turns ordinary
+per-input exceptions into `SimulationFailure` results. Generation applies its
+STOP/RECORD/DISCARD policy to these results. A batch override must return one result
+per input in order; use failed `SimulationResult` entries for per-row failures.
+An exception raised by a batch override aborts the batch. KeyboardInterrupt is
+propagated. A batch override can poll `self.stopped` and use `self.request_stop()`;
+call `reset_stop()` before reusing a cancelled backend. Generation reports Python
+backend progress after a callback completes, before buffered records are committed.
+
+The adapter is cached, holds its Python owner weakly, and acquires the GIL only for
+Python callbacks. Built-in native backends retain their existing execution path.
+Calls on an instance must be serialized. See
+[the Python backend example](../examples/Simulation/python_backend.py).

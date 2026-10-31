@@ -169,7 +169,9 @@ struct LayerInputSchema {
 using ForwardInputSchema = std::variant<ParameterInputSchema, LayerInputSchema>;
 /** @brief Architecture-independent forward input contract and labelled spectra.
  * reference_setup defines fixed experimental conditions, independent of sample
- * layer count. input_preparation defines graph rank and physical packing;
+ * layer count. Each reference detector includes its complete geometry. Geometry
+ * changes require explicit parameter inputs; spectrum corrections cannot change angles.
+ * input_preparation defines graph rank and physical packing;
  * input_transform and output_transform describe fitted training operations.
  * output_preparation contains only measurement corrections, in execution order.
  */

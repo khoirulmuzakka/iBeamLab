@@ -8,6 +8,9 @@ from ibeamlab import native
 
 
 def valid_metadata(setup: ibl.ExperimentalSetup) -> ibl.ModelMetadata:
+    geometry = ibl.Geometry(incidence_angle=0, exit_angle=15, scattering_angle=165)
+    detector = ibl.Detector(geometry=geometry)
+    angle = ibl.ParameterSpec("theta", ibl.ScatteringAngle("RBS"), "degree")
     operations: ibl.TensorPipeline = [ibl.MultiplyScale([1e-4])]
     inputs = ibl.LayerInputSchema(["Si", "O"], [
         ibl.ElementComposition("Si", (ibl.Isotope(28, 0.9), ibl.Isotope(29, 0.1)))])

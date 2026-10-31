@@ -50,6 +50,12 @@ std::string parameter_key(const ParameterTarget &target) {
                 return "calibration.quadratic." + value.measurement;
             else if constexpr (std::is_same_v<T, DetectorResolution>)
                 return "detector.resolution." + value.measurement;
+            else if constexpr (std::is_same_v<T, IncidenceAngle>)
+                return "detector.geometry.incidence." + value.measurement;
+            else if constexpr (std::is_same_v<T, ExitAngle>)
+                return "detector.geometry.exit." + value.measurement;
+            else if constexpr (std::is_same_v<T, ScatteringAngle>)
+                return "detector.geometry.scattering." + value.measurement;
             else
                 return "acquisition.particles_sr." + value.measurement;
         },
@@ -78,6 +84,12 @@ double read_parameter(const Experiment &input, const ParameterTarget &target) {
                     return item.detector.calibrationQuadratic;
                 else if constexpr (std::is_same_v<T, DetectorResolution>)
                     return item.detector.resolution;
+                else if constexpr (std::is_same_v<T, IncidenceAngle>)
+                    return item.detector.geometry.incidenceAngle;
+                else if constexpr (std::is_same_v<T, ExitAngle>)
+                    return item.detector.geometry.exitAngle;
+                else if constexpr (std::is_same_v<T, ScatteringAngle>)
+                    return item.detector.geometry.scatteringAngle;
                 else
                     return item.acquisition.particlesSr;
             }
@@ -116,6 +128,12 @@ void write_parameter(Experiment &input, const ParameterTarget &target, double va
                     item.detector.calibrationQuadratic = value;
                 else if constexpr (std::is_same_v<T, DetectorResolution>)
                     item.detector.resolution = value;
+                else if constexpr (std::is_same_v<T, IncidenceAngle>)
+                    item.detector.geometry.incidenceAngle = value;
+                else if constexpr (std::is_same_v<T, ExitAngle>)
+                    item.detector.geometry.exitAngle = value;
+                else if constexpr (std::is_same_v<T, ScatteringAngle>)
+                    item.detector.geometry.scatteringAngle = value;
                 else
                     item.acquisition.particlesSr = value;
             }

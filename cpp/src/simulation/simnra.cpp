@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <deque>
 #include <future>
+#include <mutex>
 #include <ibeamlab/simulation/simnra.h>
 #include <thread>
 #ifdef IBEAMLAB_HAS_SIMNRA
@@ -49,8 +50,9 @@ struct Value {
     Value(Value &&v) noexcept : value(v.value) { VariantInit(&v.value); }
     ~Value() { VariantClear(&value); }
     std::string text() const {
-        if (value.vt != VT_BSTR || !value.bstrVal)
+        if (value.vt != VT_BSTR)
             throw std::runtime_error("expected COM text");
+        if (!value.bstrVal) return {};
         int n = WideCharToMultiByte(CP_UTF8, 0, value.bstrVal,
                                     static_cast<int>(SysStringLen(value.bstrVal)), nullptr, 0,
                                     nullptr, nullptr);
@@ -81,15 +83,39 @@ std::wstring wide(std::string_view s) {
 struct Dispatch {
     IDispatch *p = nullptr;
     std::map<std::wstring, DISPID> ids;
-    explicit Dispatch(const wchar_t *name) {
+    bool owned_app = false;
+    explicit Dispatch(const wchar_t *name, bool claim_app = false) {
         CLSID cls;
         checked(CLSIDFromProgID(name, &cls));
-        checked(CoCreateInstance(cls, nullptr, CLSCTX_LOCAL_SERVER, IID_IDispatch,
-                                 reinterpret_cast<void **>(&p)));
+        try {
+            // SIMNRA may return an existing application, including an interactive
+            // one. Follow its documented OLEUser ownership protocol before use.
+            for (unsigned attempt = 0; attempt < 1024; ++attempt) {
+                checked(CoCreateInstance(cls, nullptr, CLSCTX_LOCAL_SERVER, IID_IDispatch,
+                                         reinterpret_cast<void **>(&p)));
+                if (claim_app && !call(L"OLEUser", DISPATCH_PROPERTYGET).text().empty()) {
+                    p->Release(); p = nullptr; ids.clear();
+                    continue;
+                }
+                if (claim_app) {
+                    set(L"OLEUser", {Value(std::wstring(L"iBeamLab"))});
+                    owned_app = true;
+                }
+                return;
+            }
+            throw std::runtime_error("cannot acquire an unclaimed SIMNRA instance");
+        } catch (...) {
+            if (p) { p->Release(); p = nullptr; }
+            throw;
+        }
     }
     ~Dispatch() {
-        if (p)
+        if (p) {
+            if (owned_app) {
+                try { set(L"OLEUser", {Value(std::wstring())}); } catch (...) {}
+            }
             p->Release();
+        }
     }
     Dispatch(const Dispatch &) = delete;
     Value call(const wchar_t *name, WORD flags, std::initializer_list<Value> args = {}) {
@@ -171,14 +197,19 @@ struct PrivateDirectory {
             std::filesystem::remove_all(path, ec);
     }
 };
+std::mutex &creation_mutex() { static std::mutex value; return value; }
 struct Session {
+    // Keep each App claim and its related interface activation together. This
+    // lock covers initialization only, never spectrum calculations.
+    std::unique_lock<std::mutex> creation_lock{creation_mutex()};
     PrivateDirectory directory;
-    Dispatch app{L"SIMNRA.App"}, target{L"SIMNRA.Target"}, setup{L"SIMNRA.Setup"},
+    Dispatch app{L"SIMNRA.App", true}, target{L"SIMNRA.Target"}, setup{L"SIMNRA.Setup"},
         spectrum{L"SIMNRA.Spectrum"}, calculation{L"SIMNRA.Calc"};
     std::optional<core::Sample> topology;
     std::optional<core::Measurement> configured_measurement;
     double reference_real_time = 0, reference_live_time = 0;
     explicit Session(const SimnraMethod &method) {
+        creation_lock.unlock();
         static std::atomic_uint64_t sequence{0};
         auto root = std::filesystem::temp_directory_path();
         for (;;) {
@@ -352,6 +383,9 @@ struct Session {
             if (!configured_measurement || value != previous)
                 setup.set(name, {Value(value)});
         };
+        update(L"Alpha", m.detector.geometry.incidenceAngle, old.detector.geometry.incidenceAngle);
+        update(L"Theta", m.detector.geometry.scatteringAngle, old.detector.geometry.scatteringAngle);
+        update(L"Beta", m.detector.geometry.exitAngle, old.detector.geometry.exitAngle);
         update(L"Energy", m.beam.energy, old.beam.energy);
         update(L"Beamspread", m.beam.spread, old.beam.spread);
         update(L"DetectorResolution", m.detector.resolution, old.detector.resolution);

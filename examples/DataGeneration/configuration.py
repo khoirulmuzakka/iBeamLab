@@ -1,7 +1,7 @@
 """Example-specific TOML configuration and multilayer generation orchestration."""
 from collections import Counter
 from contextlib import ExitStack
-from dataclasses import asdict, dataclass
+from dataclasses import replace, asdict, dataclass
 from hashlib import sha256
 from pathlib import Path
 import csv
@@ -278,6 +278,17 @@ def load_configuration(path):
     methods = tuple(ibl.SimnraMethod(m["measurement"],
         (source.parent / m["reference_file"]).resolve(), m["particle"])
         for m in simulation.get("methods", []))
+    if backend == "simnra":
+        by_label = {method.measurement: method for method in methods}
+        actual = []
+        for measurement, raw_measurement in zip(setup.measurements, raw["experiment"]["measurements"]):
+            if "geometry" not in raw_measurement.get("detector", {}):
+                if measurement.label not in by_label:
+                    raise ValueError(f"missing SIMNRA reference for {measurement.label}")
+                measurement = replace(measurement, detector=replace(measurement.detector,
+                    geometry=by_label[measurement.label].reference_geometry()))
+            actual.append(measurement)
+        setup = ibl.ExperimentalSetup(actual)
     if methods or backend == "simnra":
         particles = {m.label: m.beam.particle for m in setup.measurements}
         if len(methods) != len(particles) or {m.measurement: m.particle for m in methods} != particles:

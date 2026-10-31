@@ -35,7 +35,7 @@ explicitly. Readers hold one bounded shard and reuse a caller's record buffers.
 A `.ibm` envelope uses magic `IBMODEL1`; the scientific package format remains
 **1**. Its payload begins with the text `ibeamlab.model` and uint64 `1`,
 then direction (forward=0, inverse=1). Previous development layouts are rejected;
-export existing weights again with the staged contract. Dataset encoding is unchanged.
+export existing weights again with the staged contract. Experimental setup encoding includes explicit detector geometry.
 
 The logical execution order is:
 
@@ -166,3 +166,17 @@ mass slot, but newly written samples store resolved isotope lists. This records
 the generation convention. SIMNRA receives the same resolved fractions, with no
 per-isotope COM updates when the mixture is unchanged. Existing layer replacement
 continues to append new layers before removing old layers.
+
+### Geometry in the format-1 setup contract
+
+Each serialized experimental setup starts with `ibeamlab.setup.geometry` and
+uint64 `1`. Every detector includes incidence, exit and scattering angles in
+degrees after its information string. The same setup encoding is shared by
+model packages and dataset metadata. Parameter tags 9, 10 and 11 identify
+incidence, exit and scattering angles, respectively, selected by measurement label.
+
+Earlier development metadata without geometry is rejected. Re-export model
+packages with actual geometry. Existing dataset metadata needs to be regenerated
+from its true experimental reference; missing angles must not be guessed from a
+default. Existing training-cache reference dictionaries without geometry are
+rejected on export for the same reason. Formats remain 1.

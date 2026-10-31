@@ -9,6 +9,19 @@ struct Beam {
     double spread{0.0}; // keV FWHM
 };
 
+/** @brief Per-detector measurement geometry, in degrees, using SIMNRA conventions.
+ * Incidence alpha is measured from the inward surface normal; exit beta from
+ * the outward normal. Theta is the angle between incident and outgoing paths.
+ * Beta may exceed 90 degrees for transmission. The three angles need not be
+ * coplanar. Default values describe normal incidence and exact backscattering.
+ */
+struct IBEAMLAB_API Geometry {
+    double incidenceAngle{0.0};
+    double exitAngle{0.0};
+    double scatteringAngle{180.0};
+    void validate() const;
+    bool operator==(const Geometry &) const = default;
+};
 /** @brief Detector response and polynomial channel-center calibration.
  * Energy in keV is offset + linear*i + quadratic*i*i for zero-based channel i.
  * Channel edges use half-integer indices and must increase over the used range.
@@ -19,6 +32,7 @@ struct Detector {
     double calibrationQuadratic{0.0};
     double resolution{0.0}; // keV FWHM
     std::string info;
+    Geometry geometry;
 };
 
 /** @brief Exposure and acquisition times for one measurement. */

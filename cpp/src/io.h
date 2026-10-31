@@ -120,6 +120,8 @@ inline std::vector<std::byte> read_envelope(const std::filesystem::path &path,
     return bytes;
 }
 inline void encode(Encoder &e, const core::ExperimentalSetup &setup) {
+    e.text("ibeamlab.setup.geometry");
+    e.integer(1);
     e.integer(setup.measurements.size());
     for (const auto &m : setup.measurements) {
         e.text(m.label);
@@ -131,6 +133,9 @@ inline void encode(Encoder &e, const core::ExperimentalSetup &setup) {
         e.real(m.detector.calibrationQuadratic);
         e.real(m.detector.resolution);
         e.text(m.detector.info);
+        e.real(m.detector.geometry.incidenceAngle);
+        e.real(m.detector.geometry.exitAngle);
+        e.real(m.detector.geometry.scatteringAngle);
         e.real(m.acquisition.particlesSr);
         e.real(m.acquisition.realTime);
         e.real(m.acquisition.liveTime);
@@ -163,6 +168,8 @@ inline void encode(Encoder &e, const core::Experiment &x) {
 }
 inline core::ExperimentalSetup setup(Decoder &d) {
     core::ExperimentalSetup result;
+    if (d.text() != "ibeamlab.setup.geometry" || d.integer() != 1)
+        throw std::runtime_error("unsupported setup contract: explicit detector geometry is required");
     result.measurements.resize(d.count(1024));
     for (auto &m : result.measurements) {
         m.label = d.text();
@@ -174,6 +181,9 @@ inline core::ExperimentalSetup setup(Decoder &d) {
         m.detector.calibrationQuadratic = d.real();
         m.detector.resolution = d.real();
         m.detector.info = d.text();
+        m.detector.geometry.incidenceAngle = d.real();
+        m.detector.geometry.exitAngle = d.real();
+        m.detector.geometry.scatteringAngle = d.real();
         m.acquisition.particlesSr = d.real();
         m.acquisition.realTime = d.real();
         m.acquisition.liveTime = d.real();
@@ -251,6 +261,9 @@ inline core::ParameterTarget target(Decoder &d) {
         return core::DetectorResolution{d.text()};
     case 8:
         return core::ParticlesSr{d.text()};
+    case 9: return core::IncidenceAngle{d.text()};
+    case 10: return core::ExitAngle{d.text()};
+    case 11: return core::ScatteringAngle{d.text()};
     default:
         throw std::runtime_error("unknown parameter target");
     }

@@ -165,7 +165,15 @@ if(IBEAMLAB_BUILD_PYTHON)
                 IsotopeTests.test_simnra_natural_enriched_and_restored)
             set_tests_properties(simnra-isotopes PROPERTIES ENVIRONMENT "IBEAMLAB_TEST_SIMNRA=1"
                 LABELS "integration;licensed;simnra" RUN_SERIAL TRUE TIMEOUT 90)
+            add_test(NAME simnra-geometry COMMAND "${Python_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tests/test_geometry_backends.py" "$<TARGET_FILE_DIR:_ibeamlab>"
+                "${IBEAMLAB_ENABLE_ONNX}" BackendTests.test_simnra_geometry_updates)
+            set_tests_properties(simnra-geometry PROPERTIES ENVIRONMENT "IBEAMLAB_TEST_SIMNRA=1"
+                LABELS "integration;licensed;simnra" RUN_SERIAL TRUE TIMEOUT 90)
         endif()
+        add_test(NAME geometry-python-backends COMMAND "${Python_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/test_geometry_backends.py" "$<TARGET_FILE_DIR:_ibeamlab>" "${IBEAMLAB_ENABLE_ONNX}")
+        set_tests_properties(geometry-python-backends PROPERTIES LABELS "unit;integration;python")
         add_test(NAME python-api COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/python_api.py" "$<TARGET_FILE_DIR:_ibeamlab>" "${IBEAMLAB_ENABLE_ONNX}")
         set_tests_properties(python-api PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}" LABELS "integration;python")
         add_test(NAME python-wrapper COMMAND "${Python_EXECUTABLE}"

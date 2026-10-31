@@ -9,17 +9,65 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class TrainingHistory:
-    """Sample-weighted mean loss per epoch and optional validation loss."""
+    """Report scalar epoch losses from the lightweight CPU training helper.
+
+    Parameters
+    ----------
+    loss : tuple[float, ...]
+        Sample-weighted mean training loss for every completed epoch.
+    validation_loss : tuple[float, ...]
+        Validation loss for each epoch, or an empty tuple without validation data.
+    """
     loss: tuple[float, ...]
     validation_loss: tuple[float, ...]
 
 
 def fit(model, inputs, targets, *, epochs=100, batch_size=64, learning_rate=1e-3,
         validation_data=None, optimizer=None, loss_fn=None, seed=42):
-    """Train a CPU model on preprocessed float32 rows, preserving its original mode.
+    """Train a user-supplied CPU PyTorch model on preprocessed fixed-width arrays.
 
-    Defaults to Adam and mean-squared error. Supply a scalar mean-reduced loss
-    for other objectives. Shuffling uses an independent seeded generator.
+    Parameters
+    ----------
+    model : torch.nn.Module
+        CPU model mapping (batch, input_width) to (batch, output_width).
+    inputs : array_like or torch.Tensor
+        Nonempty aligned two-dimensional training inputs; converted to CPU float32.
+    targets : array_like or torch.Tensor
+        Two-dimensional training targets with the same row count.
+    epochs : int, default=100
+        Positive number of epochs.
+    batch_size : int, default=64
+        Positive optimization minibatch size.
+    learning_rate : float, default=1e-3
+        Learning rate used when constructing the default Adam optimizer.
+    validation_data : tuple(inputs, targets), optional
+        Preprocessed validation matrices; evaluated as a complete set after each epoch.
+    optimizer : torch.optim.Optimizer, optional
+        Existing optimizer; otherwise Adam is created.
+    loss_fn : callable, optional
+        Finite scalar mean-reduced loss; defaults to mean-squared error.
+    seed : int, default=42
+        Independent generator seed controlling row shuffling.
+
+    Returns
+    -------
+    TrainingHistory
+        Sample-weighted training losses and optional full-set validation losses.
+
+    Raises
+    ------
+    ValueError
+        Matrices, devices, shapes, dimensions or scalar losses are invalid.
+
+    Notes
+    -----
+    PyTorch is imported only on use. All preprocessing must already have been
+    applied; export fitted transform descriptors with the graph for inference.
+    The model original train/eval mode is restored even after an exception.
+
+    This helper operates on small fixed-width CPU datasets. Checkpointing, staged
+    schedules and disk-backed recurrent-model training are provided by the example
+    workflow under examples/ibeamnet, rather than this convenience helper.
     """
     import torch
     if epochs < 1 or batch_size < 1:

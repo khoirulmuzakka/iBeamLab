@@ -53,9 +53,16 @@ struct ParticlesSr {
     std::string measurement;
 };
 
+/** @brief Detector measurement incidence alpha in degrees, selected by label. */
+struct IncidenceAngle { std::string measurement; };
+/** @brief Detector measurement exit beta in degrees, selected by label. */
+struct ExitAngle { std::string measurement; };
+/** @brief Detector scattering theta in degrees, selected by label. */
+struct ScatteringAngle { std::string measurement; };
+
 using ParameterTarget =
     std::variant<LayerThickness, SpeciesConcentration, BeamEnergy, BeamSpread, CalibrationLinear,
-                 CalibrationOffset, CalibrationQuadratic, DetectorResolution, ParticlesSr>;
+                 CalibrationOffset, CalibrationQuadratic, DetectorResolution, ParticlesSr, IncidenceAngle, ExitAngle, ScatteringAngle>;
 
 /** @brief Returns a stable identity used for duplicate-target validation. */
 IBEAMLAB_API std::string parameter_key(const ParameterTarget &target);

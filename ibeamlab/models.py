@@ -28,16 +28,40 @@ def _spectra(values):
 
 @dataclass(frozen=True, slots=True)
 class InverseInput:
-    """Measured setup and labelled spectra, supplied as a mapping or sequence.
+    """Describe measured spectra and setup for inverse inference.
 
-    pileup_already_removed skips the first requested-acquisition RemovePileup
-    step for every measurement. Caller spectrum order does not affect packing.
+    Parameters
+    ----------
+    setup : ExperimentalSetup or native ExperimentalSetup
+        Measurement conditions at which the spectra were acquired.
+    spectra : mapping of str to array_like or sequence of Spectrum
+        Finite nonnegative count spectra, identified by measurement label.
+    pileup_already_removed : bool, default=False
+        Skip the first requested-acquisition RemovePileup operation for each
+        measurement. Other preparation and numerical transforms remain active.
+
+    Notes
+    -----
+    Spectrum input order is independent of metadata packing order. Avoid marking
+    pileup as removed unless the supplied data has actually undergone that correction.
     """
     setup: object
     spectra: object
     pileup_already_removed: bool = False
 
     def to_core(self):
+        """Convert this description to an owning native value.
+
+        Returns
+        -------
+        ibeamlab.native.InverseInput
+            Native value for lower-level workflows.
+
+        Notes
+        -----
+        Converts setup and spectra into owning native inputs. Count arrays are copied
+        at this boundary; ordinary inverse inference performs conversion automatically.
+        """
         if not isinstance(self.pileup_already_removed, bool):
             raise ValueError("pileup_already_removed must be boolean")
         value = engine().InverseInput()
@@ -48,7 +72,32 @@ class InverseInput:
 
 @dataclass(frozen=True, slots=True)
 class InversePrediction:
-    """Physical float64 arrays shaped [layer,element], surface to depth."""
+    """Expose physical elemental depth profiles and optional graph uncertainty.
+
+    Parameters
+    ----------
+    elements : tuple[str, ...]
+        Ordered element symbols.
+    values : numpy.ndarray
+        Read-only float64 elemental AD, shaped (layers, elements), surface to depth.
+    presence_probability : numpy.ndarray
+        Read-only matrix with the same shape, containing layer/element presence
+        probabilities. Without graph uncertainty this is derived from positive AD.
+    posterior_std : numpy.ndarray
+        Read-only physical posterior standard deviations with the same shape.
+        Zero when uncertainty was not predicted.
+    uncertainty_predicted : bool
+        Whether the graph supplied uncertainty channels.
+    unit : str
+        Physical AD unit, normally "1e15 atoms/cm2".
+
+    Notes
+    -----
+    layers is the fixed maximum declared by the inverse schema. Numerical
+    processing restores physical values and propagates affine standard deviations.
+    Arrays retain their native owner. Predicted uncertainty is a model output,
+    not a guarantee of statistical calibration.
+    """
     elements: tuple[str, ...]
     values: np.ndarray
     presence_probability: np.ndarray
@@ -58,6 +107,22 @@ class InversePrediction:
 
     @classmethod
     def from_core(cls, value):
+        """Construct Python-facing values from a native result.
+
+        Parameters
+        ----------
+        value : ibeamlab.native.Prediction
+            Source value; it is not modified.
+
+        Returns
+        -------
+        InversePrediction
+            Python representation of the supplied value.
+
+        Notes
+        -----
+        Returns read-only array views retaining the native prediction owner.
+        """
         return cls(tuple(value.elements), value.values_array,
                    value.presence_probability_array,
                    value.posterior_std_array,
@@ -65,8 +130,31 @@ class InversePrediction:
 
 
 class Model:
-    """Loaded model; create one instance per worker rather than calling concurrently."""
+    """Hold package metadata and runtime options for an inference session.
+
+    Parameters
+    ----------
+    package : Package, native Package, str or pathlib.Path
+        Owning package or path to a package file.
+    options : InferenceOptions or native InferenceOptions, optional
+        Execution provider, device, threading and runtime controls.
+
+    Raises
+    ------
+    ValidationError
+        options has an unsupported type.
+    ModelPackageError
+        A supplied package path cannot be opened.
+
+    Notes
+    -----
+    Use ForwardModel, InverseModel or load_model() for executable inference.
+    Loaded metadata should be treated as read-only. One model instance belongs
+    to each concurrent worker; calls on a shared instance must be serialized.
+    """
     def __init__(self, package, *, options: InferenceOptions | core.InferenceOptions | None = None) -> None:
+        """Load package descriptions and convert session options; see Model.
+        """
         self.package = Package.open(package) if isinstance(package, (str, Path)) else package
         self._package = to_core(self.package)
         self.metadata = ModelMetadata.from_core(self._package.metadata)
@@ -78,8 +166,34 @@ class Model:
 
 
 class ForwardModel(Model):
-    """Physical experiment to one or several independently processed spectra."""
+    """Predict labelled detector spectra from a physical sample description.
+
+    Parameters
+    ----------
+    package : Package, native Package, str or pathlib.Path
+        Forward package containing an ONNX graph and scientific metadata.
+    options : InferenceOptions or native InferenceOptions, optional
+        Session provider/device options; defaults to CPU with one thread per setting.
+
+    Raises
+    ------
+    InferenceError
+        The graph, directional contract or requested runtime cannot initialize.
+
+    Notes
+    -----
+    Ordinary use is predict(experiment) or predict_batch(experiments). Advanced
+    methods accept direct elemental areal-density arrays or return reference spectra.
+    Runtime scratch and native capacity are retained, but convenience methods that
+    return owning results still allocate output objects. Use out on direct-AD batch
+    methods to reuse caller storage.
+
+    Each instance owns an ONNX session and must not be called concurrently.
+    Independent CPU and CUDA instances can be used by separate fitting workers.
+    """
     def __init__(self, package, *, options: InferenceOptions | core.InferenceOptions | None = None) -> None:
+        """Initialize a forward ONNX session; see ForwardModel for arguments and errors.
+        """
         super().__init__(package, options=options)
         try:
             self._core = engine().ForwardModel(self._package, self._options)
@@ -88,27 +202,124 @@ class ForwardModel(Model):
             raise InferenceError(str(error)) from error
 
     def predict(self, experiment):
+        """Predict spectra at the requested measurement conditions.
+
+        Parameters
+        ----------
+        experiment : Experiment
+            Physical sample and setup. Unsupported changes to geometry, beam, isotope
+            mixtures or unvaried fields are rejected by the package contract.
+
+        Returns
+        -------
+        SimulationResult
+            Labelled float64 count spectra; arrays retain their owning native result
+            and remain valid after subsequent predictions.
+
+        Raises
+        ------
+        InferenceError
+            The request is incompatible, graph execution fails, or processing is invalid.
+
+        Notes
+        -----
+        Applies numerical transforms and the ordered per-detector physical output
+        preparation declared in the package.
+        """
         try:
             return result_from_core(self._core.predict(to_core(experiment)))
         except (ValueError, RuntimeError) as error:
             raise InferenceError(str(error)) from error
 
     def predict_batch(self, experiments):
-        """Execute one ONNX batch; differing layer counts are zero-padded."""
+        """Predict spectra at the requested measurement conditions in one graph batch.
+
+        Parameters
+        ----------
+        experiments : sequence of Experiment
+            Physical sample and setup. Unsupported changes to geometry, beam, isotope
+            mixtures or unvaried fields are rejected by the package contract.
+
+        Returns
+        -------
+        list[SimulationResult]
+            Labelled float64 count spectra; arrays retain their owning native result
+            and remain valid after subsequent predictions.
+
+        Raises
+        ------
+        InferenceError
+            The request is incompatible, graph execution fails, or processing is invalid.
+
+        Notes
+        -----
+        Applies numerical transforms and the ordered per-detector physical output
+        preparation declared in the package.
+        Different layer counts are zero-padded for layer-input graphs. An empty input
+        sequence returns an empty list. Each result retains its own output storage.
+        """
         try:
             return [result_from_core(r) for r in self._core.predict_batch([to_core(x) for x in experiments])]
         except (ValueError, RuntimeError) as error:
             raise InferenceError(str(error)) from error
 
     def predict_reference(self, experiment):
-        """Physical input to reference-condition spectra; numerical transforms still run."""
+        """Predict reference-condition spectra.
+
+        Parameters
+        ----------
+        experiment : Experiment
+            Physical sample and setup. Unsupported changes to geometry, beam, isotope
+            mixtures or unvaried fields are rejected by the package contract.
+
+        Returns
+        -------
+        SimulationResult
+            Labelled float64 count spectra; arrays retain their owning native result
+            and remain valid after subsequent predictions.
+
+        Raises
+        ------
+        InferenceError
+            The request is incompatible, graph execution fails, or processing is invalid.
+
+        Notes
+        -----
+        Skips physical output_preparation only. Input packing and numerical training
+        transforms still run. Returned counts use the reference spectrum grid/state.
+        """
         try:
             return result_from_core(self._core.predict_reference(to_core(experiment)))
         except (ValueError, RuntimeError) as error:
             raise InferenceError(str(error)) from error
 
     def predict_reference_batch(self, experiments):
-        """One ONNX population call, returning physical reference spectra."""
+        """Predict reference-condition spectra in one graph batch.
+
+        Parameters
+        ----------
+        experiments : sequence of Experiment
+            Physical sample and setup. Unsupported changes to geometry, beam, isotope
+            mixtures or unvaried fields are rejected by the package contract.
+
+        Returns
+        -------
+        list[SimulationResult]
+            Labelled float64 count spectra; arrays retain their owning native result
+            and remain valid after subsequent predictions.
+
+        Raises
+        ------
+        InferenceError
+            The request is incompatible, graph execution fails, or processing is invalid.
+
+        Notes
+        -----
+        Skips physical output_preparation only. Input packing and numerical training
+        transforms still run. Returned counts use the reference spectrum grid/state.
+        Different layer counts are zero-padded for layer-input graphs. An empty input
+        sequence returns an empty list. Each result retains its own output storage.
+        """
         try:
             return [result_from_core(r) for r in self._core.predict_batch(
                 [to_core(x) for x in experiments], engine().PredictionDomain.REFERENCE)]
@@ -116,7 +327,33 @@ class ForwardModel(Model):
             raise InferenceError(str(error)) from error
 
     def predict_reference_areal_density(self, densities):
-        """Physical AD [layers,elements] to spectra before measurement corrections."""
+        """Predict reference spectra directly from elemental areal-density arrays.
+
+        Parameters
+        ----------
+        densities : array_like, shape (layers, elements)
+            Nonnegative physical elemental AD in 1e15 atoms/cm2, ordered as metadata
+            elements. There is no total-thickness column. Isotope mixtures are the
+            fixed assumptions of the layer schema.
+
+        Returns
+        -------
+        SimulationResult
+            Labelled physical float64 spectra retaining their native owning result.
+
+        Raises
+        ------
+        InferenceError
+            The model is not layer-input, dimensions/values are invalid, setup is
+            incompatible, an output buffer is invalid, or graph execution fails.
+
+        Notes
+        -----
+        Contiguous float32 inputs are borrowed; other types/layouts are converted.
+        Numerical transforms use retained native scratch and never modify the input.
+        Physical output preparation is skipped; numerical transforms still run.
+        This avoids constructing layers/species for repeated optimization evaluations.
+        """
         values = np.ascontiguousarray(densities, dtype=np.float32)
         try:
             return result_from_core(self._core.predict_areal_density(values, None, engine().PredictionDomain.REFERENCE))
@@ -124,12 +361,39 @@ class ForwardModel(Model):
             raise InferenceError(str(error)) from error
 
     def predict_reference_areal_density_batch(self, densities, *, out=None):
-        """One graph call for AD [population,layers,elements], with reusable output.
+        """Predict reference spectra directly from elemental areal-density arrays.
 
-        out is writable contiguous float64 [population,sum(reference channels)].
-        Returned per-detector arrays view out; all training transforms execute
-        exactly once at their declared graph/runtime location. No physical output
-        preparation (pileup, exposure or rebinning) is executed.
+        Parameters
+        ----------
+        densities : array_like, shape (batch, layers, elements)
+            Nonnegative physical elemental AD in 1e15 atoms/cm2, ordered as metadata
+            elements. There is no total-thickness column. Isotope mixtures are the
+            fixed assumptions of the layer schema.
+        out : numpy.ndarray, optional
+            Writable contiguous float64 array shaped (batch, sum(output channels)).
+            Uses reference channels for reference inference and processed channels
+            otherwise. Must not overlap input storage.
+
+        Returns
+        -------
+        dict[str, numpy.ndarray]
+            Per-detector float64 arrays shaped (batch, detector_channels). When out is
+            supplied these are views of caller storage; reusing out changes previous views.
+            Without out, newly allocated output storage is retained by the returned arrays.
+
+        Raises
+        ------
+        InferenceError
+            The model is not layer-input, dimensions/values are invalid, setup is
+            incompatible, an output buffer is invalid, or graph execution fails.
+
+        Notes
+        -----
+        Contiguous float32 inputs are borrowed; other types/layouts are converted.
+        Numerical transforms use retained native scratch and never modify the input.
+        Physical output preparation is skipped; numerical transforms still run.
+        This is one ONNX call for the whole population, including reduced populations.
+        Per-detector output views may be strided when multiple detectors share out.
         """
         values = np.ascontiguousarray(densities, dtype=np.float32)
         try:
@@ -138,10 +402,35 @@ class ForwardModel(Model):
             raise InferenceError(str(error)) from error
 
     def predict_areal_density(self, densities, *, setup=None):
-        """Physical AD [layers,elements] in metadata order; no thickness column.
+        """Predict physical spectra directly from elemental areal-density arrays.
 
-        Contiguous float32 arrays are passed through without a Python copy.
-        Other array types/layouts are converted once. Caller storage stays unchanged.
+        Parameters
+        ----------
+        densities : array_like, shape (layers, elements)
+            Nonnegative physical elemental AD in 1e15 atoms/cm2, ordered as metadata
+            elements. There is no total-thickness column. Isotope mixtures are the
+            fixed assumptions of the layer schema.
+        setup : ExperimentalSetup, optional
+            Requested detector calibration/exposure/times within the model contract.
+            Defaults to the package reference; fixed geometry must still match.
+
+        Returns
+        -------
+        SimulationResult
+            Labelled physical float64 spectra retaining their native owning result.
+
+        Raises
+        ------
+        InferenceError
+            The model is not layer-input, dimensions/values are invalid, setup is
+            incompatible, an output buffer is invalid, or graph execution fails.
+
+        Notes
+        -----
+        Contiguous float32 inputs are borrowed; other types/layouts are converted.
+        Numerical transforms use retained native scratch and never modify the input.
+        Per-detector physical preparation is applied in declared order.
+        This avoids constructing layers/species for repeated optimization evaluations.
         """
         values = np.ascontiguousarray(densities, dtype=np.float32)
         try:
@@ -150,15 +439,42 @@ class ForwardModel(Model):
             raise InferenceError(str(error)) from error
 
     def predict_areal_density_batch(self, densities, *, setup=None, out=None):
-        """One ONNX call for physical AD [population,layers,elements].
+        """Predict physical spectra directly from elemental areal-density arrays.
 
-        Returns {measurement: float64 [population,processed_channels]} arrays.
-        Element order follows metadata. setup applies to the whole population.
-        Pass writable contiguous float64 out [population,total_processed_channels]
-        to reuse output storage across DE iterations. Returned arrays view that
-        storage and change when it is reused. Without out, results own new storage.
-        Contiguous float32 input is borrowed; transforms use retained scratch.
-        One model instance per fitting worker; calls on an instance must serialize.
+        Parameters
+        ----------
+        densities : array_like, shape (batch, layers, elements)
+            Nonnegative physical elemental AD in 1e15 atoms/cm2, ordered as metadata
+            elements. There is no total-thickness column. Isotope mixtures are the
+            fixed assumptions of the layer schema.
+        setup : ExperimentalSetup, optional
+            Requested detector calibration/exposure/times within the model contract.
+            Defaults to the package reference; fixed geometry must still match.
+        out : numpy.ndarray, optional
+            Writable contiguous float64 array shaped (batch, sum(output channels)).
+            Uses reference channels for reference inference and processed channels
+            otherwise. Must not overlap input storage.
+
+        Returns
+        -------
+        dict[str, numpy.ndarray]
+            Per-detector float64 arrays shaped (batch, detector_channels). When out is
+            supplied these are views of caller storage; reusing out changes previous views.
+            Without out, newly allocated output storage is retained by the returned arrays.
+
+        Raises
+        ------
+        InferenceError
+            The model is not layer-input, dimensions/values are invalid, setup is
+            incompatible, an output buffer is invalid, or graph execution fails.
+
+        Notes
+        -----
+        Contiguous float32 inputs are borrowed; other types/layouts are converted.
+        Numerical transforms use retained native scratch and never modify the input.
+        Per-detector physical preparation is applied in declared order.
+        This is one ONNX call for the whole population, including reduced populations.
+        Per-detector output views may be strided when multiple detectors share out.
         """
         values = np.ascontiguousarray(densities, dtype=np.float32)
         try:
@@ -168,8 +484,29 @@ class ForwardModel(Model):
 
 
 class InverseModel(Model):
-    """Measured multi-spectrum input to physical elemental depth profiles."""
+    """Infer a fixed-maximum-layer elemental profile from measured spectra.
+
+    Parameters
+    ----------
+    package : Package, native Package, str or pathlib.Path
+        Inverse model package.
+    options : InferenceOptions or native InferenceOptions, optional
+        Execution provider and session controls.
+
+    Raises
+    ------
+    InferenceError
+        The directional contract, graph or runtime cannot initialize.
+
+    Notes
+    -----
+    Physical input preparation is followed by fitted numerical transforms, ONNX
+    execution and physical EDP processing. Use one instance per concurrent worker.
+    Model metadata defines a fixed maximum layer count and reference geometry.
+    """
     def __init__(self, package, *, options: InferenceOptions | core.InferenceOptions | None = None) -> None:
+        """Initialize an inverse ONNX session; see InverseModel for its contract.
+        """
         super().__init__(package, options=options)
         try:
             self._core = engine().InverseModel(self._package, self._options)
@@ -178,26 +515,116 @@ class InverseModel(Model):
             raise InferenceError(str(error)) from error
 
     def predict(self, inputs):
+        """Prepare measured spectra and infer elemental depth profiles.
+
+        Parameters
+        ----------
+        inputs : InverseInput
+            Labelled counts and their acquisition setup, consistent with fixed model assumptions.
+
+        Returns
+        -------
+        InversePrediction
+            Physical float64 EDP and uncertainty arrays retaining native owners.
+
+        Raises
+        ------
+        InferenceError
+            Labels, dimensions, geometry, state or processing are incompatible, or
+            graph execution fails.
+
+        Notes
+        -----
+        Each input follows its per-detector physical and numerical preparation.
+        """
         try:
             return InversePrediction.from_core(self._core.predict(to_core(inputs)))
         except (ValueError, RuntimeError) as error:
             raise InferenceError(str(error)) from error
 
     def predict_batch(self, inputs):
+        """Prepare measured spectra and infer elemental depth profiles in one graph batch.
+
+        Parameters
+        ----------
+        inputs : sequence of InverseInput
+            Labelled counts and their acquisition setup, consistent with fixed model assumptions.
+
+        Returns
+        -------
+        list[InversePrediction]
+            Physical float64 EDP and uncertainty arrays retaining native owners.
+
+        Raises
+        ------
+        InferenceError
+            Labels, dimensions, geometry, state or processing are incompatible, or
+            graph execution fails.
+
+        Notes
+        -----
+        Each input follows its per-detector physical and numerical preparation.
+        An empty input sequence returns an empty list.
+        """
         try:
             return [InversePrediction.from_core(r) for r in self._core.predict_batch([to_core(x) for x in inputs])]
         except (ValueError, RuntimeError) as error:
             raise InferenceError(str(error)) from error
 
     def predict_reference(self, spectra):
-        """Reference-condition spectra to physical EDP; training transforms still run."""
+        """Infer from reference-condition spectra.
+
+        Parameters
+        ----------
+        spectra : mapping or sequence of Spectrum
+            Labelled counts already on the declared reference grid, exposure and pileup state.
+
+        Returns
+        -------
+        InversePrediction
+            Physical float64 EDP and uncertainty arrays retaining native owners.
+
+        Raises
+        ------
+        InferenceError
+            Labels, dimensions, geometry, state or processing are incompatible, or
+            graph execution fails.
+
+        Notes
+        -----
+        Skips physical input_preparation only. Fitted numerical preprocessing and
+        physical EDP output processing still run.
+        """
         try:
             return InversePrediction.from_core(self._core.predict_reference(_spectra(spectra)))
         except (ValueError, RuntimeError) as error:
             raise InferenceError(str(error)) from error
 
     def predict_reference_batch(self, spectra):
-        """One ONNX call for a sequence of reference spectrum mappings."""
+        """Infer from reference-condition spectra in one graph batch.
+
+        Parameters
+        ----------
+        spectra : sequence of spectrum mappings
+            Labelled counts already on the declared reference grid, exposure and pileup state.
+
+        Returns
+        -------
+        list[InversePrediction]
+            Physical float64 EDP and uncertainty arrays retaining native owners.
+
+        Raises
+        ------
+        InferenceError
+            Labels, dimensions, geometry, state or processing are incompatible, or
+            graph execution fails.
+
+        Notes
+        -----
+        Skips physical input_preparation only. Fitted numerical preprocessing and
+        physical EDP output processing still run.
+        An empty input sequence returns an empty list.
+        """
         try:
             inputs = []
             for item in spectra:
@@ -212,7 +639,32 @@ class InverseModel(Model):
 
 
 def load_model(path, *, options: InferenceOptions | core.InferenceOptions | None = None):
-    """Read the package direction and construct the matching inference model."""
+    """Load a package and construct its directional inference session.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        Existing format-1 .ibm package.
+    options : InferenceOptions or native InferenceOptions, optional
+        Execution provider, device and thread settings.
+
+    Returns
+    -------
+    ForwardModel or InverseModel
+        Initialized model selected from the package direction.
+
+    Raises
+    ------
+    ModelPackageError
+        The package cannot be read or validated.
+    InferenceError
+        The directional graph or runtime cannot initialize.
+
+    Notes
+    -----
+    Opening a package alone does not require ONNX support, but constructing this
+    executable model does. Create one returned model per concurrent worker.
+    """
     package = Package.open(path)
     cls = ForwardModel if package.to_core().metadata.direction == engine().Direction.FORWARD else InverseModel
     return cls(package, options=options)

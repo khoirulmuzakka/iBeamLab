@@ -22,6 +22,9 @@ def digest(path):
 
 def reference_from_dict(value):
     """Restore physical metadata without relying on archived bindings or pickled classes."""
+    for measurement in value["setup"]["measurements"]:
+        if "geometry" not in measurement["detector"]:
+            raise ValueError("training reference lacks detector geometry; update its metadata from the actual simulation reference")
     layers = []
     for layer in value["sample"]["layers"]:
         species = [ibl.Species(s["element"], s["concentration"],

@@ -164,6 +164,12 @@ calibration_linear = 2.63714
 calibration_offset = 0.0
 calibration_quadratic = 0.0
 
+# Complete geometry for this detector; angles follow SIMNRA conventions.
+[experiment.measurements.detector.geometry]
+incidence_angle = 0.0
+exit_angle = 30.0
+scattering_angle = 150.0
+
 [experiment.measurements.acquisition]
 particles_sr = 1.0e12
 real_time = 0.001

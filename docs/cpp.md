@@ -152,3 +152,22 @@ no natural default is invented for elements without a defined mixture.
 elements. Inference resolves and caches model assumptions once and compares sample
 compositions without temporary vectors, including explicitly supplied natural
 mixtures. Direct AD inputs imply the package's isotope assumptions.
+
+### Detector geometry
+
+`core::Detector::geometry` stores `core::Geometry {incidenceAngle, exitAngle,
+scatteringAngle}` in degrees. The default `(0,0,180)` represents normal incidence
+and exact backscattering. `Geometry::validate()` checks angle ranges and physical
+consistency, including non-coplanar and transmission arrangements. Experimental
+setup validation includes geometry. Geometry is persisted in datasets and packages.
+
+`IncidenceAngle`, `ExitAngle`, and `ScatteringAngle` are labelled parameter targets.
+A parameter-schema forward model can declare geometry features. Fixed geometry
+is checked in parameter, layer-AD and inverse inference; physical spectrum
+processing cannot change it. Fixed-geometry comparisons allocate no memory.
+
+SIMNRA maps these angles to `Setup.Alpha`, `Setup.Beta`, and `Setup.Theta`, updating
+only changed values after initialization. Each worker claims an unowned application
+using SIMNRA's documented `OLEUser` protocol before activating related interfaces.
+Application/interface activation is serialized; spectrum calculations remain
+parallel. Interactive or already-owned instances are skipped.

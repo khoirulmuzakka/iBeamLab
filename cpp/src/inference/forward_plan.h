@@ -85,6 +85,12 @@ class ParameterPlan {
                 core::BeamSpread{label});
             add(measurement([](const auto &m) { return m.detector.resolution; }), 0, infinity,
                 core::DetectorResolution{label});
+            add(measurement([](const auto &m) { return m.detector.geometry.incidenceAngle; }), 0, 90,
+                core::IncidenceAngle{label});
+            add(measurement([](const auto &m) { return m.detector.geometry.exitAngle; }), 0, 180,
+                core::ExitAngle{label});
+            add(measurement([](const auto &m) { return m.detector.geometry.scatteringAngle; }), 0, 180,
+                core::ScatteringAngle{label});
             add(measurement([](const auto &m) { return m.detector.calibrationLinear; }), -infinity,
                 infinity, core::CalibrationLinear{label}, rebin);
             add(measurement([](const auto &m) { return m.detector.calibrationOffset; }), -infinity,
@@ -121,6 +127,8 @@ class ParameterPlan {
                 }
             if (!actual_[i] || actual_[i]->beam.particle != expected.beam.particle)
                 mismatch();
+            if (actual_[i]->detector.geometry != expected.detector.geometry)
+                actual_[i]->detector.geometry.validate();
         }
         for (std::size_t i = 0; i < x.sample.layers.size(); ++i) {
             const auto &species = x.sample.layers[i].species;
@@ -209,6 +217,8 @@ class LayerPlan {
                 }
             if (!plan.actual) throw std::invalid_argument("missing measurement");
             const auto &m = *plan.actual;
+            if (m.detector.geometry != reference.detector.geometry)
+                throw std::invalid_argument("unsupported detector geometry change: " + m.label);
             if (m.beam.particle != reference.beam.particle || m.beam.energy != reference.beam.energy ||
                 m.beam.spread != reference.beam.spread || m.detector.resolution != reference.detector.resolution)
                 throw std::invalid_argument("unsupported beam or resolution change");
