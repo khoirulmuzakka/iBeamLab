@@ -1,3 +1,4 @@
+#include <ibeamlab/fitting/fit.h>
 #include <ibeamlab/core/isotopes.h>
 #include <atomic>
 #include <chrono>
@@ -180,6 +181,26 @@ int main() {
     for (int i = 0; i < iterations; ++i) sequence.predict_batch(cases, population_results);
     counting = false;
     std::cout << "Explicit natural-isotope batch: " << allocations << " C++ new allocations after warmup\n";
+    passed = passed && allocations == 0;
+    fitting::Problem fit_problem;
+    fit_problem.data.setup = experiment.setup;
+    fit_problem.data.spectra = {{"single-detector-measurement", core::Counts(channels, 1), {}, {}, {}}};
+    fit_problem.initial_sample = experiment.sample;
+    fit_problem.parameters = {{"thickness", core::ParameterTarget{core::LayerThickness{0}}, {1, 1000}, {}}};
+    fitting::Objective objective(std::move(fit_problem), std::make_shared<fitting::ForwardPredictor>(model));
+    std::vector<double> fit_rows(64, 200), fit_costs(64);
+    objective.evaluate_batch(fit_rows, 64, fit_costs);
+    allocations = 0;
+    counting = true;
+    for (int repeat=0; repeat<5; ++repeat)
+        for (std::size_t n=64; n>=4; n-=4) {
+            std::fill(fit_rows.begin(), fit_rows.end(), 190-repeat*10+double(n)/64);
+            objective.evaluate_batch(std::span<const double>(fit_rows.data(), n), n,
+                                     std::span<double>(fit_costs.data(), n));
+        }
+    counting = false;
+    std::cout << "Fitting objective reducing population 64..4, 5000 channels: "
+              << allocations << " C++ new allocations after warmup\n";
     passed = passed && allocations == 0;
 #endif
     return passed ? 0 : 1;

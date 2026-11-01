@@ -36,9 +36,10 @@ detectors. Each forward output spectrum can have its own postprocessing pipeline
 each inverse input spectrum can have its own preprocessing pipeline. CPU and CUDA
 inference share the same API.
 
-Fitting is planned and is not yet implemented. The current training example is a
-**forward surrogate**; inverse inference and package contracts are available for
-custom models.
+Experimental fitting uses batched forward-surrogate or simulator predictions with
+ARRDE, explicit measured-data readers, and physical parameter constraints. The
+current training example is a **forward surrogate**; inverse inference and package
+contracts are available for custom models.
 
 ## 🧭 Start with your task
 
@@ -46,6 +47,7 @@ custom models.
 | --- | --- |
 | Define a sample and simulate spectra | Simulation example below; [Python guide](docs/python.md) |
 | Generate multilayer training data | [DataGeneration guide](examples/DataGeneration/README.md), [configuration](examples/DataGeneration/multilayer-generation.toml), and [script](examples/DataGeneration/generate_multilayer.py) |
+| Fit measured spectra | [Fitting guide](docs/fitting.md) and [example](examples/Fitting/fit_spectrum.py) |
 | Train a sample-to-spectra surrogate | [iBeamNet example](examples/ibeamnet/README.md) and [training notebook](examples/ibeamnet/train/train.ipynb) |
 | Deploy a forward or inverse model | Deployment examples below; [Python inference guide](docs/python.md) |
 | Define a custom model's scientific contract | [Dataset and model format](docs/model-format.md); [C++ contracts](docs/cpp.md) |
@@ -256,6 +258,15 @@ loading, physical inputs, and allocation-conscious inference, and the
 Areal thickness is an atomic inventory per unit area. Converting it to geometric
 thickness requires a material number density.
 
+## Experimental fitting
+
+Fit measured spectra with a forward surrogate or simulator using `MeasuredData`,
+`FitProblem` and `fit`. Native ARRDE evaluates populations in batches and retains
+buffers for changing population sizes. Text/CSV readers preserve missing-channel
+masks. See [the fitting guide](docs/fitting.md) and
+[the fitting example](examples/Fitting/fit_spectrum.py).
+
+
 ## 🧩 Repository and documentation
 
 | Path | Contents |
@@ -264,6 +275,7 @@ thickness requires a material number density.
 | `cpp/` | C++ library, public headers, compiled bindings, examples, and tests |
 | `ibeamlab/` | Python framework API, metadata, datasets, and export utilities |
 | `examples/DataGeneration/` | Configurable multilayer generation workflow |
+| `examples/Fitting/` | Measured-spectrum fitting with a packaged forward model |
 | `examples/ibeamnet/` | Forward surrogate training, notebook, and deployment example |
 | `tests/`, `.github/workflows/` | Python tests and automated build/integration checks |
 | `docs/` | [Building](docs/building.md), [Python](docs/python.md), [C++](docs/cpp.md), [testing](docs/testing.md), and [file formats](docs/model-format.md) |

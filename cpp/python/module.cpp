@@ -63,6 +63,8 @@ class PythonSimulator final : public simulation::Simulator {
 };
 
 #define FIELD(T, N) .def_readwrite(#N, &T::N)
+void bind_fitting(pybind11::module_ &);
+
 PYBIND11_MODULE(_ibeamlab, m) {
     m.doc() = "Native iBeamLab execution engine. Use the ibeamlab facade for Python descriptions, simulation, generation and inference. Units are keV, seconds, degrees and 1e15 atoms/cm2.";
     py::class_<core::Isotope>(m, "Isotope", R"ibdoc(Native isotope identity and atomic fraction.
@@ -1571,4 +1573,5 @@ Notes
 Requires an ONNX-enabled build and uses a CPU session. This bypasses physical
 packing, numerical transform pipelines and physical detector preparation. It is
 an export/parity diagnostic, not the ordinary physical inference API.)ibdoc");
+    bind_fitting(m);
 }

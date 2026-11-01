@@ -1,6 +1,7 @@
 # Targets for the iBeamLab C++ library, bindings, examples and tests.
 # Configure the project through the repository root CMakeLists.txt.
 add_library(ibeamlab
+    src/core/data.cpp src/io/reader.cpp src/fitting/predictor.cpp src/fitting/objective.cpp src/fitting/optimizer.cpp
     src/core/sample.cpp src/core/isotopes.cpp src/core/parameter.cpp src/core/validation.cpp
     src/processing/rebin.cpp src/processing/pileup.cpp src/processing/transforms.cpp
     src/simulation/simulator.cpp src/simulation/simnra.cpp
@@ -91,6 +92,10 @@ if(IBEAMLAB_ENABLE_ONNX)
 endif()
 
 if(IBEAMLAB_BUILD_TESTS)
+    add_executable(ibeamlab_fitting_tests tests/fitting_tests.cpp)
+    target_link_libraries(ibeamlab_fitting_tests PRIVATE ibeamlab)
+    add_test(NAME fitting COMMAND ibeamlab_fitting_tests)
+    set_tests_properties(fitting PROPERTIES LABELS "unit;integration")
     if(IBEAMLAB_CORE_BUILD_TESTS)
         add_executable(ibeamlab_core_tests tests/core/core_tests.cpp)
         target_link_libraries(ibeamlab_core_tests PRIVATE ibeamlab)
@@ -136,7 +141,7 @@ if(IBEAMLAB_BUILD_PYTHON)
     find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
     execute_process(COMMAND "${Python_EXECUTABLE}" -m pybind11 --cmakedir OUTPUT_VARIABLE pybind11_DIR OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
     find_package(pybind11 CONFIG REQUIRED)
-    pybind11_add_module(_ibeamlab python/module.cpp)
+    pybind11_add_module(_ibeamlab python/module.cpp python/fitting.cpp)
     if(APPLE)
         set_target_properties(_ibeamlab PROPERTIES INSTALL_RPATH "@loader_path")
     elseif(UNIX)
@@ -174,6 +179,9 @@ if(IBEAMLAB_BUILD_PYTHON)
         add_test(NAME geometry-python-backends COMMAND "${Python_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/test_geometry_backends.py" "$<TARGET_FILE_DIR:_ibeamlab>" "${IBEAMLAB_ENABLE_ONNX}")
         set_tests_properties(geometry-python-backends PROPERTIES LABELS "unit;integration;python")
+        add_test(NAME python-fitting COMMAND "${Python_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/test_fitting.py" "$<TARGET_FILE_DIR:_ibeamlab>" "${IBEAMLAB_ENABLE_ONNX}")
+        set_tests_properties(python-fitting PROPERTIES LABELS "unit;integration;python" TIMEOUT 60)
         add_test(NAME python-api COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/python_api.py" "$<TARGET_FILE_DIR:_ibeamlab>" "${IBEAMLAB_ENABLE_ONNX}")
         set_tests_properties(python-api PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}" LABELS "integration;python")
         add_test(NAME python-wrapper COMMAND "${Python_EXECUTABLE}"
@@ -226,3 +234,36 @@ install(FILES "${PROJECT_SOURCE_DIR}/cmake/FindONNXRuntime.cmake" DESTINATION ${
 configure_package_config_file("${PROJECT_SOURCE_DIR}/cmake/ibeamlab-config.cmake.in" "${CMAKE_CURRENT_BINARY_DIR}/ibeamlab-config.cmake" INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ibeamlab)
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/ibeamlab-config-version.cmake" VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/ibeamlab-config.cmake" "${CMAKE_CURRENT_BINARY_DIR}/ibeamlab-config-version.cmake" DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ibeamlab)
+
+# Embed only ARRDE and its supporting implementation; no extra runtime DLL or
+# public dependency is added to installed consumers.
+if(IBEAMLAB_ENABLE_ARRDE)
+    include(FetchContent)
+    FetchContent_Declare(ibeamlab_minion
+        GIT_REPOSITORY https://github.com/khoirulmuzakka/Minion.git
+        GIT_TAG 3fd46f1afc99bdd1744c3a330539783b9959af7c
+        SOURCE_SUBDIR _headers_only)
+    FetchContent_Declare(ibeamlab_eigen
+        GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+        GIT_TAG 3.4.0 GIT_SHALLOW TRUE SOURCE_SUBDIR _headers_only)
+    FetchContent_MakeAvailable(ibeamlab_minion ibeamlab_eigen)
+    set(arrde_root "${ibeamlab_minion_SOURCE_DIR}/minion")
+    add_library(ibeamlab_arrde OBJECT "${arrde_root}/algorithms/arrde.cpp"
+        "${arrde_root}/algorithms/de.cpp" "${arrde_root}/utils/utility.cpp")
+    target_compile_features(ibeamlab_arrde PRIVATE cxx_std_20)
+    set_target_properties(ibeamlab_arrde PROPERTIES POSITION_INDEPENDENT_CODE ON
+        CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+    target_include_directories(ibeamlab_arrde SYSTEM PRIVATE
+        "${arrde_root}/algorithms" "${arrde_root}/utils" "${ibeamlab_eigen_SOURCE_DIR}")
+    target_include_directories(ibeamlab SYSTEM PRIVATE "${arrde_root}/algorithms"
+        "${arrde_root}/utils" "${ibeamlab_eigen_SOURCE_DIR}")
+    target_sources(ibeamlab PRIVATE $<TARGET_OBJECTS:ibeamlab_arrde>)
+    target_compile_definitions(ibeamlab PRIVATE IBEAMLAB_HAS_ARRDE)
+    if(IBEAMLAB_SANITIZERS AND NOT MSVC)
+        target_compile_options(ibeamlab_arrde PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    endif()
+    if(WIN32)
+        target_compile_definitions(ibeamlab_arrde PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+        set_source_files_properties(src/fitting/optimizer.cpp PROPERTIES COMPILE_OPTIONS "/wd5054;/wd4127;/wd4244;/wd4267;/wd4702")
+    endif()
+endif()

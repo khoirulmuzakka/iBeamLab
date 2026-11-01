@@ -3,7 +3,7 @@
 The `ibeamlab/` package uses the current C++ library in `cpp/`. Its physical
 objects follow the same sample, measurement and experimental-setup model.
 The wrapper provides simulation, generation, streaming datasets, optional
-PyTorch training, format 1 model export and forward/inverse inference.
+experimental fitting, PyTorch training, format 1 model export and forward/inverse inference.
 
 ## Build and dependencies
 
@@ -332,3 +332,14 @@ The adapter is cached, holds its Python owner weakly, and acquires the GIL only 
 Python callbacks. Built-in native backends retain their existing execution path.
 Calls on an instance must be serialized. See
 [the Python backend example](../examples/Simulation/python_backend.py).
+
+## Experimental fitting
+
+`MeasuredSpectrum` owns counts, optional channel validity and known variances.
+`MeasuredData` pairs observations with an explicit setup, without assuming a
+sample. `read_spectrum` reads counts, channel/count files or CSV; custom readers
+can be registered in Python. `FitProblem` adds an initial sample, bounded
+parameters and a forward model or simulator. `fit` runs native batched ARRDE;
+`FitObjective.evaluate_batch` also supports external optimizers and caller-owned
+cost buffers. See [the fitting guide](fitting.md) for constraints, detector
+selection, chi-square definitions, cancellation and concurrency.

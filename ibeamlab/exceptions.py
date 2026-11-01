@@ -80,3 +80,11 @@ class InferenceError(IBeamLabError):
     buffers and unavailable execution providers. CUDA requests do not silently
     create CPU-only sessions.
     """
+
+
+class DataReadError(IBeamLabError, ValueError):
+    """An experimental spectrum could not be read or validated."""
+
+
+class FitError(IBeamLabError, ValueError):
+    """A fitting contract, predictor or optimization operation failed."""

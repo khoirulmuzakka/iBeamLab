@@ -1158,3 +1158,168 @@ class ModelMetadata:
         """Return True when this is a forward variable-layer input contract.
         """
         ...
+
+
+class MeasuredSpectrum:
+    """Owning observation with explicit missing-channel validity and optional variances."""
+    measurement: str
+    counts: list[float]
+    valid: list[int]
+    variances: list[float]
+    source: str
+    def __init__(self) -> None: ...
+    def validate(self) -> None: ...
+
+class MeasuredData:
+    """Observations and setup without an unknown-sample assumption."""
+    setup: Any
+    spectra: list[MeasuredSpectrum]
+    def __init__(self) -> None: ...
+    def validate(self) -> None: ...
+
+class SpectrumFormat(Enum):
+    """Explicit experimental text-file layouts."""
+    COUNTS = 0
+    CHANNEL_COUNTS = 1
+    CSV = 2
+
+class SpectrumReadOptions:
+    """Zero-based text columns, independent channel base and explicit delimiters."""
+    format: SpectrumFormat
+    counts_column: int
+    channel_column: int | None
+    variance_column: int | None
+    channel_base: int
+    skip_rows: int
+    maximum_channels: int
+    header: bool
+    delimiter: str
+    comment: str
+    def __init__(self) -> None: ...
+
+def read_spectrum(path: Any, measurement: str, options: SpectrumReadOptions = ...) -> MeasuredSpectrum:
+    """Read observations; parse errors include source path and physical line."""
+    ...
+
+class ElementArealDensity:
+    """One layer/element areal density in 1e15 atoms/cm2."""
+    def __init__(self, layer: int, element: str) -> None: ...
+
+class FitParameter:
+    """Bounded physical coordinate with optional equal-value tied targets."""
+    name: str
+    target: Any
+    bounds: ParameterBounds
+    tied_targets: list[Any]
+    def __init__(self) -> None: ...
+
+class FitComposition:
+    """Bounded composition group encoded with normalized stick coordinates."""
+    layer: int
+    elements: list[str]
+    bounds: list[ParameterBounds]
+    name_prefix: str
+    def __init__(self) -> None: ...
+
+class FitRegion:
+    """Half-open observed channel selection."""
+    start: int
+    stop: int
+    weight: float
+    def __init__(self, start: int, stop: int, weight: float = 1.) -> None: ...
+
+class FitSelection:
+    """Detector weight and disjoint channel regions."""
+    measurement: str
+    weight: float
+    regions: list[FitRegion]
+    def __init__(self) -> None: ...
+
+class FitLoss(Enum):
+    """Explicit data-floor or known-variance chi-square denominator."""
+    DATA_CHI_SQUARE = 0
+    VARIANCE_CHI_SQUARE = 1
+
+class FitProblem:
+    """Data, initial sample and optimizer-independent fitting parameters."""
+    data: MeasuredData
+    initial_sample: Any
+    parameters: list[FitParameter]
+    compositions: list[FitComposition]
+    selections: list[FitSelection]
+    loss: FitLoss
+    data_floor: float
+    def __init__(self) -> None: ...
+
+class FitPredictor:
+    """Batch provider owned by one nonconcurrent objective."""
+    ...
+
+class ForwardFitPredictor(FitPredictor):
+    """Retain a forward model and use its reusable population interface."""
+    def __init__(self, model: Any) -> None: ...
+
+class SimulatorFitPredictor(FitPredictor):
+    """Retain a native or Python simulator and use its batch interface."""
+    def __init__(self, simulator: Any) -> None: ...
+
+class FitContribution:
+    """Per-detector weighted chi-square sum and selected channel count."""
+    measurement: str
+    cost: float
+    channels: int
+    mean: float
+
+class FitProgress:
+    """Scalar progress statistics; contains no population arrays."""
+    evaluations: int
+    invalid: int
+    best_cost: float
+
+class FitResult:
+    """Best completed physical experiment and its corresponding prediction."""
+    experiment: Any
+    prediction: Any
+    coordinates: list[float]
+    parameter_names: list[str]
+    parameter_values: list[float]
+    contributions: list[FitContribution]
+    history: list[FitProgress]
+    cost: float
+    evaluations: int
+    invalid: int
+    status: str
+    message: str
+    feasible: bool
+
+class FitObjective:
+    """Compiled batch objective with retained population and spectrum buffers."""
+    dimension: int
+    bounds: list[tuple[float, float]]
+    coordinate_names: list[str]
+    initial_coordinates: list[float]
+    stopped: bool
+    def __init__(self, problem: FitProblem, predictor: FitPredictor) -> None: ...
+    def evaluate_batch(self, candidates: Any, out: Any) -> None:
+        """Fill contiguous float64 costs for a [population,dimension] array."""
+        ...
+    def decode(self, coordinates: Sequence[float]) -> Any: ...
+    def best_result(self) -> FitResult: ...
+    def progress(self) -> FitProgress: ...
+    def request_stop(self) -> None: ...
+
+class FitOptions:
+    """ARRDE evaluation budget, population size, random seed and scalar history."""
+    max_evaluations: int
+    population_size: int
+    seed: int
+    record_history: bool
+    def __init__(self) -> None: ...
+
+def arrde_available() -> bool:
+    """Whether native ARRDE was enabled when building this extension."""
+    ...
+
+def fit_arrde(objective: FitObjective, options: FitOptions, progress: Any = None) -> FitResult:
+    """Run population ARRDE; progress returns True for cooperative cancellation."""
+    ...

@@ -8,6 +8,8 @@ Consumers link the exported target ibeamlab::ibeamlab.
 
 - `core`: shared samples, independently configured measurements, parameter targets,
   validation, units, owning spectra and non-owning views.
+- `io`: explicit experimental text/CSV readers with missing-channel masks.
+- `fitting`: compiled population objectives, physical parameter constraints and ARRDE.
 - `processing`: calibrated rebinning and pair-sum pileup application/removal.
 - `simulation`: deterministic dummy spectra and persistent worker-owned SIMNRA COM sessions.
 - `datasets`: checksummed sharded storage, transactional completion and streaming cursors.

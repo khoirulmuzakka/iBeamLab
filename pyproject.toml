@@ -5,7 +5,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "ibeamlab"
 version = "0.1.0"
-description = "Python-first ion-beam simulation, dataset generation, and ONNX inference"
+description = "Python-first ion-beam simulation, fitting, dataset generation, and ONNX inference"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
@@ -36,7 +36,7 @@ cmake.args = [
   "-DIBEAMLAB_BUILD_EXAMPLES=OFF",
 ]
 wheel.packages = ["ibeamlab"]
-sdist.include = ["CMakeLists.txt", "README.md", "cmake/**", "docs/**", "cpp/CMakeLists.txt", "cpp/src/**", "cpp/include/**", "cpp/python/module.cpp", "ibeamlab/**", "tests/**", "examples/**"]
+sdist.include = ["CMakeLists.txt", "README.md", "cmake/**", "docs/**", "cpp/CMakeLists.txt", "cpp/src/**", "cpp/include/**", "cpp/python/**", "ibeamlab/**", "tests/**", "examples/**"]
 sdist.exclude = ["old/**", "build*/**", "cpp/build*/**", "xnra/**"]
 
 [tool.pytest.ini_options]

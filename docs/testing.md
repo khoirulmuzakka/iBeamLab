@@ -19,6 +19,8 @@ Ordinary hosted CI verifies CPU and unavailable-CUDA behavior without requiring 
 
 | CTest name | Labels | Implemented coverage |
 | --- | --- | --- |
+| `fitting` | unit, integration | Compiled bounds, valid-row compaction, matched best prediction, composition constraints, cancellation and ARRDE synthetic recovery |
+| `python-fitting` | unit, integration, python | Sparse/CSV readers, custom readers, masked and weighted chi-square, detector labels/ROIs, AD/composition/tied parameters, true batch calls, reduced populations, cancellation, parallel fits and optional ONNX parity |
 | `core` | unit | Valid/invalid experiments, independent measurement energies, parameter reads/writes, coupled composition updates, rollback, duplicate/unknown targets, nonfinite values, bounds, validation paths, units |
 | `processing` | unit | Calibration edges, rebin identity/conservation/partial coverage, invalid grids and aliasing, FFT pileup versus direct convolution, inverse round trip, zero counts and invalid acquisition settings |
 | `generation` | integration | Dummy simulation ? shards ? streaming reads; row order, provenance, rewind, overwrite rejection, record/discard/stop policies, cancellation, incomplete/corrupt data rejection and seeded sampling |
@@ -128,3 +130,9 @@ parallel fast-mode generation. Run it separately from other COM diagnostics.
 Use `--layers 8` to measure the thicker multilayer system. Fast mode is a distinct
 numerical algorithm; the live reference suite compares it against independent
 Fast calculations as well as retaining the standard-mode comparisons.
+
+The ONNX allocation benchmark also checks the fitting objective with 5,000-channel
+spectra, decreasing populations from 64 to 4 and improving best solutions. It
+counts C++ `new` allocations after warmup; this does not measure ONNX Runtime's
+internal allocator, Python conversions, optimizer bookkeeping or explicit result
+snapshot copies.

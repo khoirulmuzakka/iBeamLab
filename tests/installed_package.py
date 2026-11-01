@@ -46,3 +46,11 @@ with tempfile.TemporaryDirectory() as tmp:
         predicted = ibl.ForwardModel(loaded).predict(x)
         np.testing.assert_allclose(predicted["RBS"].counts, [100, 200, 300, 400])
 print(f"Installed package verified: {ibl.__file__}")
+
+# Physical fitting is available in wheels without importing optional ML training.
+objective = ibl.FitObjective(ibl.FitProblem(
+    ibl.MeasuredData(x.setup, [ibl.MeasuredSpectrum("RBS", expected)]), x.sample,
+    [ibl.vary.layer_thickness(layer=0, bounds=(50, 150))], ibl.DummySimulator(4)))
+np.testing.assert_array_equal(objective.evaluate_batch([[100.]]), [0.])
+assert ibl.fit(objective, max_evaluations=1).cost == 0
+assert "torch" not in sys.modules

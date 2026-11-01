@@ -1,4 +1,4 @@
-"""Python API for ion-beam simulation, dataset generation and model inference.
+"""Python API for ion-beam simulation, dataset generation, physical fitting and model inference.
 
 Physical descriptions use keV, degrees, seconds and 1e15 atoms/cm2. Element
 concentrations and isotope fractions have separate normalization constraints.
@@ -28,6 +28,9 @@ from .models import Model, ForwardModel, InverseInput, InverseModel, InversePred
 from .inference import InferenceOptions, available_execution_providers
 from .export import export_package
 from .processing import rebin, apply_pileup, remove_pileup
+from .io import MeasuredSpectrum, MeasuredData, read_spectrum, register_spectrum_reader
+from .fitting import FitProblem, FitObjective, FitResult, ArealDensity, Composition, TiedParameter, Region, SpectrumSelection, fit
+from .exceptions import DataReadError, FitError
 
 if TYPE_CHECKING:
     from .native import (
@@ -67,13 +70,16 @@ def __getattr__(name):
         value = getattr(engine(), name)
         globals()[name] = value
         return value
-    if name in {"fit", "TrainingHistory"}:
+    if name == "TrainingHistory":
         from . import training
         return getattr(training, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
+    "MeasuredSpectrum", "MeasuredData", "read_spectrum", "register_spectrum_reader",
+    "FitProblem", "FitObjective", "FitResult", "ArealDensity", "Composition", "TiedParameter",
+    "Region", "SpectrumSelection", "DataReadError", "FitError",
     "Geometry", "ElementComposition", "natural_isotopes", "isotope_data", "Isotope", "Species", "Layer", "Sample", "Beam", "Detector", "Acquisition", "Measurement",
     "ExperimentalSetup", "Experiment", "Spectrum", "SimulationFailure", "SimulationResult", "Simulator",
     "DummySimulator", "SimnraMethod", "SimnraSimulator", "ParameterSpec", "Parameter", "vary",

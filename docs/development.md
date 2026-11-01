@@ -26,9 +26,10 @@ for current live SIMNRA verification.
 
 ## Remaining work
 
-Fitting is not implemented. Its design still needs parameter scaling and
-constraints, objectives for count data, optimizer selection, convergence
-criteria, diagnostics, cancellation and synthetic recovery tests.
+Fitting now includes experimental readers, compiled physical constraints,
+count-data objectives, batched ARRDE, diagnostics, cancellation and synthetic
+recovery tests; see [fitting.md](fitting.md). Further optimizers can use the
+compiled population objective directly.
 
 Inverse input preparation supports per-measurement physical operations, while
 tensor preprocessing currently applies to the complete packed input. Independent
