@@ -64,6 +64,7 @@ class PythonSimulator final : public simulation::Simulator {
 
 #define FIELD(T, N) .def_readwrite(#N, &T::N)
 void bind_fitting(pybind11::module_ &);
+void bind_backend(pybind11::module_ &);
 
 PYBIND11_MODULE(_ibeamlab, m) {
     m.doc() = "iBeamLab: A unified framework for ion-beam simulation and analysis, ML model training, and deployment in Python and C++. C++ bindings for the Python API. The ibeamlab Python API provides physical descriptions and workflow helpers. Units are keV, seconds, degrees and 1e15 atoms/cm2.";
@@ -615,7 +616,7 @@ spectra : list[Spectrum]
     Labelled spectra.
 failure : Failure or None
     Optional failure; successful results have no diagnostic.)ibdoc")
-        .def(py::init<>()) FIELD(simulation::Result, spectra) FIELD(simulation::Result, failure);
+        .def(py::init<>()) FIELD(simulation::Result, spectra) FIELD(simulation::Result, failure) FIELD(simulation::Result, elemental_spectra);
     // Copy each Python spectrum into its final owning native buffer once. Going
     // through individual bound Spectrum objects and the vector setter copies twice.
     m.def("_simulation_result", [](const py::list &spectra, py::object failure) {
@@ -644,6 +645,7 @@ Calls on an instance must be serialized. Each backend owns an atomic stop flag.)
         .def("request_stop", &simulation::Simulator::request_stop, R"ibdoc(Set the cooperative cancellation flag; does not forcibly stop external work.)ibdoc")
         .def("reset_stop", &simulation::Simulator::reset_stop, R"ibdoc(Clear the cooperative cancellation flag before reusing an active backend.)ibdoc")
         .def("stopped", &simulation::Simulator::stopped, R"ibdoc(Return the current atomic cooperative cancellation flag.)ibdoc")
+        .def("capabilities", &simulation::Simulator::capabilities)
         .def("provenance", &simulation::Simulator::provenance, R"ibdoc(Return the backend identity recorded in generated datasets.)ibdoc")
         .def("simulate",
              [](simulation::Simulator &s, const core::Experiment &x) {
@@ -700,7 +702,8 @@ reuse_target_topology : bool, default=True
             FIELD(simulation::SimnraConfig, workers)
                 FIELD(simulation::SimnraConfig, multithreaded_apartment)
                     FIELD(simulation::SimnraConfig, fast_calculation)
-                        FIELD(simulation::SimnraConfig, reuse_target_topology);
+                        FIELD(simulation::SimnraConfig, reuse_target_topology)
+                            FIELD(simulation::SimnraConfig, capture_elemental);
     py::class_<simulation::SimnraSimulator, simulation::Simulator>(m, "SimnraSimulator", R"ibdoc(Create a native backend with persistent SIMNRA workers.
 
 Parameters
@@ -713,6 +716,11 @@ Notes
 Requires a SIMNRA-enabled Windows build and installed runtime. close()
 releases workers. Interactive/already-owned applications are skipped using OLEUser.)ibdoc")
         .def(py::init<simulation::SimnraConfig>())
+        .def("export_project", [](simulation::SimnraSimulator &sim, const core::Experiment &x,
+                                  const std::filesystem::path &path, const std::vector<double> &measured) {
+                sim.export_project(x, path, measured);
+             }, py::arg("experiment"), py::arg("path"), py::arg("measured") = std::vector<double>{},
+             py::call_guard<py::gil_scoped_release>())
         .def("close", &simulation::SimnraSimulator::close,
              py::call_guard<py::gil_scoped_release>(), R"ibdoc(Request cancellation and release COM workers. Safe to call repeatedly.)ibdoc");
     py::class_<datasets::Parameter>(m, "Parameter", R"ibdoc(Declare one named native physical parameter column.
@@ -1574,4 +1582,5 @@ Requires an ONNX-enabled build and uses a CPU session. This bypasses physical
 packing, numerical transform pipelines and physical detector preparation. It is
 an export/parity diagnostic, not the ordinary physical inference API.)ibdoc");
     bind_fitting(m);
+    bind_backend(m);
 }

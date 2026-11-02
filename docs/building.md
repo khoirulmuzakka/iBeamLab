@@ -8,10 +8,12 @@ Use a fresh build directory for the unified layout, such as `build/local`.
 ## C++ library
 
 Requirements: CMake 3.24+ and a C++20 compiler. The default build is static,
-enables C++ tests and native ARRDE fitting, and requires no external simulator,
-ONNX SDK or Python. ARRDE fetches pinned Minion sources and Eigen headers at
-configure time. Use `-DIBEAMLAB_ENABLE_ARRDE=OFF` for an offline dependency-free
-core build; data readers and batch objectives remain available.
+enables C++ tests and native fitting through Minion. CMake locates Minion 2.0.1+
+with `find_package(Minion CONFIG REQUIRED)`. Set `CMAKE_PREFIX_PATH` or
+`Minion_DIR` to its installation; Eigen must also be discoverable as required by
+that package. No external simulator, ONNX SDK or Python is needed for the library.
+Use `-DIBEAMLAB_ENABLE_MINION=OFF` for a core build without optimizer dependencies;
+data readers and batch objectives remain available.
 
 ```console
 cmake -S . -B build/local -DCMAKE_BUILD_TYPE=Release
@@ -43,7 +45,7 @@ installed `bin/` on the application's runtime search path for shared/ONNX builds
 | `IBEAMLAB_BUILD_PYTHON` | OFF | Build the Python extension |
 | `IBEAMLAB_BUILD_EXAMPLES` | OFF | Build the C++ generation example |
 | `IBEAMLAB_BUILD_BENCHMARKS` | OFF | Build processing/inference allocation checks |
-| `IBEAMLAB_ENABLE_ARRDE` | ON | Embed the native ARRDE fitting optimizer |
+| `IBEAMLAB_ENABLE_MINION` | ON | Link the installed Minion optimizer package |
 | `IBEAMLAB_ENABLE_SIMNRA` | OFF | Compile the Windows COM backend |
 | `IBEAMLAB_ENABLE_ONNX` | OFF | Enable ONNX Runtime inference |
 | `IBEAMLAB_ONNX_PROVIDER` | CPU | SDK capabilities: CPU or CUDA; CUDA builds can run either provider |
@@ -134,9 +136,23 @@ active conda environment, rather than its user site. Set the `ONNXRUNTIME_ROOT` 
 inference; otherwise the script builds with inference disabled. It does not
 copy build artifacts into the source package.
 
-For an existing source cache or offline ARRDE build, pass
-`FETCHCONTENT_SOURCE_DIR_IBEAMLAB_MINION` and
-`FETCHCONTENT_SOURCE_DIR_IBEAMLAB_EIGEN` pointing to the matching upstream source
-trees. The pinned Minion revision is declared in `cpp/CMakeLists.txt`; Eigen uses
-3.4.0. These dependencies remain private to the library and require no additional
-runtime DLL or downstream CMake package.
+## Preparing the Minion dependency
+
+Use an existing Minion installation, or prepare ordinary upstream installations
+with the optional development/CI helper:
+
+```console
+python tools/build_minion.py --prefix build/dependencies
+cmake -S . -B build/local -DCMAKE_PREFIX_PATH=/absolute/path/to/build/dependencies
+```
+
+The helper installs pinned Minion and Eigen packages; it is separate from the
+normal iBeamLab configure step. Existing source checkouts can be supplied with
+`--minion-source` and `--eigen-source` for offline preparation. The normal build
+never compiles a hand-selected subset of Minion sources.
+
+Minion's shared runtime is copied beside Windows build executables and included
+in Python installations. Static iBeamLab consumers discover Minion through the
+installed iBeamLab CMake configuration; make its dependency prefix discoverable
+when configuring the consuming application. Shared iBeamLab consumers need the
+runtime library but do not inherit Minion headers or its CMake target.

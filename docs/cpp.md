@@ -6,6 +6,8 @@ Consumers link the exported target ibeamlab::ibeamlab.
 
 ## Modules
 
+- `profile`: smooth composition functions and reusable sublayer discretization.
+- `analysis`: measurement-specific predictors and parallel fit execution.
 - `core`: shared samples, independently configured measurements, parameter targets,
   validation, units, owning spectra and non-owning views.
 - `io`: explicit experimental text/CSV readers with missing-channel masks.
@@ -173,3 +175,5 @@ only changed values after initialization. Each worker claims an unowned applicat
 using SIMNRA's documented `OLEUser` protocol before activating related interfaces.
 Application/interface activation is serialized; spectrum calculations remain
 parallel. Interactive or already-owned instances are skipped.
+
+See [profiles.md](profiles.md) and [analysis.md](analysis.md) for profile fitting, routing, and worker execution.

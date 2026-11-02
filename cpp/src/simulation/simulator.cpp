@@ -28,6 +28,7 @@ std::string DummySimulator::provenance() const {
 void DummySimulator::simulate(const core::Experiment &x, Result &output) {
     x.validate();
     output.failure.reset();
+    output.elemental_spectra.clear();
     output.spectra.resize(x.setup.measurements.size());
     double inventory = 0;
     for (auto &l : x.sample.layers)

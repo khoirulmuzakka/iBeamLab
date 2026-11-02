@@ -1,6 +1,10 @@
 # Targets for the iBeamLab C++ library, bindings, examples and tests.
 # Configure the project through the repository root CMakeLists.txt.
 add_library(ibeamlab
+    src/profile/functions.cpp src/profile/model.cpp src/profile/discretization.cpp
+    src/fitting/parameterization.cpp src/fitting/constraints.cpp src/fitting/loss.cpp
+    src/analysis/plan.cpp src/analysis/predictor.cpp src/analysis/executor.cpp
+    src/io/parser.cpp src/io/results.cpp
     src/core/data.cpp src/io/reader.cpp src/fitting/predictor.cpp src/fitting/objective.cpp src/fitting/optimizer.cpp
     src/core/sample.cpp src/core/isotopes.cpp src/core/parameter.cpp src/core/validation.cpp
     src/processing/rebin.cpp src/processing/pileup.cpp src/processing/transforms.cpp
@@ -91,7 +95,38 @@ if(IBEAMLAB_ENABLE_ONNX)
     endif()
 endif()
 
+# Minion is a normal package dependency, never compiled from selected source files.
+if(IBEAMLAB_ENABLE_MINION)
+    target_link_libraries(ibeamlab PRIVATE minion)
+    target_compile_definitions(ibeamlab PRIVATE IBEAMLAB_HAS_MINION)
+    install(FILES "${PROJECT_SOURCE_DIR}/licenses/Minion.txt" DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/ibeamlab)
+    get_target_property(IBEAMLAB_MINION_TYPE minion TYPE)
+    if(IBEAMLAB_MINION_TYPE STREQUAL "SHARED_LIBRARY")
+        if(WIN32)
+            add_custom_command(TARGET ibeamlab POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${IBEAMLAB_RUNTIME_DIRECTORY}"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:minion>" "${IBEAMLAB_RUNTIME_DIRECTORY}/$<TARGET_FILE_NAME:minion>"
+                VERBATIM)
+            install(FILES "$<TARGET_FILE:minion>" DESTINATION ${CMAKE_INSTALL_BINDIR})
+        else()
+            install(FILES "$<TARGET_FILE:minion>" DESTINATION ${CMAKE_INSTALL_LIBDIR})
+        endif()
+    endif()
+endif()
+if(APPLE)
+    set_target_properties(ibeamlab PROPERTIES INSTALL_RPATH "@loader_path")
+elseif(UNIX)
+    set_target_properties(ibeamlab PROPERTIES INSTALL_RPATH "$ORIGIN")
+endif()
+
 if(IBEAMLAB_BUILD_TESTS)
+    foreach(suite profile analysis)
+        add_executable(ibeamlab_${suite}_tests tests/${suite}.cpp)
+        target_link_libraries(ibeamlab_${suite}_tests PRIVATE ibeamlab)
+        add_test(NAME ${suite} COMMAND ibeamlab_${suite}_tests)
+        set_tests_properties(${suite} PROPERTIES LABELS "unit;integration")
+    endforeach()
     add_executable(ibeamlab_fitting_tests tests/fitting_tests.cpp)
     target_link_libraries(ibeamlab_fitting_tests PRIVATE ibeamlab)
     add_test(NAME fitting COMMAND ibeamlab_fitting_tests)
@@ -119,12 +154,16 @@ if(IBEAMLAB_BUILD_TESTS)
     endif()
     add_test(NAME installed-consumer COMMAND ${CMAKE_COMMAND}
         -DBUILD_DIR=${CMAKE_BINARY_DIR} -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        "-DMINION_DIR=${Minion_DIR}" "-DEIGEN3_DIR=${Eigen3_DIR}"
         -DCONFIG=$<CONFIG> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/installed.cmake)
     set_tests_properties(installed-consumer PROPERTIES LABELS "integration;deployment" RUN_SERIAL TRUE)
 endif()
 if(IBEAMLAB_BUILD_BENCHMARKS)
     add_executable(ibeamlab_benchmark benchmarks/processing.cpp)
     target_link_libraries(ibeamlab_benchmark PRIVATE ibeamlab)
+    if(BUILD_SHARED_LIBS)
+        target_compile_definitions(ibeamlab_benchmark PRIVATE IBEAMLAB_BENCHMARK_SHARED)
+    endif()
     if(IBEAMLAB_ENABLE_ONNX)
         target_compile_definitions(ibeamlab_benchmark PRIVATE IBEAMLAB_BENCHMARK_ONNX IBEAMLAB_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     endif()
@@ -141,7 +180,7 @@ if(IBEAMLAB_BUILD_PYTHON)
     find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
     execute_process(COMMAND "${Python_EXECUTABLE}" -m pybind11 --cmakedir OUTPUT_VARIABLE pybind11_DIR OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
     find_package(pybind11 CONFIG REQUIRED)
-    pybind11_add_module(_ibeamlab python/module.cpp python/fitting.cpp)
+    pybind11_add_module(_ibeamlab python/module.cpp python/fitting.cpp python/backend.cpp)
     if(APPLE)
         set_target_properties(_ibeamlab PROPERTIES INSTALL_RPATH "@loader_path")
     elseif(UNIX)
@@ -153,18 +192,29 @@ if(IBEAMLAB_BUILD_PYTHON)
     install(DIRECTORY "${PROJECT_SOURCE_DIR}/ibeamlab/" DESTINATION ibeamlab
         FILES_MATCHING PATTERN "*.py" PATTERN "*.pyi" PATTERN "py.typed" PATTERN "__pycache__" EXCLUDE)
     if(BUILD_SHARED_LIBS)
-        install(FILES $<TARGET_FILE:ibeamlab> DESTINATION ibeamlab)
+        install(TARGETS ibeamlab LIBRARY DESTINATION ibeamlab RUNTIME DESTINATION ibeamlab)
+    endif()
+    if(IBEAMLAB_ENABLE_MINION AND IBEAMLAB_MINION_TYPE STREQUAL "SHARED_LIBRARY")
+        install(FILES "$<TARGET_FILE:minion>" DESTINATION ibeamlab)
+        install(FILES "${PROJECT_SOURCE_DIR}/licenses/Minion.txt" DESTINATION ibeamlab/licenses)
     endif()
     if(IBEAMLAB_ENABLE_ONNX AND ONNXRUNTIME_RUNTIME_FILES)
         install(FILES ${ONNXRUNTIME_RUNTIME_FILES} DESTINATION ibeamlab)
     endif()
     if(IBEAMLAB_BUILD_TESTS)
+        foreach(suite profiles analysis)
+            add_test(NAME python-${suite} COMMAND "${Python_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_${suite}.py" "$<TARGET_FILE_DIR:_ibeamlab>")
+            set_tests_properties(python-${suite} PROPERTIES LABELS "unit;integration;python")
+        endforeach()
         if(IBEAMLAB_ENABLE_ONNX)
             add_test(NAME isotope-contract COMMAND "${Python_EXECUTABLE}"
                 "${PROJECT_SOURCE_DIR}/tests/test_isotopes.py" "$<TARGET_FILE_DIR:_ibeamlab>")
             set_tests_properties(isotope-contract PROPERTIES LABELS "unit;integration")
         endif()
         if(WIN32 AND IBEAMLAB_ENABLE_SIMNRA AND EXISTS "${PROJECT_SOURCE_DIR}/xnra/Ref_RBS_LiCOFNaAlSiPSTiMnFeCoNiCuH_nopu.xnra")
+            add_test(NAME simnra-diagnostics COMMAND "${Python_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tests/test_simnra_diagnostics.py" "$<TARGET_FILE_DIR:_ibeamlab>")
+            set_tests_properties(simnra-diagnostics PROPERTIES LABELS "integration;python;licensed" RUN_SERIAL TRUE)
             add_test(NAME simnra-isotopes COMMAND "${Python_EXECUTABLE}"
                 "${PROJECT_SOURCE_DIR}/tests/test_isotopes.py" "$<TARGET_FILE_DIR:_ibeamlab>"
                 IsotopeTests.test_simnra_natural_enriched_and_restored)
@@ -226,6 +276,10 @@ endif()
 install(TARGETS ibeamlab EXPORT ibeamlab-targets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} PATTERN .gitkeep EXCLUDE)
 install(EXPORT ibeamlab-targets NAMESPACE ibeamlab:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ibeamlab)
+set(IBEAMLAB_CONFIG_NEEDS_MINION OFF)
+if(IBEAMLAB_ENABLE_MINION AND NOT BUILD_SHARED_LIBS)
+    set(IBEAMLAB_CONFIG_NEEDS_MINION ON)
+endif()
 set(IBEAMLAB_CONFIG_NEEDS_ONNX OFF)
 if(IBEAMLAB_ENABLE_ONNX AND NOT BUILD_SHARED_LIBS)
     set(IBEAMLAB_CONFIG_NEEDS_ONNX ON)
@@ -234,36 +288,3 @@ install(FILES "${PROJECT_SOURCE_DIR}/cmake/FindONNXRuntime.cmake" DESTINATION ${
 configure_package_config_file("${PROJECT_SOURCE_DIR}/cmake/ibeamlab-config.cmake.in" "${CMAKE_CURRENT_BINARY_DIR}/ibeamlab-config.cmake" INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ibeamlab)
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/ibeamlab-config-version.cmake" VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/ibeamlab-config.cmake" "${CMAKE_CURRENT_BINARY_DIR}/ibeamlab-config-version.cmake" DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ibeamlab)
-
-# Embed only ARRDE and its supporting implementation; no extra runtime DLL or
-# public dependency is added to installed consumers.
-if(IBEAMLAB_ENABLE_ARRDE)
-    include(FetchContent)
-    FetchContent_Declare(ibeamlab_minion
-        GIT_REPOSITORY https://github.com/khoirulmuzakka/Minion.git
-        GIT_TAG 3fd46f1afc99bdd1744c3a330539783b9959af7c
-        SOURCE_SUBDIR _headers_only)
-    FetchContent_Declare(ibeamlab_eigen
-        GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
-        GIT_TAG 3.4.0 GIT_SHALLOW TRUE SOURCE_SUBDIR _headers_only)
-    FetchContent_MakeAvailable(ibeamlab_minion ibeamlab_eigen)
-    set(arrde_root "${ibeamlab_minion_SOURCE_DIR}/minion")
-    add_library(ibeamlab_arrde OBJECT "${arrde_root}/algorithms/arrde.cpp"
-        "${arrde_root}/algorithms/de.cpp" "${arrde_root}/utils/utility.cpp")
-    target_compile_features(ibeamlab_arrde PRIVATE cxx_std_20)
-    set_target_properties(ibeamlab_arrde PROPERTIES POSITION_INDEPENDENT_CODE ON
-        CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
-    target_include_directories(ibeamlab_arrde SYSTEM PRIVATE
-        "${arrde_root}/algorithms" "${arrde_root}/utils" "${ibeamlab_eigen_SOURCE_DIR}")
-    target_include_directories(ibeamlab SYSTEM PRIVATE "${arrde_root}/algorithms"
-        "${arrde_root}/utils" "${ibeamlab_eigen_SOURCE_DIR}")
-    target_sources(ibeamlab PRIVATE $<TARGET_OBJECTS:ibeamlab_arrde>)
-    target_compile_definitions(ibeamlab PRIVATE IBEAMLAB_HAS_ARRDE)
-    if(IBEAMLAB_SANITIZERS AND NOT MSVC)
-        target_compile_options(ibeamlab_arrde PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
-    endif()
-    if(WIN32)
-        target_compile_definitions(ibeamlab_arrde PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
-        set_source_files_properties(src/fitting/optimizer.cpp PROPERTIES COMPILE_OPTIONS "/wd5054;/wd4127;/wd4244;/wd4267;/wd4702")
-    endif()
-endif()

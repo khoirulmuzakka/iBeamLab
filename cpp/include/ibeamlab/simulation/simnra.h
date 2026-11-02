@@ -21,6 +21,7 @@ struct SimnraConfig {
     bool fast_calculation = false;
     // Disable for diagnostics that compare rebuilding against cached updates.
     bool reuse_target_topology = true;
+    bool capture_elemental = false; ///< Expensive optional per-element diagnostics.
 };
 /** @brief Windows COM backend requiring a locally installed, licensed SIMNRA.
  * Worker sessions retain reference settings and reuse compatible layer topology.
@@ -34,6 +35,11 @@ class IBEAMLAB_API SimnraSimulator final : public Simulator {
     void simulate(const core::Experiment &, Result &) override;
     std::vector<Result> simulate_batch(std::span<const core::Experiment>, Progress = {}) override;
     std::string provenance() const override;
+    Capabilities capabilities() const noexcept override;
+    /** Export a freshly evaluated single measurement on a dedicated COM thread.
+     * Refuses overwrite; optional measured counts are written as spectrum 1. */
+    void export_project(const core::Experiment &, const std::filesystem::path &,
+                        std::span<const double> measured = {});
     /** @brief Release backend sessions explicitly; destruction also releases them. */
     void close() noexcept;
 

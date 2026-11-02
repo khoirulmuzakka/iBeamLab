@@ -2,18 +2,28 @@
 #include <ibeamlab/fitting/optimizer.h>
 #include <limits>
 #include <stdexcept>
-#ifdef IBEAMLAB_HAS_ARRDE
+#ifdef IBEAMLAB_HAS_MINION
 #include <arrde.h>
+#include <de.h>
 #endif
 namespace ibeamlab::fitting {
 bool arrde_available() noexcept {
-#ifdef IBEAMLAB_HAS_ARRDE
+#ifdef IBEAMLAB_HAS_MINION
     return true;
 #else
     return false;
 #endif
 }
 Result fit(Objective &objective, Options options, ProgressCallback callback) {
+    if (options.algorithm != "ARRDE" && options.algorithm != "DE")
+        throw std::invalid_argument("unsupported optimizer: " + options.algorithm);
+    for (const auto &row : options.initial_guesses) {
+        if (row.size() != objective.dimension())
+            throw std::invalid_argument("initial guess dimension differs");
+        for (std::size_t j = 0; j < row.size(); ++j)
+            if (!objective.bounds()[j].contains(row[j]))
+                throw std::invalid_argument("initial guess outside bounds");
+    }
     if (!options.max_evaluations)
         throw std::invalid_argument("max_evaluations must be positive");
     if (options.population_size &&
@@ -42,12 +52,14 @@ Result fit(Objective &objective, Options options, ProgressCallback callback) {
         return finish("fixed", "All parameters are fixed");
     if (objective.progress().evaluations >= options.max_evaluations)
         return finish("max_evaluations_reached", "Evaluation budget exhausted");
-#ifdef IBEAMLAB_HAS_ARRDE
+#ifdef IBEAMLAB_HAS_MINION
     std::vector<std::pair<double, double>> bounds;
     for (const auto &b : objective.bounds())
         bounds.emplace_back(b.minimum, b.maximum);
     std::vector<std::vector<double>> initial{
         {objective.initial_coordinates().begin(), objective.initial_coordinates().end()}};
+    for (const auto &row : options.initial_guesses)
+        initial.push_back(row);
     std::vector<double> flat;
     auto function = [&](const std::vector<std::vector<double>> &rows, void *) {
         flat.resize(rows.size() * objective.dimension());
@@ -64,19 +76,57 @@ Result fit(Objective &objective, Options options, ProgressCallback callback) {
         return costs;
     };
     std::map<std::string, minion::ConfigValue> settings;
+    for (const auto &[name, value] : options.settings)
+        settings[name] = value;
     if (options.population_size)
         settings["population_size"] = int(options.population_size);
-    minion::ARRDE solver(
-        function, bounds, initial, nullptr, [&](minion::MinionResult *) { return report(); },
-        options.max_evaluations - objective.progress().evaluations, options.seed, settings);
-    auto result = solver.optimize();
+    auto callback_function = [&](minion::MinionResult *) { return report(); };
+    minion::MinionResult result;
+    if (options.algorithm == "DE") {
+        minion::Differential_Evolution solver(
+            function, bounds, initial, nullptr, callback_function,
+            options.max_evaluations - objective.progress().evaluations, options.seed, settings);
+        result = solver.optimize();
+    } else {
+        minion::ARRDE solver(function, bounds, initial, nullptr, callback_function,
+                             options.max_evaluations - objective.progress().evaluations,
+                             options.seed, settings);
+        result = solver.optimize();
+    }
     if (options.record_history &&
         (history.empty() || history.back().evaluations != objective.progress().evaluations))
         history.push_back(objective.progress());
     return finish(minion::terminationStatusToString(result.status), result.message);
 #else
     throw std::runtime_error(
-        "ARRDE is unavailable; configure IBEAMLAB_ENABLE_ARRDE=ON or use an external optimizer");
+        "Minion is unavailable; configure IBEAMLAB_ENABLE_MINION=ON or use an external optimizer");
 #endif
+}
+Result fit_pipeline(Objective &objective, std::span<const Options> stages,
+                    ProgressCallback callback) {
+    if (stages.empty())
+        throw std::invalid_argument("optimizer pipeline is empty");
+    Result result;
+    std::vector<Progress> history;
+    for (std::size_t i = 0; i < stages.size(); ++i) {
+        auto settings = stages[i];
+        if (!settings.max_evaluations)
+            throw std::invalid_argument("stage budget must be positive");
+        if (i) {
+            if (settings.max_evaluations >
+                std::numeric_limits<std::size_t>::max() - objective.progress().evaluations)
+                throw std::invalid_argument("pipeline evaluation budget overflow");
+            settings.max_evaluations += objective.progress().evaluations;
+            auto best = objective.best_coordinates();
+            settings.initial_guesses.insert(settings.initial_guesses.begin(),
+                                            core::Counts(best.begin(), best.end()));
+        }
+        result = fit(objective, settings, callback);
+        history.insert(history.end(), result.history.begin(), result.history.end());
+        if (objective.stopped())
+            break;
+    }
+    result.history = std::move(history);
+    return result;
 }
 } // namespace ibeamlab::fitting

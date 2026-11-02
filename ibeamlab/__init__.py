@@ -34,6 +34,10 @@ from .export import export_package
 from .processing import rebin, apply_pileup, remove_pileup
 from .io import MeasuredSpectrum, MeasuredData, read_spectrum, register_spectrum_reader
 from .fitting import FitProblem, FitObjective, FitResult, ArealDensity, Composition, TiedParameter, Region, SpectrumSelection, fit
+from .profiles import ProfileFunction, ProfileLayer, ProfileModel, Discretizer, constant, polynomial, erf_polynomial
+from .analysis import CompositePredictor, AnalysisTask, AnalysisOutcome, AnalysisExecutor
+from .fitting import LinkedParameter, ProfileParameter, LayerProperty
+from .io import TimeField, SpectrumParser, ImportedSpectrum, read_instrument_spectrum, write_fit_result
 from .exceptions import DataReadError, FitError
 
 if TYPE_CHECKING:
@@ -96,4 +100,8 @@ __all__ = [
     "export_package", "rebin", "apply_pileup", "remove_pileup", "fit", "TrainingHistory",
     "IBeamLabError", "ValidationError", "ConfigurationError", "NativeExtensionError", "SimulationError",
     "SimnraUnavailableError", "DatasetError", "ModelPackageError", "InferenceError",
+    "ProfileFunction", "ProfileLayer", "ProfileModel", "Discretizer", "constant", "polynomial", "erf_polynomial",
+    "CompositePredictor", "AnalysisTask", "AnalysisOutcome", "AnalysisExecutor", "LinkedParameter",
+    "ProfileParameter", "LayerProperty", "TimeField", "SpectrumParser", "ImportedSpectrum",
+    "read_instrument_spectrum", "write_fit_result",
 ] + sorted(_DESCRIPTORS)

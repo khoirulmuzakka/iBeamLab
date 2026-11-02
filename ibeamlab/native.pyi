@@ -1192,6 +1192,7 @@ class SpectrumReadOptions:
     channel_base: int
     skip_rows: int
     maximum_channels: int
+    stop_row: int | None
     header: bool
     delimiter: str
     comment: str
@@ -1223,6 +1224,7 @@ class FitParameter:
     target: Any
     bounds: ParameterBounds
     tied_targets: list[Any]
+    linked_targets: list[FitLinkedTarget]
     def __init__(self) -> None: ...
 
 class FitComposition:
@@ -1251,6 +1253,11 @@ class FitLoss(Enum):
     """Explicit data-floor or known-variance chi-square denominator."""
     DATA_CHI_SQUARE = 0
     VARIANCE_CHI_SQUARE = 1
+    NEYMAN = 2
+    PEARSON = 3
+    MSE = 4
+    POISSON = 5
+    GAUSSIAN = 6
 
 class FitProblem:
     """Data, initial sample and optimizer-independent fitting parameters."""
@@ -1260,6 +1267,12 @@ class FitProblem:
     compositions: list[FitComposition]
     selections: list[FitSelection]
     loss: FitLoss
+    profile: ProfileModel | None
+    profile_parameters: list[FitProfileParameter]
+    region_normalization: FitRegionNormalization
+    missing_prediction: FitMissingPrediction
+    missing_observations_as_zero: bool
+    allow_overlapping_regions: bool
     data_floor: float
     def __init__(self) -> None: ...
 
@@ -1326,12 +1339,155 @@ class FitOptions:
     population_size: int
     seed: int
     record_history: bool
+    algorithm: str
+    settings: dict[str, bool | int | float | str]
+    initial_guesses: list[list[float]]
     def __init__(self) -> None: ...
 
 def arrde_available() -> bool:
     """Whether native ARRDE was enabled when building this extension."""
     ...
 
-def fit_arrde(objective: FitObjective, options: FitOptions, progress: Any = None) -> FitResult:
+def fit_arrde(objective: FitObjective, options: FitOptions, progress: Any = None, stages: Sequence[FitOptions] = ()) -> FitResult:
     """Run population ARRDE; progress returns True for cooperative cancellation."""
     ...
+
+
+class ProfileFunctionKind(Enum):
+    CONSTANT = 0
+    POLYNOMIAL = 1
+    ERF_POLYNOMIAL = 2
+
+class ProfileFunction:
+    """Composition weight in normalized local depth."""
+    kind: ProfileFunctionKind
+    coefficients: list[float]
+    def __init__(self) -> None: ...
+    def validate(self) -> None: ...
+    def evaluate(self, depth: float, shift: float, width: float) -> float: ...
+
+class ProfileSpacing(Enum):
+    LINEAR = 0
+    LOGARITHMIC = 1
+
+class ProfileLayer:
+    reference: Any
+    functions: list[ProfileFunction]
+    sublayers: int
+    spacing: ProfileSpacing
+    def __init__(self) -> None: ...
+
+class ProfileModel:
+    layers: list[ProfileLayer]
+    def __init__(self) -> None: ...
+    def validate(self) -> None: ...
+    def reference_sample(self) -> Any: ...
+
+class ProfileDiscretizer:
+    def __init__(self, model: ProfileModel) -> None: ...
+    def apply(self, model: ProfileModel, out: Any) -> None: ...
+
+def discretize_profile(model: ProfileModel) -> Any: ...
+
+class FitProfileParameter:
+    links: list[FitProfileLink]
+    name: str
+    layer: int
+    species: int
+    coefficient: int
+    bounds: ParameterBounds
+    def __init__(self) -> None: ...
+
+class FitLinkedTarget:
+    target: Any
+    ratio: float
+    def __init__(self) -> None: ...
+
+class FitLayerProperty(Enum):
+    ROUGHNESS = 0
+    POROSITY_FRACTION = 1
+    PORE_DIAMETER = 2
+
+class FitLayerPropertyTarget:
+    layer: int
+    property: FitLayerProperty
+    def __init__(self) -> None: ...
+
+class FitRegionNormalization(Enum):
+    SUM = 0
+    WEIGHT_SUM = 1
+
+class FitMissingPrediction(Enum):
+    REJECT = 0
+    ZERO = 1
+
+class AnalysisRoute:
+    measurements: list[str]
+    predictor: FitPredictor
+    def __init__(self) -> None: ...
+
+class AnalysisPlan:
+    routes: list[AnalysisRoute]
+    def __init__(self) -> None: ...
+    def validate(self) -> None: ...
+
+class AnalysisPredictor(FitPredictor):
+    def __init__(self, plan: AnalysisPlan) -> None: ...
+
+class AnalysisTask:
+    id: str
+    problem: FitProblem
+    options: FitOptions
+    stages: list[FitOptions]
+    initial_from: list[str]
+    def __init__(self) -> None: ...
+
+class AnalysisOutcome:
+    id: str
+    result: FitResult
+    error: str
+
+class AnalysisExecutor:
+    def __init__(self, workers: Sequence[FitPredictor]) -> None: ...
+    def run(self, tasks: Sequence[AnalysisTask], progress: Any = None) -> list[AnalysisOutcome]: ...
+    def request_stop(self) -> None: ...
+
+class SpectrumTimeField:
+    marker: str
+    seconds_per_unit: float
+    fallback: float | None
+    def __init__(self) -> None: ...
+
+class SpectrumParser:
+    records: SpectrumReadOptions
+    start_marker: str
+    end_marker: str
+    real_time: SpectrumTimeField
+    live_time: SpectrumTimeField
+    missing_channels_are_zero: bool
+    def __init__(self) -> None: ...
+
+class ImportedSpectrum:
+    spectrum: MeasuredSpectrum
+    real_time: float | None
+    live_time: float | None
+
+def read_instrument_spectrum(path: Any, measurement: str, parser: SpectrumParser) -> ImportedSpectrum: ...
+def write_fit_result(path: Any, result: FitResult, provenance: str = "") -> None: ...
+def atomic_number(element: str) -> int: ...
+
+class SimulatorCapabilities:
+    elemental_spectra: bool
+    project_export: bool
+
+class ElementSpectrum:
+    measurement: str
+    element: str
+    counts: list[float]
+
+class FitProfileLink:
+    layer: int
+    species: int
+    coefficient: int
+    ratio: float
+    def __init__(self) -> None: ...

@@ -355,6 +355,7 @@ void ForwardModel::Impl::finish(simulation::Result &result, PredictionDomain dom
     auto &r = *this;
     const auto &f = std::get<model::ForwardModelMetadata>(r.package.metadata.model);
     result.failure.reset();
+    result.elemental_spectra.clear();
     result.spectra.resize(f.output_spectra.spectra.size());
     std::size_t offset = row * package.metadata.output_width();
     for (std::size_t i = 0; i < f.output_spectra.spectra.size(); ++i) {

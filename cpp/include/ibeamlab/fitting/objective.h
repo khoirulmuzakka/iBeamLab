@@ -27,6 +27,9 @@ class IBEAMLAB_API Objective {
     /** @brief Decode one optimizer coordinate vector into a physical experiment. */
     core::Experiment decode(std::span<const double>) const;
     Result best_result() const;
+    /** Borrow the best solver coordinates without copying sample/spectrum snapshots.
+     * Values may change after evaluation. Access is serialized with evaluation. */
+    std::span<const double> best_coordinates() const;
     Progress progress() const;
     void request_stop() noexcept;
     bool stopped() const noexcept;

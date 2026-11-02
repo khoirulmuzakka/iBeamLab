@@ -45,7 +45,8 @@ void bind_fitting(py::module_ &m) {
         .def_readwrite("maximum_channels", &ReadOptions::maximum_channels)
         .def_readwrite("header", &ReadOptions::header)
         .def_readwrite("delimiter", &ReadOptions::delimiter)
-        .def_readwrite("comment", &ReadOptions::comment);
+        .def_readwrite("comment", &ReadOptions::comment)
+        .def_readwrite("stop_row", &ReadOptions::stop_row);
     m.def("read_spectrum", &read_spectrum, py::arg("path"), py::arg("measurement"),
           py::arg("options") = ReadOptions{}, py::call_guard<py::gil_scoped_release>(),
           "Read explicit channels/counts without inferring geometry or calibration.");
@@ -57,7 +58,8 @@ void bind_fitting(py::module_ &m) {
         .def_readwrite("name", &f::Parameter::name)
         .def_readwrite("target", &f::Parameter::target)
         .def_readwrite("bounds", &f::Parameter::bounds)
-        .def_readwrite("tied_targets", &f::Parameter::tied_targets);
+        .def_readwrite("tied_targets", &f::Parameter::tied_targets)
+        .def_readwrite("linked_targets", &f::Parameter::linked_targets);
     py::class_<f::Composition>(m, "FitComposition",
                                "Bounded composition encoded using N-1 stick-breaking coordinates.")
         .def(py::init<>())
@@ -78,7 +80,12 @@ void bind_fitting(py::module_ &m) {
         .def_readwrite("regions", &f::Selection::regions);
     py::enum_<f::Loss>(m, "FitLoss")
         .value("DATA_CHI_SQUARE", f::Loss::DataChiSquare)
-        .value("VARIANCE_CHI_SQUARE", f::Loss::VarianceChiSquare);
+        .value("VARIANCE_CHI_SQUARE", f::Loss::VarianceChiSquare)
+        .value("NEYMAN", f::Loss::Neyman)
+        .value("PEARSON", f::Loss::Pearson)
+        .value("MSE", f::Loss::Mse)
+        .value("POISSON", f::Loss::Poisson)
+        .value("GAUSSIAN", f::Loss::Gaussian);
     py::class_<f::Problem>(m, "FitProblem",
                            "Fixed measured data, sample assumption and physical parameter bounds.")
         .def(py::init<>())
@@ -88,7 +95,13 @@ void bind_fitting(py::module_ &m) {
         .def_readwrite("compositions", &f::Problem::compositions)
         .def_readwrite("selections", &f::Problem::selections)
         .def_readwrite("loss", &f::Problem::loss)
-        .def_readwrite("data_floor", &f::Problem::data_floor);
+        .def_readwrite("data_floor", &f::Problem::data_floor)
+        .def_readwrite("profile", &f::Problem::profile)
+        .def_readwrite("profile_parameters", &f::Problem::profile_parameters)
+        .def_readwrite("missing_observations_as_zero", &f::Problem::missing_observations_as_zero)
+        .def_readwrite("allow_overlapping_regions", &f::Problem::allow_overlapping_regions)
+        .def_readwrite("region_normalization", &f::Problem::region_normalization)
+        .def_readwrite("missing_prediction", &f::Problem::missing_prediction);
     py::class_<f::Predictor, std::shared_ptr<f::Predictor>>(
         m, "FitPredictor", "Nonconcurrent batch prediction adapter.");
     py::class_<f::ForwardPredictor, f::Predictor, std::shared_ptr<f::ForwardPredictor>>(
@@ -171,12 +184,16 @@ void bind_fitting(py::module_ &m) {
         .def_readwrite("max_evaluations", &f::Options::max_evaluations)
         .def_readwrite("population_size", &f::Options::population_size)
         .def_readwrite("seed", &f::Options::seed)
-        .def_readwrite("record_history", &f::Options::record_history);
+        .def_readwrite("record_history", &f::Options::record_history)
+        .def_readwrite("algorithm", &f::Options::algorithm)
+        .def_readwrite("settings", &f::Options::settings)
+        .def_readwrite("initial_guesses", &f::Options::initial_guesses);
     m.def("arrde_available", &f::arrde_available,
           "Return whether native ARRDE was enabled at build time.");
     m.def(
         "fit_arrde",
-        [](f::Objective &o, f::Options options, py::object callback) {
+        [](f::Objective &o, f::Options options, py::object callback,
+           std::vector<f::Options> stages) {
             auto progress = [&](const f::Progress &p) {
                 py::gil_scoped_acquire lock;
                 if (PyErr_CheckSignals() != 0) {
@@ -205,8 +222,10 @@ void bind_fitting(py::module_ &m) {
                 }
             };
             py::gil_scoped_release release;
-            return f::fit(o, options, progress);
+            return stages.empty() ? f::fit(o, options, progress)
+                                  : f::fit_pipeline(o, stages, progress);
         },
         py::arg("objective"), py::arg("options"), py::arg("progress") = py::none(),
-        "Run ARRDE with true population prediction; callbacks return True to stop.");
+        py::arg("stages") = std::vector<f::Options>{},
+        "Run native optimization with true population prediction; callbacks return True to stop.");
 }

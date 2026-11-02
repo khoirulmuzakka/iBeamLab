@@ -1,16 +1,18 @@
-#include <ibeamlab/core/isotopes.h>
 #include "io.h"
-#include <cctype>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <condition_variable>
 #include <deque>
 #include <future>
-#include <mutex>
+#include <ibeamlab/core/isotopes.h>
 #include <ibeamlab/simulation/simnra.h>
+#include <mutex>
 #include <thread>
 #ifdef IBEAMLAB_HAS_SIMNRA
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <map>
 // clang-format off
 #include <windows.h>
@@ -52,7 +54,8 @@ struct Value {
     std::string text() const {
         if (value.vt != VT_BSTR)
             throw std::runtime_error("expected COM text");
-        if (!value.bstrVal) return {};
+        if (!value.bstrVal)
+            return {};
         int n = WideCharToMultiByte(CP_UTF8, 0, value.bstrVal,
                                     static_cast<int>(SysStringLen(value.bstrVal)), nullptr, 0,
                                     nullptr, nullptr);
@@ -94,7 +97,9 @@ struct Dispatch {
                 checked(CoCreateInstance(cls, nullptr, CLSCTX_LOCAL_SERVER, IID_IDispatch,
                                          reinterpret_cast<void **>(&p)));
                 if (claim_app && !call(L"OLEUser", DISPATCH_PROPERTYGET).text().empty()) {
-                    p->Release(); p = nullptr; ids.clear();
+                    p->Release();
+                    p = nullptr;
+                    ids.clear();
                     continue;
                 }
                 if (claim_app) {
@@ -105,14 +110,20 @@ struct Dispatch {
             }
             throw std::runtime_error("cannot acquire an unclaimed SIMNRA instance");
         } catch (...) {
-            if (p) { p->Release(); p = nullptr; }
+            if (p) {
+                p->Release();
+                p = nullptr;
+            }
             throw;
         }
     }
     ~Dispatch() {
         if (p) {
             if (owned_app) {
-                try { set(L"OLEUser", {Value(std::wstring())}); } catch (...) {}
+                try {
+                    set(L"OLEUser", {Value(std::wstring())});
+                } catch (...) {
+                }
             }
             p->Release();
         }
@@ -197,7 +208,10 @@ struct PrivateDirectory {
             std::filesystem::remove_all(path, ec);
     }
 };
-std::mutex &creation_mutex() { static std::mutex value; return value; }
+std::mutex &creation_mutex() {
+    static std::mutex value;
+    return value;
+}
 struct Session {
     // Keep each App claim and its related interface activation together. This
     // lock covers initialization only, never spectrum calculations.
@@ -208,7 +222,7 @@ struct Session {
     std::optional<core::Sample> topology;
     std::optional<core::Measurement> configured_measurement;
     double reference_real_time = 0, reference_live_time = 0;
-    explicit Session(const SimnraMethod &method) {
+    explicit Session(const SimnraMethod &method, bool elemental = false) {
         creation_lock.unlock();
         static std::atomic_uint64_t sequence{0};
         auto root = std::filesystem::temp_directory_path();
@@ -222,8 +236,7 @@ struct Session {
             auto reference = directory.path / method.reference.filename();
             std::filesystem::copy_file(method.reference, reference);
             app.method(L"Open", {Value(reference.wstring()), Value(-1)});
-            // This API returns total spectra only, as in the reference generator.
-            calculation.set(L"ElementSpectra", {Value(false)});
+            calculation.set(L"ElementSpectra", {Value(elemental)});
             reference_real_time = setup.get(L"RealTime");
             reference_live_time = setup.get(L"LiveTime");
             // Reuse the loaded reference topology when it already matches.
@@ -247,12 +260,16 @@ struct Session {
                         name.pop_back();
                     auto &entry = species[static_cast<std::size_t>(ei - 1)];
                     entry.element = std::move(name);
-                    const int count = static_cast<int>(target.get(L"NumberOfIsotopes", {Value(li), Value(ei)}));
-                    if (count < 1 || count > 512) throw std::runtime_error("invalid reference isotope count");
+                    const int count =
+                        static_cast<int>(target.get(L"NumberOfIsotopes", {Value(li), Value(ei)}));
+                    if (count < 1 || count > 512)
+                        throw std::runtime_error("invalid reference isotope count");
                     for (int ii = 1; ii <= count; ++ii) {
                         auto mass = target.get(L"IsotopeMass", {Value(li), Value(ei), Value(ii)});
-                        auto fraction = target.get(L"IsotopeConcentration", {Value(li), Value(ei), Value(ii)});
-                        entry.isotopes.push_back({static_cast<std::int32_t>(std::lround(mass)), fraction});
+                        auto fraction =
+                            target.get(L"IsotopeConcentration", {Value(li), Value(ei), Value(ii)});
+                        entry.isotopes.push_back(
+                            {static_cast<std::int32_t>(std::lround(mass)), fraction});
                     }
                 }
             }
@@ -274,12 +291,16 @@ struct Session {
                     break;
                 }
                 for (std::size_t j = 0; j < a.size(); ++j) {
-                    if (a[j].element != b[j].element) { rebuild = true; break; }
+                    if (a[j].element != b[j].element) {
+                        rebuild = true;
+                        break;
+                    }
                     const auto previous = core::resolved_isotopes(a[j]);
                     const auto requested = core::resolved_isotopes(b[j]);
                     if (previous.size() != requested.size() ||
-                        !std::equal(previous.begin(), previous.end(), requested.begin(),
-                                    [](auto &p, auto &r) { return p.massNumber == r.massNumber; })) {
+                        !std::equal(
+                            previous.begin(), previous.end(), requested.begin(),
+                            [](auto &p, auto &r) { return p.massNumber == r.massNumber; })) {
                         rebuild = true;
                         break;
                     }
@@ -311,9 +332,12 @@ struct Session {
                 {
                     const auto composition = core::resolved_isotopes(s);
                     // Fixed mixtures need no per-isotope COM calls on subsequent spectra.
-                    if (configured_measurement && !rebuild && core::same_isotopes(composition,
-                            core::resolved_isotopes(topology->layers[static_cast<std::size_t>(li - 1)]
-                                .species[static_cast<std::size_t>(ei - 1)]), 0.0))
+                    if (configured_measurement && !rebuild &&
+                        core::same_isotopes(composition,
+                                            core::resolved_isotopes(
+                                                topology->layers[static_cast<std::size_t>(li - 1)]
+                                                    .species[static_cast<std::size_t>(ei - 1)]),
+                                            0.0))
                         continue;
                     if (rebuild) {
                         int count = static_cast<int>(
@@ -328,10 +352,12 @@ struct Session {
                         ++ii;
                         if (rebuild || !configured_measurement) {
                             const auto records = core::isotope_data(s.element);
-                            const auto mass = std::find_if(records.begin(), records.end(), [&](const auto &r) {
-                                return r.massNumber == i.massNumber;
-                            })->exactMass;
-                            target.set(L"IsotopeMass", {Value(li), Value(ei), Value(ii), Value(mass)});
+                            const auto mass =
+                                std::find_if(records.begin(), records.end(), [&](const auto &r) {
+                                    return r.massNumber == i.massNumber;
+                                })->exactMass;
+                            target.set(L"IsotopeMass",
+                                       {Value(li), Value(ei), Value(ii), Value(mass)});
                         }
                         target.set(L"IsotopeConcentration",
                                    {Value(li), Value(ei), Value(ii), Value(i.fraction)});
@@ -384,7 +410,8 @@ struct Session {
                 setup.set(name, {Value(value)});
         };
         update(L"Alpha", m.detector.geometry.incidenceAngle, old.detector.geometry.incidenceAngle);
-        update(L"Theta", m.detector.geometry.scatteringAngle, old.detector.geometry.scatteringAngle);
+        update(L"Theta", m.detector.geometry.scatteringAngle,
+               old.detector.geometry.scatteringAngle);
         update(L"Beta", m.detector.geometry.exitAngle, old.detector.geometry.exitAngle);
         update(L"Energy", m.beam.energy, old.beam.energy);
         update(L"Beamspread", m.beam.spread, old.beam.spread);
@@ -406,7 +433,10 @@ struct Session {
     }
     void calculate(core::Counts &out, bool fast) {
         app.method(fast ? L"CalculateSpectrumFast" : L"CalculateSpectrum");
-        auto data = spectrum.call(L"GetDataArray", DISPATCH_METHOD, {Value(2)});
+        read_spectrum(out, 2);
+    }
+    void read_spectrum(core::Counts &out, int id) {
+        auto data = spectrum.call(L"GetDataArray", DISPATCH_METHOD, {Value(id)});
         if ((data.value.vt != (VT_ARRAY | VT_R8) && data.value.vt != (VT_ARRAY | VT_VARIANT)) ||
             !data.value.parray || SafeArrayGetDim(data.value.parray) != 1)
             throw std::runtime_error("invalid SIMNRA spectrum array");
@@ -497,46 +527,65 @@ struct SimnraSimulator::Impl {
         std::unique_lock lock(mutex);
         if (closed)
             throw std::logic_error("SIMNRA backend closed");
-        tasks.emplace_back(
-            [this, promise, &x](Sessions &sessions, std::exception_ptr apartment_error) {
-                Result out;
-                std::string label;
-                try {
-                    if (apartment_error)
-                        std::rethrow_exception(apartment_error);
-                    // COM apartments are re-entered on the same worker; session ownership stays
-                    // thread-local.
-                    x.validate();
-                    if (x.setup.measurements.size() != config.methods.size())
-                        throw std::invalid_argument("SIMNRA reference count mismatch");
-                    if (sessions.empty())
-                        sessions.resize(config.methods.size());
-                    for (const auto &measurement : x.setup.measurements) {
-                        if (owner->stopped())
-                            throw std::runtime_error("simulation cancelled");
-                        auto found = std::find_if(
-                            config.methods.begin(), config.methods.end(),
-                            [&](const auto &m) { return m.measurement == measurement.label; });
-                        if (found == config.methods.end())
-                            throw std::invalid_argument("missing SIMNRA reference");
-                        auto i = static_cast<std::size_t>(found - config.methods.begin());
-                        auto &m = *found;
-                        label = m.measurement;
-                        if (measurement.beam.particle != m.particle)
-                            throw std::invalid_argument(
-                                "particle differs from declared SIMNRA reference");
-                        if (!sessions[i])
-                            sessions[i] = std::make_unique<Session>(m);
-                        sessions[i]->configure(x, measurement, config.reuse_target_topology);
-                        out.spectra.push_back({label, {}});
-                        sessions[i]->calculate(out.spectra.back().counts, config.fast_calculation);
+        tasks.emplace_back([this, promise, &x](Sessions &sessions,
+                                               std::exception_ptr apartment_error) {
+            Result out;
+            std::string label;
+            try {
+                if (apartment_error)
+                    std::rethrow_exception(apartment_error);
+                // COM apartments are re-entered on the same worker; session ownership stays
+                // thread-local.
+                x.validate();
+                if (x.setup.measurements.size() != config.methods.size())
+                    throw std::invalid_argument("SIMNRA reference count mismatch");
+                if (sessions.empty())
+                    sessions.resize(config.methods.size());
+                for (const auto &measurement : x.setup.measurements) {
+                    if (owner->stopped())
+                        throw std::runtime_error("simulation cancelled");
+                    auto found = std::find_if(
+                        config.methods.begin(), config.methods.end(),
+                        [&](const auto &m) { return m.measurement == measurement.label; });
+                    if (found == config.methods.end())
+                        throw std::invalid_argument("missing SIMNRA reference");
+                    auto i = static_cast<std::size_t>(found - config.methods.begin());
+                    auto &m = *found;
+                    label = m.measurement;
+                    if (measurement.beam.particle != m.particle)
+                        throw std::invalid_argument(
+                            "particle differs from declared SIMNRA reference");
+                    if (!sessions[i])
+                        sessions[i] = std::make_unique<Session>(m, config.capture_elemental);
+                    sessions[i]->configure(x, measurement, config.reuse_target_topology);
+                    out.spectra.push_back({label, {}});
+                    sessions[i]->calculate(out.spectra.back().counts, config.fast_calculation);
+                    if (config.capture_elemental) {
+                        std::map<std::string, bool> elements;
+                        for (const auto &l : x.sample.layers)
+                            for (const auto &sp : l.species)
+                                elements[sp.element] = true;
+                        for (const auto &[element, present] : elements) {
+                            (void)present;
+                            int id =
+                                static_cast<int>(sessions[i]
+                                                     ->spectrum
+                                                     .call(L"IDOfElement", DISPATCH_METHOD,
+                                                           {Value(core::atomic_number(element))})
+                                                     .number());
+                            if (id > 0) {
+                                out.elemental_spectra.push_back({label, element, {}});
+                                sessions[i]->read_spectrum(out.elemental_spectra.back().counts, id);
+                            }
+                        }
                     }
-                } catch (const std::exception &e) {
-                    out.failure = Failure{label, e.what()};
-                    sessions.clear();
                 }
-                promise->set_value(std::move(out));
-            });
+            } catch (const std::exception &e) {
+                out.failure = Failure{label, e.what()};
+                sessions.clear();
+            }
+            promise->set_value(std::move(out));
+        });
         lock.unlock();
         cv.notify_one();
         return future;
@@ -585,6 +634,49 @@ std::vector<Result> SimnraSimulator::simulate_batch(std::span<const core::Experi
         std::rethrow_exception(error);
     return out;
 }
+Capabilities SimnraSimulator::capabilities() const noexcept { return {true, true}; }
+void SimnraSimulator::export_project(const core::Experiment &x, const std::filesystem::path &path,
+                                     std::span<const double> measured) {
+    x.validate();
+    core::validate_counts(measured);
+    if (x.setup.measurements.size() != 1)
+        throw std::invalid_argument("project export requires exactly one measurement");
+    if (std::filesystem::exists(path))
+        throw std::runtime_error("refusing to overwrite SIMNRA project");
+    const auto &label = x.setup.measurements.front().label;
+    auto found = std::find_if(impl_->config.methods.begin(), impl_->config.methods.end(),
+                              [&](const auto &m) { return m.measurement == label; });
+    if (found == impl_->config.methods.end())
+        throw std::invalid_argument("unknown export measurement");
+    if (found->particle != x.setup.measurements.front().beam.particle)
+        throw std::invalid_argument("export particle differs from reference");
+    auto absolute = std::filesystem::absolute(path);
+    std::async(std::launch::async, [&] {
+        Apartment apartment(impl_->config.multithreaded_apartment);
+        Session session(*found, impl_->config.capture_elemental);
+        session.configure(x, x.setup.measurements.front(), false);
+        core::Counts counts;
+        session.calculate(counts, impl_->config.fast_calculation);
+        if (!measured.empty()) {
+            Value array;
+            array.value.vt = VT_ARRAY | VT_R8;
+            array.value.parray =
+                SafeArrayCreateVector(VT_R8, 0, static_cast<ULONG>(measured.size()));
+            if (!array.value.parray)
+                throw std::bad_alloc();
+            double *data = nullptr;
+            checked(SafeArrayAccessData(array.value.parray, reinterpret_cast<void **>(&data)));
+            std::copy(measured.begin(), measured.end(), data);
+            checked(SafeArrayUnaccessData(array.value.parray));
+            if (!session.spectrum.call(L"SetDataArray", DISPATCH_METHOD, {Value(1), array})
+                     .number())
+                throw std::runtime_error("SIMNRA SetDataArray failed");
+        }
+        if (!session.app.call(L"SaveAs", DISPATCH_METHOD, {Value(absolute.wstring()), Value(2)})
+                 .number())
+            throw std::runtime_error("SIMNRA SaveAs failed");
+    }).get();
+}
 std::string SimnraSimulator::provenance() const { return impl_->provenance; }
 void SimnraSimulator::close() noexcept {
     request_stop();
@@ -603,6 +695,11 @@ void SimnraSimulator::simulate(const core::Experiment &, Result &) {
 }
 std::vector<Result> SimnraSimulator::simulate_batch(std::span<const core::Experiment>, Progress) {
     throw std::runtime_error("SIMNRA unavailable");
+}
+Capabilities SimnraSimulator::capabilities() const noexcept { return {}; }
+void SimnraSimulator::export_project(const core::Experiment &, const std::filesystem::path &,
+                                     std::span<const double>) {
+    throw std::runtime_error("SIMNRA is unavailable in this build");
 }
 std::string SimnraSimulator::provenance() const { return "simnra-disabled"; }
 void SimnraSimulator::close() noexcept {}

@@ -41,6 +41,8 @@ ONNX-enabled iBeamLab build with compatible runtime dependencies.
 ## Install and build
 
 Build from the repository root with CMake 3.24 or newer and a C++20 compiler.
+Native fitting uses the installed Minion package by default; set
+`CMAKE_PREFIX_PATH` to its installation. See the [dependency setup](docs/building.md#preparing-the-minion-dependency).
 Python usage requires Python 3.10 or newer. On Windows, install Visual Studio
 Build Tools with the C++ workload.
 
@@ -134,6 +136,9 @@ additional simulators to participate in generation and fitting workflows.
 See the [SIMNRA guide](docs/simnra.md) and [C++ guide](docs/cpp.md).
 
 ## Fitting and elemental depth profiles
+
+Use [smooth profiles](docs/profiles.md) or explicit layers, and combine
+measurement-specific backends through the [analysis API](docs/analysis.md).
 
 Estimate a layered sample's elemental depth profile by comparing measured spectra
 with predictions from a simulator or forward surrogate. Declare measured data,

@@ -16,6 +16,10 @@ static_assert(std::variant_size_v<core::ParameterTarget> == 12);
 struct Binding {
     std::size_t kind, first = 0, second = 0;
     double &ref(core::Experiment &e) const {
+        if (kind >= 13) {
+            auto &l = e.sample.layers[first];
+            return kind == 13 ? l.roughness : kind == 14 ? l.porosityFraction : l.poreDiameter;
+        }
         if (kind == 0)
             return e.sample.layers[first].thickness;
         if (kind == 1 || kind == 12)
@@ -46,6 +50,14 @@ struct Binding {
     }
 };
 Binding compile_binding(core::Experiment &e, const Target &t) {
+    if (auto property = std::get_if<LayerPropertyTarget>(&t)) {
+        (void)e.sample.layers.at(property->layer);
+        if (property->property != LayerProperty::Roughness &&
+            property->property != LayerProperty::PorosityFraction &&
+            property->property != LayerProperty::PoreDiameter)
+            throw std::invalid_argument("unknown layer property");
+        return {13 + static_cast<std::size_t>(property->property), property->layer, 0};
+    }
     if (auto ad = std::get_if<ElementArealDensity>(&t)) {
         auto b = compile_binding(
             e, Target{core::ParameterTarget{core::SpeciesConcentration{ad->layer, ad->element}}});
@@ -79,7 +91,9 @@ Binding compile_binding(core::Experiment &e, const Target &t) {
 }
 bool physical(const core::Experiment &e) {
     for (const auto &l : e.sample.layers) {
-        if (!std::isfinite(l.thickness) || l.thickness < 0)
+        if (!std::isfinite(l.thickness) || l.thickness < 0 || !std::isfinite(l.roughness) ||
+            l.roughness < 0 || !std::isfinite(l.porosityFraction) || l.porosityFraction < 0 ||
+            l.porosityFraction > 1 || !std::isfinite(l.poreDiameter) || l.poreDiameter < 0)
             return false;
         double sum = 0;
         for (const auto &s : l.species) {
@@ -91,8 +105,15 @@ bool physical(const core::Experiment &e) {
             return false;
     }
     for (const auto &m : e.setup.measurements) {
-        if (!(m.beam.energy > 0) || m.beam.spread < 0 || m.detector.resolution < 0 ||
-            m.acquisition.particlesSr < 0 || !(m.detector.calibrationLinear > 0))
+        if (!std::isfinite(m.beam.energy) || !std::isfinite(m.beam.spread) ||
+            !std::isfinite(m.detector.resolution) || !std::isfinite(m.acquisition.particlesSr) ||
+            !std::isfinite(m.acquisition.realTime) || m.acquisition.realTime < 0 ||
+            !std::isfinite(m.acquisition.liveTime) || m.acquisition.liveTime < 0 ||
+            !std::isfinite(m.detector.calibrationLinear) ||
+            !std::isfinite(m.detector.calibrationOffset) ||
+            !std::isfinite(m.detector.calibrationQuadratic) || !(m.beam.energy > 0) ||
+            m.beam.spread < 0 || m.detector.resolution < 0 || m.acquisition.particlesSr < 0 ||
+            !(m.detector.calibrationLinear > 0))
             return false;
         try {
             m.detector.geometry.validate();
@@ -105,10 +126,15 @@ bool physical(const core::Experiment &e) {
 } // namespace
 struct Objective::Impl {
     Problem problem;
+    std::unique_ptr<Parameterization> parameterization;
+    std::vector<std::size_t> profile_coordinates;
+    core::Counts profile_values;
+    core::Experiment macro_reference;
     std::shared_ptr<Predictor> predictor;
     core::Experiment reference;
     struct Scalar {
         std::vector<Binding> bindings;
+        std::vector<double> ratios;
         std::size_t coordinate;
         double fixed;
     };
@@ -131,20 +157,38 @@ struct Objective::Impl {
     core::Counts initial;
     std::vector<std::size_t> measurement_channels;
     std::vector<Score> scores;
+    bool fixed_denominator = false;
     std::vector<core::Experiment> inputs;
     std::vector<simulation::Result> outputs;
     std::vector<std::size_t> indices;
     Result best;
     std::atomic_bool stop = false;
     std::size_t evaluations = 0, invalid = 0;
-    Impl(Problem p, std::shared_ptr<Predictor> model)
-        : problem(std::move(p)), predictor(std::move(model)),
-          reference{problem.initial_sample, problem.data.setup} {
+    Impl(Problem input_problem, std::shared_ptr<Predictor> model)
+        : problem(std::move(input_problem)), predictor(std::move(model)),
+          reference{problem.profile ? problem.profile->reference_sample() : problem.initial_sample,
+                    problem.data.setup} {
         if (!predictor)
             throw std::invalid_argument("fitting predictor is required");
+        macro_reference = reference;
+        if (problem.missing_observations_as_zero)
+            for (auto &d : problem.data.spectra) {
+                std::size_t size = d.counts.size();
+                for (const auto &selection : problem.selections)
+                    if (selection.measurement == d.measurement)
+                        for (const auto &r : selection.regions)
+                            size = std::max(size, r.stop);
+                if (size > 1000000)
+                    throw std::invalid_argument("selected channel count exceeds limit");
+                d.counts.resize(size, 0);
+                d.valid.clear();
+                if (!d.variances.empty())
+                    d.variances.resize(size, 0);
+            }
         problem.data.validate();
         reference.validate();
-        if (problem.loss != Loss::DataChiSquare && problem.loss != Loss::VarianceChiSquare)
+        if (static_cast<int>(problem.loss) < 0 ||
+            static_cast<int>(problem.loss) > static_cast<int>(Loss::Gaussian))
             throw std::invalid_argument("unknown fitting loss");
         for (const auto &m : reference.setup.measurements)
             measurement_channels.push_back(
@@ -156,6 +200,9 @@ struct Objective::Impl {
         std::set<std::tuple<std::size_t, std::size_t, std::size_t>> used;
         std::set<std::string> labels;
         auto claim = [&](Binding b) {
+            if (problem.profile && (b.kind == 1 || b.kind == 12))
+                throw std::invalid_argument(
+                    "profile weights must be varied through coefficient parameters");
             if (!used.emplace(b.kind, b.first, b.second).second)
                 throw std::invalid_argument("duplicate fitting target");
         };
@@ -163,6 +210,9 @@ struct Objective::Impl {
             if (auto v = std::get_if<core::ParameterTarget>(&t)) {
                 if (!predictor->can_vary(*v))
                     throw std::invalid_argument("predictor cannot vary " + core::parameter_key(*v));
+            } else if (std::holds_alternative<LayerPropertyTarget>(t)) {
+                if (!predictor->can_vary_layer_properties())
+                    throw std::invalid_argument("predictor cannot vary layer properties");
             } else {
                 const auto &a = std::get<ElementArealDensity>(t);
                 if (!predictor->can_vary(core::LayerThickness{a.layer}))
@@ -177,7 +227,7 @@ struct Objective::Impl {
             p0.bounds.validate();
             if (p0.name.empty() || !labels.insert(p0.name).second)
                 throw std::invalid_argument("fitting parameter names must be unique and nonempty");
-            Scalar s{{}, absent, 0};
+            Scalar s{{}, {}, absent, 0};
             auto add = [&](const Target &t) {
                 auto b = compile_binding(reference, t);
                 claim(b);
@@ -195,12 +245,25 @@ struct Objective::Impl {
                     throw std::invalid_argument("initial value outside bounds: " + p0.name);
                 s.fixed = v;
                 s.bindings.push_back(b);
+                s.ratios.push_back(1);
                 if (p0.bounds.minimum < p0.bounds.maximum)
                     permission(t);
             };
             add(p0.target);
             for (const auto &t : p0.tied_targets)
                 add(t);
+            for (const auto &link : p0.linked_targets) {
+                validate_ratio(link.ratio);
+                auto b = compile_binding(reference, Target{link.target});
+                claim(b);
+                if (std::abs(b.ref(reference) - s.fixed * link.ratio) >
+                    1e-10 * std::max(1., std::abs(b.ref(reference))))
+                    throw std::invalid_argument("linked target initial value differs from ratio");
+                if (p0.bounds.minimum < p0.bounds.maximum)
+                    permission(Target{link.target});
+                s.bindings.push_back(b);
+                s.ratios.push_back(link.ratio);
+            }
             if (p0.bounds.minimum < p0.bounds.maximum) {
                 s.coordinate = bounds.size();
                 bounds.push_back(p0.bounds);
@@ -266,12 +329,62 @@ struct Objective::Impl {
                 if (first == layer && (kind == 0 || kind == 1))
                     throw std::invalid_argument(
                         "areal density conflicts with thickness/composition targets");
+        if (!problem.profile && !problem.profile_parameters.empty())
+            throw std::invalid_argument("profile parameters require a profile");
+        if (problem.profile) {
+            if (!problem.compositions.empty() || !ad_layers.empty())
+                throw std::invalid_argument(
+                    "profile weights cannot be combined with fraction/AD groups");
+            for (const auto &p : problem.parameters) {
+                auto b = compile_binding(reference, p.target);
+                if (b.kind == 1)
+                    throw std::invalid_argument(
+                        "vary profile coefficients instead of macro fractions");
+            }
+            parameterization =
+                std::make_unique<Parameterization>(*problem.profile, problem.profile_parameters);
+            std::size_t sublayer = 0;
+            for (const auto &l : problem.profile->layers) {
+                for (std::size_t j = 0; j < l.sublayers; ++j, ++sublayer) {
+                    if (!predictor->can_vary(core::LayerThickness{sublayer}))
+                        throw std::invalid_argument("predictor cannot vary profile thickness");
+                    for (const auto &sp : l.reference.species)
+                        if (!predictor->can_vary(core::SpeciesConcentration{sublayer, sp.element}))
+                            throw std::invalid_argument(
+                                "predictor cannot vary profile composition");
+                }
+            }
+            for (const auto &p : problem.profile_parameters) {
+                if (p.name.empty() || !labels.insert(p.name).second)
+                    throw std::invalid_argument("profile parameter names must be unique");
+                auto v = problem.profile->layers[p.layer]
+                             .functions[p.species]
+                             .coefficients[p.coefficient];
+                profile_coordinates.push_back(p.bounds.minimum < p.bounds.maximum ? bounds.size()
+                                                                                  : absent);
+                profile_values.push_back(v);
+                best.parameter_names.push_back(p.name);
+                if (p.bounds.minimum < p.bounds.maximum) {
+                    bounds.push_back(p.bounds);
+                    initial.push_back(v);
+                    names.push_back(p.name);
+                }
+            }
+        }
+        if ((problem.region_normalization != RegionNormalization::Sum &&
+             problem.region_normalization != RegionNormalization::WeightSum) ||
+            (problem.missing_prediction != MissingPrediction::Reject &&
+             problem.missing_prediction != MissingPrediction::Zero))
+            throw std::invalid_argument("unknown objective policy");
         std::set<std::string> selected;
         for (const auto &s : problem.selections) {
             core::find_measurement(reference.setup, s.measurement);
             if (!selected.insert(s.measurement).second)
                 throw std::invalid_argument("duplicate measurement selection");
         }
+        fixed_denominator = problem.loss == Loss::DataChiSquare ||
+                            problem.loss == Loss::VarianceChiSquare ||
+                            problem.loss == Loss::Neyman || problem.loss == Loss::Mse;
         std::size_t total = 0;
         for (const auto &d : problem.data.spectra) {
             Score score;
@@ -289,23 +402,37 @@ struct Objective::Impl {
                         r.weight < 0)
                         throw std::invalid_argument("invalid channel region");
                     for (auto j = r.start; j < r.stop; ++j) {
-                        if (occupied[j])
+                        if (occupied[j] && !problem.allow_overlapping_regions)
                             throw std::invalid_argument("overlapping channel regions");
                         occupied[j] = true;
-                        weights[j] = w * r.weight;
+                        weights[j] += w * r.weight;
                     }
                 }
             }
+            if (problem.region_normalization == RegionNormalization::WeightSum &&
+                it != problem.selections.end() && !it->regions.empty()) {
+                double sum = 0;
+                for (const auto &r : it->regions)
+                    sum += r.weight;
+                if (sum > 0)
+                    for (auto &v : weights)
+                        v /= sum;
+            }
             for (std::size_t j = 0; j < weights.size(); ++j)
                 if (weights[j] > 0 && (d.valid.empty() || d.valid[j])) {
-                    double denominator = problem.data_floor + d.counts[j];
                     if (problem.loss == Loss::VarianceChiSquare) {
                         if (d.variances.empty() || d.variances[j] <= 0)
                             throw std::invalid_argument(
                                 "selected channels need positive variances");
-                        denominator = d.variances[j];
                     }
                     score.channels.push_back(j);
+                    double denominator = 1;
+                    if (problem.loss == Loss::DataChiSquare)
+                        denominator = d.counts[j] + problem.data_floor;
+                    if (problem.loss == Loss::Neyman)
+                        denominator = std::max(d.counts[j], 1.);
+                    if (problem.loss == Loss::VarianceChiSquare)
+                        denominator = d.variances[j];
                     score.coefficients.push_back(weights[j] / denominator);
                     ++total;
                 }
@@ -319,22 +446,23 @@ struct Objective::Impl {
             best.contributions.push_back(
                 {problem.data.spectra[i].measurement, 0, scores[i].channels.size()});
     }
-    bool decode(std::span<const double> x, core::Experiment &e) const {
+    bool decode(std::span<const double> x, core::Experiment &e) {
+        auto &work = parameterization ? macro_reference : e;
         if (x.size() != bounds.size())
             throw std::invalid_argument("candidate dimension differs");
         for (std::size_t j = 0; j < x.size(); ++j)
             if (!bounds[j].contains(x[j]))
                 return false;
         for (auto l : ad_layers) {
-            auto &a = e.sample.layers[l];
+            auto &a = work.sample.layers[l];
             const auto &r = reference.sample.layers[l];
             for (std::size_t k = 0; k < a.species.size(); ++k)
                 a.species[k].concentration = r.thickness * r.species[k].concentration;
         }
         for (const auto &s : scalars) {
             auto v = s.coordinate == absent ? s.fixed : x[s.coordinate];
-            for (const auto &b : s.bindings)
-                b.ref(e) = v;
+            for (std::size_t j = 0; j < s.bindings.size(); ++j)
+                s.bindings[j].ref(work) = v * s.ratios[j];
         }
         for (const auto &g : groups) {
             double remaining = g.total;
@@ -352,12 +480,12 @@ struct Objective::Impl {
                            : g.coordinates[j] == absent
                                ? lo
                                : lo + std::max(0., hi - lo) * x[g.coordinates[j]];
-                g.bindings[j].ref(e) = v;
+                g.bindings[j].ref(work) = v;
                 remaining -= v;
             }
         }
         for (auto l : ad_layers) {
-            auto &a = e.sample.layers[l];
+            auto &a = work.sample.layers[l];
             double total = 0;
             for (const auto &s : a.species)
                 total += s.concentration;
@@ -366,6 +494,18 @@ struct Objective::Impl {
                 a.species[k].concentration =
                     total > 0 ? a.species[k].concentration / total
                               : reference.sample.layers[l].species[k].concentration;
+        }
+        if (parameterization) {
+            for (std::size_t j = 0; j < profile_values.size(); ++j)
+                profile_values[j] = profile_coordinates[j] == absent
+                                        ? problem.profile_parameters[j].bounds.minimum
+                                        : x[profile_coordinates[j]];
+            try {
+                parameterization->apply(profile_values, work.sample, e.sample);
+                e.setup = work.setup;
+            } catch (const std::invalid_argument &) {
+                return false;
+            }
         }
         if (!physical(e))
             return false;
@@ -383,6 +523,15 @@ struct Objective::Impl {
                 return false;
         }
         return true;
+    }
+    double weighted_loss(const core::MeasuredSpectrum &d, std::size_t channel, double predicted,
+                         double weight) const {
+        if (fixed_denominator) {
+            double delta = d.counts[channel] - predicted;
+            return delta * delta * weight;
+        }
+        return loss_value(problem.loss, d.counts[channel], predicted, 0, problem.data_floor) *
+               weight;
     }
     double score(const simulation::Result &r, bool compile = false) {
         if (r.failure)
@@ -402,16 +551,21 @@ struct Objective::Impl {
             if (s.spectrum >= r.spectra.size() ||
                 r.spectra[s.spectrum].measurement != d.measurement)
                 throw std::runtime_error("predictor measurement layout differs");
+            double measurement_cost = 0;
             const auto &p = r.spectra[s.spectrum].counts;
-            if (!s.channels.empty() && s.channels.back() >= p.size())
+            if (problem.missing_prediction == MissingPrediction::Reject && !s.channels.empty() &&
+                s.channels.back() >= p.size())
                 throw std::runtime_error("prediction does not cover selected channels");
             for (std::size_t j = 0; j < s.channels.size(); ++j) {
                 auto channel = s.channels[j];
-                if (!std::isfinite(p[channel]) || p[channel] < 0)
+                const double predicted = channel < p.size() ? p[channel] : 0;
+                if (!std::isfinite(predicted) || predicted < 0)
                     throw std::runtime_error("nonphysical predicted counts");
-                double delta = d.counts[channel] - p[channel];
-                total += delta * delta * s.coefficients[j];
+                measurement_cost += weighted_loss(d, channel, predicted, s.coefficients[j]);
             }
+            if (measurement_cost < 0)
+                return INFINITY;
+            total += measurement_cost;
         }
         return total;
     }
@@ -425,26 +579,28 @@ struct Objective::Impl {
         best.coordinates.assign(x.begin(), x.end());
         std::size_t physical_index = 0;
         for (std::size_t j = 0; j < scalars.size(); ++j) {
-            const auto &b = scalars[j].bindings.front();
-            auto &mutableE = best.experiment;
-            double v = b.ref(mutableE);
-            if (b.kind == 12)
-                v *= e.sample.layers[b.first].thickness;
-            best.parameter_values[physical_index++] = v;
+            const auto &p = scalars[j];
+            best.parameter_values[physical_index++] =
+                p.coordinate == absent ? p.fixed : x[p.coordinate];
         }
         for (std::size_t k = 0; k < groups.size(); ++k)
             for (std::size_t j = 0; j < groups[k].bindings.size(); ++j) {
                 best.parameter_values[physical_index++] =
                     groups[k].bindings[j].ref(best.experiment);
             }
+        for (std::size_t j = 0; j < profile_coordinates.size(); ++j)
+            best.parameter_values[physical_index++] =
+                profile_coordinates[j] == absent ? problem.profile_parameters[j].bounds.minimum
+                                                 : x[profile_coordinates[j]];
         for (std::size_t k = 0; k < scores.size(); ++k) {
             const auto &s = scores[k];
             const auto &d = problem.data.spectra[k];
             double v = 0;
             for (std::size_t j = 0; j < s.channels.size(); ++j) {
-                double delta =
-                    d.counts[s.channels[j]] - r.spectra[s.spectrum].counts[s.channels[j]];
-                v += delta * delta * s.coefficients[j];
+                auto channel = s.channels[j];
+                const auto &counts = r.spectra[s.spectrum].counts;
+                v += weighted_loss(d, channel, channel < counts.size() ? counts[channel] : 0,
+                                   s.coefficients[j]);
             }
             best.contributions[k].cost = v;
         }
@@ -529,6 +685,7 @@ Result Objective::best_result() const {
     result.status = stopped() ? "cancelled" : "evaluated";
     return result;
 }
+std::span<const double> Objective::best_coordinates() const { return impl_->best.coordinates; }
 Progress Objective::progress() const {
     return {impl_->evaluations, impl_->invalid, impl_->best.cost};
 }

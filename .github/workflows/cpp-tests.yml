@@ -2,9 +2,9 @@ name: C++ unit and integration tests
 
 on:
   push:
-    paths: ['CMakeLists.txt', 'cmake/**', 'docs/**', 'README.md', 'cpp/**', 'ibeamlab/**', 'tests/**', 'examples/**', 'pyproject.toml', 'xnra/**', '.github/workflows/cpp-tests.yml']
+    paths: ['CMakeLists.txt', 'cmake/**', 'tools/build_minion.py', '.github/actions/**', 'docs/**', 'README.md', 'cpp/**', 'ibeamlab/**', 'tests/**', 'examples/**', 'pyproject.toml', 'xnra/**', '.github/workflows/cpp-tests.yml']
   pull_request:
-    paths: ['CMakeLists.txt', 'cmake/**', 'docs/**', 'README.md', 'cpp/**', 'ibeamlab/**', 'tests/**', 'examples/**', 'pyproject.toml', 'xnra/**', '.github/workflows/cpp-tests.yml']
+    paths: ['CMakeLists.txt', 'cmake/**', 'tools/build_minion.py', '.github/actions/**', 'docs/**', 'README.md', 'cpp/**', 'ibeamlab/**', 'tests/**', 'examples/**', 'pyproject.toml', 'xnra/**', '.github/workflows/cpp-tests.yml']
   workflow_dispatch:
 
 permissions:
@@ -24,6 +24,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install Minion dependency
+        uses: ./.github/actions/setup-minion
       - name: Build wheel from the repository root
         run: python -m pip wheel . --no-deps --wheel-dir wheelhouse
       - name: Install wheel
@@ -58,6 +60,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install Minion dependency
+        uses: ./.github/actions/setup-minion
       - name: Install test dependencies
         run: python -m pip install "numpy>=1.24,<3" "pybind11>=2.12,<4" "tqdm>=4.66,<5"
       - name: Configure
@@ -96,6 +100,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Install Minion dependency
+        uses: ./.github/actions/setup-minion
       - name: Configure
         run: cmake -S . -B build -DIBEAMLAB_BUILD_TESTS=ON -DIBEAMLAB_SANITIZERS=ON -DCMAKE_BUILD_TYPE=Debug
       - name: Build
@@ -128,6 +134,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install Minion dependency
+        uses: ./.github/actions/setup-minion
       - name: Install training and export test dependencies
         run: python -m pip install "numpy>=1.24,<3" "pybind11>=2.12,<4" "tqdm>=4.66,<5" "onnx>=1.16,<2" "onnxruntime>=1.17,<2" "torch>=2,<3"
       - name: Fetch matching ONNX Runtime SDK

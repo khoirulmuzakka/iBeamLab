@@ -5,7 +5,12 @@
 
 namespace ibeamlab::core {
 /** @brief Database identity and atomic mass (u); sample fractions live in Isotope. */
-struct IsotopeData { std::int32_t massNumber; double exactMass; };
+struct IsotopeData {
+    std::int32_t massNumber;
+    double exactMass;
+};
+/** @brief Atomic number from the shared periodic-table ordering. */
+IBEAMLAB_API int atomic_number(std::string_view element);
 /** @brief Immutable supported isotopes; throws for unknown element symbols. */
 IBEAMLAB_API std::span<const IsotopeData> isotope_data(std::string_view element);
 /** @brief Immutable normalized natural fractions. Empty means no defined default. */

@@ -29,7 +29,7 @@ Ordinary hosted CI verifies CPU and unavailable-CUDA behavior without requiring 
 | `python-api` | integration, python | Python domain API, dummy simulation, caller-owned NumPy buffers, dtype rejection, generation callbacks, dataset reads; with ONNX: multi-measurement deployment and PyTorch export parity at two batch sizes |
 | `python-wrapper` | integration, python | Root Python package, independent measurement settings, cached experiment conversion, NumPy result lifetime/read-only views, buffer reuse, streaming datasets, failure/cancellation policies; with ONNX: multi-detector metadata/inference, optional training and export |
 | `python-surrogate` | integration, python (ONNX builds) | Recurrent surrogate training, staged rates, exact in-epoch resume, safe forced-interrupt fallback, notebook controls without TOML, single-package variable layers, dynamic ONNX Loop at opsets 17/18, physical/direct AD parity, per-detector processing and shape validation |
-| `python-data-generation` | integration, python | Multilayer configuration validation without an extension, exact method budgets, compounds/shared 2–8 element sets/independent layerwise 1–13 element sets, reproducibility, pure samples, parameter columns, dummy generation and selected-element audit artifacts |
+| `python-data-generation` | integration, python | Multilayer configuration validation without an extension, exact method budgets, compounds/shared 2â€“8 element sets/independent layerwise 1â€“13 element sets, reproducibility, pure samples, parameter columns, dummy generation and selected-element audit artifacts |
 | `allocation-benchmark` | performance | 100 rebin+pileup iterations at 5,000 channels; with ONNX, 100 single-detector predictions into reused output at 5,000 channels, checking no counted C++ allocations after warmup |
 | `simnra-reference` | integration, licensed, simnra | Five repository XNRA projects; independent fresh COM calculations, two workers, session reuse, forced append-before-delete rebuilds, a 10% layer-thickness change and pileup flags |
 
@@ -136,3 +136,33 @@ spectra, decreasing populations from 64 to 4 and improving best solutions. It
 counts C++ `new` allocations after warmup; this does not measure ONNX Runtime's
 internal allocator, Python conversions, optimizer bookkeeping or explicit result
 snapshot copies.
+
+## Allocation audit of profile fitting and routing
+
+On Windows, an executable's global `operator new` override does not reliably
+intercept allocations inside a shared DLL. The shared benchmark reports that
+scope explicitly. Use a static Release build to audit the library itself:
+
+```console
+cmake -S . -B build/allocation-audit -DBUILD_SHARED_LIBS=OFF -DIBEAMLAB_BUILD_BENCHMARKS=ON -DIBEAMLAB_BUILD_TESTS=OFF -DIBEAMLAB_ENABLE_MINION=OFF
+cmake --build build/allocation-audit --config Release --target ibeamlab_benchmark --parallel
+```
+
+Run `build/allocation-audit/bin/ibeamlab_benchmark.exe` on Windows. The new case
+covers 32 sublayers, 5,000 channels per detector, one- and two-detector routes,
+long labels, and populations cycling through 64, 48, 32, 16, 8 and 4. It warms
+maximum capacity, exercises best-result updates, counts C++ `new` allocations,
+and fails if that framework path allocates during the measured iterations.
+
+The provider is deliberately allocation-free so the test measures profile
+mapping, route handling, prediction copying and objective scoring independently
+of a particular neural network or external simulator. Each route retains its own
+peak-capacity buffers; this prevents detector-layout changes between routes from
+destroying reusable storage. Costs are precomputed where denominators are fixed.
+
+This is not a claim that an entire fit performs no allocations: setup, capacity
+growth, explicit result snapshots, optimizer-owned return vectors/history, Python
+conversions, SIMNRA result adapters, Minion internals and runtime-internal allocations have separate
+ownership and behavior. Changes in sample/species topology may also allocate.
+The benchmark's allocation scope is C++ `new`, not all external `malloc` or GPU
+allocations. Its timings isolate framework overhead, not end-to-end model speed.

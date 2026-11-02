@@ -9,10 +9,18 @@ struct Failure {
     std::string measurement;
     std::string message;
 };
+struct Capabilities {
+    bool elemental_spectra = false, project_export = false;
+};
+struct ElementSpectrum {
+    std::string measurement, element;
+    core::Counts counts;
+};
 /** @brief Labelled spectra from one experiment, or a backend failure diagnostic. */
 struct Result {
     std::vector<core::Spectrum> spectra;
     std::optional<Failure> failure;
+    std::vector<ElementSpectrum> elemental_spectra;
 };
 /** @brief Batch progress callback receiving completed and total experiment counts. */
 using Progress = std::function<void(std::size_t completed, std::size_t total)>;
@@ -27,6 +35,7 @@ class IBEAMLAB_API Simulator {
     // separate backend instance. Output storage may be reused between calls.
     virtual void simulate(const core::Experiment &, Result &output) = 0;
     virtual std::string provenance() const = 0;
+    virtual Capabilities capabilities() const noexcept { return {}; }
     virtual void request_stop() noexcept { stop_.store(true); }
     virtual void reset_stop() noexcept { stop_.store(false); }
     bool stopped() const noexcept { return stop_.load(); }

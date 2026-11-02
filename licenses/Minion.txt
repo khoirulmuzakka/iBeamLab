@@ -1,0 +1,55 @@
+MIT License
+-----------
+
+Copyright (c) 2024 Dr. Khoirul Faiq Muzakka (Forschungszentrum Jülich GmbH)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+LBFGSpp Library
+---------------
+
+This project includes code elements derived from the `LBFGSpp` project
+(https://github.com/yixuan/LBFGSpp), which is licensed under the MIT License.
+
+For more information about the `LBFGSpp` library, please refer to its official repository.
+
+
+CEC Benchmark Problems Code (from Suganthan GitHub Repository)
+--------------------------------------------------------------
+
+This project includes implementations of the CEC benchmark problems that are based on 
+the original code released by [P. N. Suganthan](https://github.com/P-N-Suganthan). The original
+code was distributed prior to the CEC competitions for research and benchmarking purposes and, 
+to the best of our knowledge, is free to use and redistribute for non-commercial, 
+academic, and research applications.  
+
+
+BBOB2009 / COCO Benchmark Support
+----------------------------------
+
+This project also includes BBOB2009 benchmark support through the COCO
+benchmark framework from the upstream repository
+``https://github.com/numbbo/coco.git``. According to the upstream COCO
+license, the code is generally distributed under the 3-clause BSD License,
+apart from a few documented exceptions. Minion uses the ``code-experiments``
+component from that repository together with the local ``bbob2009`` adapter
+code in ``external/bbob2009``. Please consult the COCO repository ``LICENSE``
+and ``AUTHORS`` files, as well as the ``bbob2009`` sources, for the exact
+license details that apply to those benchmark files.

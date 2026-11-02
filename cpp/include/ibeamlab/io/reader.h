@@ -11,6 +11,7 @@ struct ReadOptions {
     std::size_t counts_column = 1;
     std::optional<std::size_t> channel_column = 0, variance_column;
     std::size_t channel_base = 0, skip_rows = 0, maximum_channels = 1000000;
+    std::optional<std::size_t> stop_row; ///< Exclusive physical line index, zero-based.
     bool header = false;
     char delimiter = '\0', comment = '#';
 };

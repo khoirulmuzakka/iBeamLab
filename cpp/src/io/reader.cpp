@@ -96,6 +96,8 @@ core::MeasuredSpectrum read_spectrum(const std::filesystem::path &path, std::str
     bool header = options.header;
     while (std::getline(input, line)) {
         ++line_number;
+        if (options.stop_row && line_number > *options.stop_row)
+            break;
         if (line_number == 1 && line.compare(0, 3, "\xef\xbb\xbf") == 0)
             line.erase(0, 3);
         if (line_number <= options.skip_rows)

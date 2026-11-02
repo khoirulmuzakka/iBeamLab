@@ -50,7 +50,7 @@ cmake.args = [
   "-DIBEAMLAB_BUILD_EXAMPLES=OFF",
 ]
 wheel.packages = ["ibeamlab"]
-sdist.include = ["CMakeLists.txt", "README.md", "cmake/**", "docs/**", "cpp/CMakeLists.txt", "cpp/src/**", "cpp/include/**", "cpp/python/**", "ibeamlab/**", "tests/**", "examples/**"]
+sdist.include = ["licenses/**", "tools/build_minion.py", "CMakeLists.txt", "README.md", "cmake/**", "docs/**", "cpp/CMakeLists.txt", "cpp/src/**", "cpp/include/**", "cpp/python/**", "ibeamlab/**", "tests/**", "examples/**"]
 sdist.exclude = ["old/**", "build*/**", "cpp/build*/**", "xnra/**"]
 
 [tool.pytest.ini_options]

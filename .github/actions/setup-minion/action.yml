@@ -1,0 +1,12 @@
+name: Install Minion
+description: Prepare the installed Minion CMake package and Eigen dependency.
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      run: |
+        $dependencyPrefix = Join-Path $env:RUNNER_TEMP 'ibeamlab-dependencies'
+        $dependencyBuild = Join-Path $env:RUNNER_TEMP 'ibeamlab-minion-build'
+        python tools/build_minion.py --prefix "$dependencyPrefix" --work-dir "$dependencyBuild"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        "CMAKE_PREFIX_PATH=$dependencyPrefix" >> $env:GITHUB_ENV

@@ -166,3 +166,78 @@ def read_spectrum(path, *, measurement, format="channel_counts", **options):
         raise DataReadError(str(error)) from error
     return MeasuredSpectrum(result.measurement, result.counts, result.valid or None,
                             result.variances or None, result.source)
+
+
+@dataclass(frozen=True, slots=True)
+class TimeField:
+    """Header marker and unit conversion; fallback is already in seconds."""
+    marker: str = ""
+    seconds_per_unit: float = 1.
+    fallback: object = None
+
+    def to_core(self):
+        """Copy explicit header-time settings into the native parser."""
+        value = engine().SpectrumTimeField()
+        value.marker, value.seconds_per_unit, value.fallback = self.marker, self.seconds_per_unit, self.fallback
+        return value
+
+
+@dataclass(frozen=True, slots=True)
+class SpectrumParser:
+    """Instrument text layout with optional data markers and acquisition times.
+
+    records supplies read_spectrum options (including format). start_marker and
+    end_marker exclude their own lines. Missing channels remain masked unless
+    missing_channels_are_zero is explicitly enabled. Markers are case-sensitive.
+    """
+    records: object = None
+    start_marker: str = ""
+    end_marker: str = ""
+    real_time: TimeField = TimeField()
+    live_time: TimeField = TimeField()
+    missing_channels_are_zero: bool = False
+
+    def to_core(self):
+        """Create native parsing settings; column indices are zero-based."""
+        n = engine()
+        value = n.SpectrumParser()
+        options = dict(self.records or {})
+        records = n.SpectrumReadOptions()
+        format_name = options.pop("format", "channel_counts")
+        if format_name not in {"counts", "channel_counts", "csv"}:
+            raise ValueError("unknown instrument record format")
+        records.format = getattr(n.SpectrumFormat, format_name.upper())
+        for name, setting in options.items():
+            if not hasattr(records, name):
+                raise TypeError(f"unknown reader option: {name}")
+            setattr(records, name, "\0" if name in {"delimiter", "comment"} and setting == "" else setting)
+        value.records = records
+        value.start_marker, value.end_marker = self.start_marker, self.end_marker
+        value.real_time, value.live_time = self.real_time.to_core(), self.live_time.to_core()
+        value.missing_channels_are_zero = self.missing_channels_are_zero
+        return value
+
+
+@dataclass(frozen=True, slots=True)
+class ImportedSpectrum:
+    """Observed spectrum and optional acquisition times, expressed in seconds."""
+    spectrum: MeasuredSpectrum
+    real_time: object = None
+    live_time: object = None
+
+
+def read_instrument_spectrum(path, measurement, parser):
+    """Read an explicit instrument layout; errors include file context."""
+    try:
+        result = engine().read_instrument_spectrum(Path(path), measurement, to_core(parser))
+        s = result.spectrum
+        return ImportedSpectrum(MeasuredSpectrum(s.measurement, s.counts, s.valid or None,
+                                                s.variances or None, s.source),
+                                result.real_time, result.live_time)
+    except (ValueError, RuntimeError) as error:
+        raise DataReadError(f"{path}: {error}") from error
+
+
+def write_fit_result(path, result, *, provenance=""):
+    """Write scientific CSV tables into a new directory, refusing overwrite."""
+    engine().write_fit_result(Path(path), result._core, provenance)

@@ -102,6 +102,9 @@ Writer::Writer(const std::filesystem::path &path, Metadata metadata, std::size_t
 Writer::~Writer() = default;
 const Metadata &Writer::metadata() const { return impl_->metadata; }
 void Writer::append(const Record &r) {
+    if (!r.result.elemental_spectra.empty())
+        throw std::invalid_argument(
+            "dataset storage accepts total spectra only; disable elemental diagnostics");
     auto &w = *impl_;
     if (w.finished)
         throw std::logic_error("dataset already finished");
@@ -188,7 +191,8 @@ std::map<std::string, std::size_t> Reader::maximum_spectrum_lengths() const {
     Record record;
     std::map<std::string, std::size_t> lengths;
     while (cursor.next(record)) {
-        if (record.result.failure) continue;
+        if (record.result.failure)
+            continue;
         for (const auto &spectrum : record.result.spectra) {
             auto &length = lengths[spectrum.measurement];
             length = std::max(length, spectrum.counts.size());
@@ -226,6 +230,7 @@ bool Reader::next(Record &out) {
     out.sample_id = d.text();
     d.reals_into(out.parameters);
     out.result.failure.reset();
+    out.result.elemental_spectra.clear();
     auto status = d.integer();
     if (status == 1) {
         out.result.spectra.clear();

@@ -111,6 +111,7 @@ class SimulationResult(Mapping):
         if len(values) != len(self._spectra):
             raise ValidationError("duplicate spectrum label")
         self.failure = failure
+        self.elemental_spectra = {}
 
     def __getitem__(self, measurement):
         """Return the Spectrum identified by a measurement label.
@@ -195,7 +196,10 @@ def result_from_core(value):
     """
     failure = None if value.failure is None else SimulationFailure(
         value.failure.measurement, value.failure.message)
-    return SimulationResult((Spectrum(s.measurement, s.counts_array) for s in value.spectra), failure)
+    result = SimulationResult((Spectrum(s.measurement, s.counts_array) for s in value.spectra), failure)
+    for item in value.elemental_spectra:
+        result.elemental_spectra.setdefault(item.measurement, {})[item.element] = np.asarray(item.counts)
+    return result
 
 
 def _result(value, experiment):
@@ -240,6 +244,11 @@ class Simulator:
     ...         return {m.label: [1.0, 2.0, 1.0]
     ...                 for m in experiment.setup.measurements}
     """
+    @property
+    def capabilities(self):
+        """Return native support for optional elemental spectra and project export."""
+        return self.to_core().capabilities()
+
     def simulate(self, experiment):
         """Simulate all measurements of one experiment.
 
@@ -539,7 +548,7 @@ class SimnraSimulator(Simulator):
     regardless of worker completion order. Geometry maps directly to Alpha/Beta/Theta.
     """
     def __init__(self, methods, *, workers=1, multithreaded_apartment=True,
-                 reuse_target_topology=True, fast_calculation=False):
+                 reuse_target_topology=True, fast_calculation=False, capture_elemental=False):
         """Configure persistent COM workers; see SimnraSimulator for all options.
         """
         config = engine().SimnraConfig()
@@ -548,10 +557,25 @@ class SimnraSimulator(Simulator):
         config.multithreaded_apartment = multithreaded_apartment
         config.fast_calculation = fast_calculation
         config.reuse_target_topology = reuse_target_topology
+        config.capture_elemental = capture_elemental
         try:
             self._core = engine().SimnraSimulator(config)
         except (ValueError, RuntimeError) as error:
             raise SimnraUnavailableError(str(error)) from error
+
+    @property
+    def capabilities(self):
+        """Return elemental-spectrum and project-export support for this build."""
+        return self._core.capabilities()
+
+    def export_project(self, experiment, path, *, measured=()):
+        """Evaluate and save one measurement as a new SIMNRA project.
+
+        Uses a dedicated COM thread. Optional measured counts occupy spectrum 1;
+        the calculated spectrum is preserved as spectrum 2. Refuses overwrite.
+        """
+        from pathlib import Path
+        self._core.export_project(to_core(experiment), Path(path), measured)
 
     def close(self):
         """Request cancellation and release the native worker sessions.

@@ -7,8 +7,10 @@ class IBEAMLAB_API Predictor {
   public:
     virtual ~Predictor() = default;
     virtual bool can_vary(const core::ParameterTarget &) const { return true; }
+    virtual bool can_vary_layer_properties() const { return false; }
     virtual void predict(std::span<const core::Experiment>, std::span<simulation::Result>) = 0;
     virtual void request_stop() noexcept {}
+    virtual void reset_stop() noexcept {}
     virtual bool stopped() const noexcept { return false; }
 };
 /** @brief Non-owning adapter retaining true ONNX population execution and outputs. */
@@ -26,8 +28,10 @@ class IBEAMLAB_API SimulatorPredictor final : public Predictor {
 
   public:
     explicit SimulatorPredictor(simulation::Simulator &simulator) : simulator_(simulator) {}
+    bool can_vary_layer_properties() const override { return true; }
     void predict(std::span<const core::Experiment>, std::span<simulation::Result>) override;
     void request_stop() noexcept override { simulator_.request_stop(); }
+    void reset_stop() noexcept override { simulator_.reset_stop(); }
     bool stopped() const noexcept override { return simulator_.stopped(); }
 };
 } // namespace ibeamlab::fitting

@@ -49,6 +49,37 @@ class TiedParameter:
 
 
 @dataclass(frozen=True, slots=True)
+class LinkedParameter:
+    """Primary bounded parameter plus (core_target, ratio) assignments.
+
+    Initial target values must equal ratio * primary initial value. Core targets
+    can address different measurements; physical validation applies after mapping.
+    """
+    parameter: object
+    targets: tuple
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileParameter:
+    """Bound a zero-based layer/species/function coefficient in a ProfileModel."""
+    layer: int
+    species: int
+    coefficient: int
+    bounds: tuple
+    name: str = ""
+    links: tuple = ()  # (layer, species, coefficient, ratio)
+
+
+@dataclass(frozen=True, slots=True)
+class LayerProperty:
+    """Fit roughness, porosity_fraction or pore_diameter of a zero-based layer."""
+    layer: int
+    property: str
+    bounds: tuple
+    name: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class Region:
     """Select zero-based channels in [start, stop), with a nonnegative weight."""
     start: int
@@ -89,9 +120,24 @@ class FitProblem:
     selections : sequence of SpectrumSelection, optional
         Measurement weights and channel regions; unlisted measurements use all
         valid channels with weight one.
-    loss : {"data_chi_square", "variance_chi_square"}
+    loss : str
         Default is sum((data-prediction)**2 / (data_floor+data)). The variance
         loss requires explicitly supplied positive variances on selected channels.
+        Additional choices are neyman, pearson, mse, poisson and gaussian; see
+        docs/fitting.md for exact statistical definitions.
+    profile : ProfileModel, optional
+        Replaces initial_sample with its macro reference and discretizes after
+        each coordinate update. Core sample parameters address macro layers.
+    profile_parameters : sequence of ProfileParameter
+        Bounded coefficients; cannot be combined with fraction/AD groups.
+    region_normalization : {"sum", "weight_sum"}
+        Sum weighted channel costs, or divide ROI costs by the sum of ROI weights.
+    missing_prediction : {"reject", "zero"}
+        Require predicted coverage or treat omitted predicted bins as zero.
+    missing_observations_as_zero : bool
+        Explicitly replace missing masks and extend data through ROI stops.
+    allow_overlapping_regions : bool
+        Add overlapping ROI weights instead of rejecting overlaps.
     data_floor : float, default=1
         Positive denominator floor for the default loss.
 
@@ -108,19 +154,37 @@ class FitProblem:
     selections: tuple = ()
     loss: str = "data_chi_square"
     data_floor: float = 1.
+    profile: object = None
+    profile_parameters: tuple = ()
+    region_normalization: str = "sum"
+    missing_prediction: str = "reject"
+    missing_observations_as_zero: bool = False
+    allow_overlapping_regions: bool = False
 
     def to_core(self):
         """Validate and compile the declarative inputs to native value types."""
         n = engine()
         value = n.FitProblem()
-        value.data, value.initial_sample = to_core(self.data), to_core(self.initial_sample)
+        value.data = to_core(self.data)
+        value.initial_sample = to_core(self.profile.reference_sample() if self.profile is not None else self.initial_sample)
         def target(p):
-            return n.ElementArealDensity(p.layer, p.element) if isinstance(p, ArealDensity) else p
+            if isinstance(p, ArealDensity):
+                return n.ElementArealDensity(p.layer, p.element)
+            if isinstance(p, LayerProperty):
+                if p.property not in {"roughness", "porosity_fraction", "pore_diameter"}:
+                    raise ValueError("unknown layer property")
+                value = n.FitLayerPropertyTarget()
+                value.layer, value.property = p.layer, getattr(n.FitLayerProperty, p.property.upper())
+                return value
+            return to_core(p)
         parameters = []
         for description in self.parameters:
-            primary = description.parameter if isinstance(description, TiedParameter) else description
+            primary = description.parameter if isinstance(description, (TiedParameter, LinkedParameter)) else description
             p = n.FitParameter()
-            if isinstance(primary, ArealDensity):
+            if isinstance(primary, LayerProperty):
+                p.name = primary.name or f"{primary.property}.{primary.layer}"
+                p.target = target(primary)
+            elif isinstance(primary, ArealDensity):
                 p.name = primary.name or f"ad.{primary.layer}.{primary.element}"
                 p.target = target(primary)
             else:
@@ -128,6 +192,13 @@ class FitProblem:
             p.bounds = n.ParameterBounds(*primary.bounds)
             if isinstance(description, TiedParameter):
                 p.tied_targets = [target(t) for t in description.targets]
+            if isinstance(description, LinkedParameter):
+                links = []
+                for target_value, ratio in description.targets:
+                    link = n.FitLinkedTarget()
+                    link.target, link.ratio = target_value, ratio
+                    links.append(link)
+                p.linked_targets = links
             parameters.append(p)
         value.parameters = parameters
         compositions = []
@@ -144,10 +215,32 @@ class FitProblem:
             native.regions = [n.FitRegion(r.start, r.stop, r.weight) for r in s.regions]
             selections.append(native)
         value.selections = selections
-        losses = {"data_chi_square": n.FitLoss.DATA_CHI_SQUARE, "variance_chi_square": n.FitLoss.VARIANCE_CHI_SQUARE}
+        losses = {key: getattr(n.FitLoss, key.upper()) for key in ("data_chi_square", "variance_chi_square", "neyman", "pearson", "mse", "poisson", "gaussian")}
         if self.loss not in losses:
             raise FitError(f"unknown loss: {self.loss}")
         value.loss, value.data_floor = losses[self.loss], self.data_floor
+        if self.region_normalization not in {"sum", "weight_sum"} or self.missing_prediction not in {"reject", "zero"}:
+            raise ValueError("unknown objective normalization/missing prediction policy")
+        value.region_normalization = getattr(n.FitRegionNormalization, self.region_normalization.upper())
+        value.missing_prediction = getattr(n.FitMissingPrediction, self.missing_prediction.upper())
+        value.missing_observations_as_zero = self.missing_observations_as_zero
+        value.allow_overlapping_regions = self.allow_overlapping_regions
+        if self.profile is not None:
+            value.profile = to_core(self.profile)
+        coefficients = []
+        for p in self.profile_parameters:
+            v = n.FitProfileParameter()
+            v.name = p.name or f"profile.{p.layer}.{p.species}.{p.coefficient}"
+            v.layer, v.species, v.coefficient = p.layer, p.species, p.coefficient
+            v.bounds = n.ParameterBounds(*p.bounds)
+            links = []
+            for layer, species, coefficient, ratio in p.links:
+                link = n.FitProfileLink()
+                link.layer, link.species, link.coefficient, link.ratio = layer, species, coefficient, ratio
+                links.append(link)
+            v.links = links
+            coefficients.append(v)
+        value.profile_parameters = coefficients
         return value
 
 
@@ -179,18 +272,11 @@ class FitObjective:
     Methods are not concurrent; only request_stop is safe from another thread.
     """
     def __init__(self, problem):
-        from .models import ForwardModel
-        from .simulator import Simulator
         self.problem = problem
         n = engine()
         try:
-            if isinstance(problem.predictor, ForwardModel):
-                self._predictor = n.ForwardFitPredictor(problem.predictor._core)
-            elif isinstance(problem.predictor, Simulator):
-                self._backend = problem.predictor.to_core()
-                self._predictor = n.SimulatorFitPredictor(self._backend)
-            else:
-                raise TypeError("predictor must be a ForwardModel or Simulator")
+            from .analysis import as_predictor
+            self._predictor = as_predictor(problem.predictor)
             self._core = n.FitObjective(problem.to_core(), self._predictor)
         except (ValueError, RuntimeError) as error:
             raise FitError(str(error)) from error
@@ -259,14 +345,15 @@ class FitObjective:
 
 
 def fit(problem, *, optimizer="arrde", max_evaluations=10000,
-        population_size=0, seed=42, record_history=True, progress=None):
+        population_size=0, seed=42, record_history=True, progress=None, settings=None,
+        initial_guesses=(), stages=()):
     """Fit an unknown sample with population-based physical prediction.
 
     Parameters
     ----------
     problem : FitProblem or FitObjective
         Declarative problem or an existing compiled objective.
-    optimizer : "arrde" or callable
+    optimizer : "arrde", "de" or callable
         Native ARRDE, or ``optimizer(objective, options)``. A custom optimizer
         calls evaluate_batch and returns None; the best evaluated solution wins.
     max_evaluations : int, default=10000
@@ -279,6 +366,14 @@ def fit(problem, *, optimizer="arrde", max_evaluations=10000,
         Retain scalar progress history, never candidate populations.
     progress : callable, optional
         Called with native progress statistics. Return True to stop gracefully.
+
+    settings : mapping, optional
+        Upstream optimizer-specific options. population_size overrides that key.
+    initial_guesses : sequence of coordinate vectors
+        Additional initial population members, validated against coordinate bounds.
+    stages : sequence of mappings
+        Optimizer stages with their own settings, seeds and budgets. The first
+        stage includes preflight; later stages receive additional evaluations.
 
     Returns
     -------
@@ -297,15 +392,25 @@ def fit(problem, *, optimizer="arrde", max_evaluations=10000,
         if callable(optimizer):
             optimizer(objective, options)
             return objective.best_result()
-        if optimizer != "arrde":
-            raise ValueError(f"unknown optimizer: {optimizer}")
-        settings = engine().FitOptions()
-        for name, value in options.items():
-            if name != "progress":
-                setattr(settings, name, value)
-        return FitResult(engine().fit_arrde(objective._core, settings, progress))
+        native = _optimizer_options(optimizer=optimizer, max_evaluations=max_evaluations,
+                                    population_size=population_size, seed=seed, record_history=record_history,
+                                    settings=settings, initial_guesses=initial_guesses)
+        pipeline = [_optimizer_options(**stage) for stage in stages]
+        return FitResult(engine().fit_arrde(objective._core, native, progress, pipeline))
     except KeyboardInterrupt:
         objective.request_stop()
         return objective.best_result()
     except (ValueError, RuntimeError) as error:
         raise FitError(str(error)) from error
+
+
+def _optimizer_options(*, optimizer="arrde", max_evaluations=10000, population_size=0,
+                       seed=42, record_history=True, settings=None, initial_guesses=()):
+    """Construct native settings shared by single fits, pipelines and executors."""
+    if not isinstance(optimizer, str) or optimizer.upper() not in {"ARRDE", "DE"}:
+        raise ValueError(f"unsupported native optimizer: {optimizer}")
+    out = engine().FitOptions()
+    out.algorithm, out.max_evaluations = optimizer.upper(), max_evaluations
+    out.population_size, out.seed, out.record_history = population_size, seed, record_history
+    out.settings, out.initial_guesses = settings or {}, list(initial_guesses)
+    return out
