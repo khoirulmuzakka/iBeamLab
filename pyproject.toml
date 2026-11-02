@@ -5,11 +5,15 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "ibeamlab"
 version = "0.1.0"
-description = "Python-first ion-beam simulation, fitting, dataset generation, and ONNX inference"
+description = "A unified framework for ion-beam simulation and analysis, ML model training, and deployment in Python and C++"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
 authors = [{name = "iBeamLab contributors"}]
+keywords = [
+  "ion-beam-analysis", "elemental-depth-profiles", "simulation", "fitting",
+  "machine-learning", "surrogate-models", "onnx", "simnra",
+]
 dependencies = [
   "numpy>=1.24",
   "tqdm>=4.66",
@@ -18,7 +22,17 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: C++",
   "Operating System :: OS Independent",
+  "Intended Audience :: Science/Research",
+  "Intended Audience :: Developers",
+  "Topic :: Scientific/Engineering :: Physics",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+
+[project.urls]
+Homepage = "https://github.com/khoirulmuzakka/ibeamlab"
+Documentation = "https://github.com/khoirulmuzakka/ibeamlab/blob/master/README.md"
+Repository = "https://github.com/khoirulmuzakka/ibeamlab"
+Issues = "https://github.com/khoirulmuzakka/ibeamlab/issues"
 
 [project.optional-dependencies]
 plot = ["matplotlib>=3.7"]

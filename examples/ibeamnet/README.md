@@ -2,20 +2,21 @@
 
 Predict labelled detector spectra from layer thicknesses and elemental
 concentrations. The example's `RecurrentSurrogate` architecture uses
-scaled elemental areal densities, a shared FiLM-conditioned layer GRU,
+scaled elemental areal densities, a shared layer GRU,
 summed latent contributions, a spectrum decoder and residual spectral refiner.
 It trains one set of weights across the selected layer counts.
 
 The shared GRU processes elemental areal densities from the surface inward.
 Independent detector heads decode spectra and refine them locally. The fixed
-experimental setup uses the reference's learned constant setup conditioning.
+experimental setup is learned through the network weights; no setup-conditioning
+branches are used. Fusion combines encoded AD with projected recurrent state.
 All-zero AD padding preserves state and contributes nothing. Contributions
 are summed without additional density weighting; outputs are nonnegative.
 An empty stack retains the reference's learned baseline output.
-The layer recurrence and defaults follow the reference training workflow.
+The layer recurrence retains learned feature fusion without setup conditioning.
 
-Model defaults follow the reference training notebook: hidden size 256, layer
-embedding 128, setup embedding 32, contribution size 512, recurrent block widths
+Model defaults are hidden size 256, layer
+embedding 128, contribution size 512, recurrent block widths
 `[512, 512]`, decoder widths `[512, 512]`, and 32 refiner channels. The configured
 refiner kernel is 8, rounded up internally to 9 as in the reference. Both hidden
 layer lists remain configurable.

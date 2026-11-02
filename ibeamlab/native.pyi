@@ -1205,6 +1205,18 @@ class ElementArealDensity:
     """One layer/element areal density in 1e15 atoms/cm2."""
     def __init__(self, layer: int, element: str) -> None: ...
 
+class ParameterBounds:
+    """Inclusive finite interval for a physical parameter."""
+    minimum: float
+    maximum: float
+    def __init__(self, minimum: float, maximum: float) -> None: ...
+    def validate(self) -> None:
+        """Raise ValueError unless the endpoints are finite and ordered."""
+        ...
+    def contains(self, value: float) -> bool:
+        """Return whether value is finite and inside the inclusive interval."""
+        ...
+
 class FitParameter:
     """Bounded physical coordinate with optional equal-value tied targets."""
     name: str

@@ -1,4 +1,8 @@
-"""Python API for ion-beam simulation, dataset generation, physical fitting and model inference.
+"""iBeamLab: A unified framework for ion-beam simulation and analysis, ML model training, and deployment in Python and C++.
+
+This Python API supports simulation, elemental depth profile fitting, dataset
+generation, and ML model packaging and inference. Model development and training
+examples use the same data descriptions and export tools.
 
 Physical descriptions use keV, degrees, seconds and 1e15 atoms/cm2. Element
 concentrations and isotope fractions have separate normalization constraints.

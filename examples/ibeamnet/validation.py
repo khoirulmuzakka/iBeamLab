@@ -91,7 +91,7 @@ def validate_model_options(options):
             for index, width in enumerate(value):
                 integer(width, f"{path}[{index}]")
         elif key in {"hidden_size", "embedding_size", "contribution_size", "refiner_channels",
-                     "refiner_kernel", "setup_embedding_size"}:
+                     "refiner_kernel"}:
             integer(value, path, minimum=0 if key == "refiner_channels" else 1)
         else:
             raise ValueError(f"unknown model option: {path}")

@@ -157,7 +157,7 @@ old/*
 
 # Surrogate example outputs, including custom runs launched from train/.
 /examples/ibeamnet/**/cache*/
-/examples/ibeamnet/**/runs/
+/examples/ibeamnet/**/runs*/
 /examples/ibeamnet/**/packages/
 /examples/ibeamnet/**/artifacts/
 /examples/ibeamnet/**/checkpoints/

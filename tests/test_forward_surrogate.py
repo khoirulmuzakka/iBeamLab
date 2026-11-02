@@ -143,7 +143,8 @@ class SurrogateTests(unittest.TestCase):
             scope = dict(Path=Path, config=config, ROOT=Path(tmp), CACHE=Path(tmp) / "cache",
                          SCHEMA_CHECKPOINT=Path(tmp) / "weights.pt", validate_training=validate_training,
                          resolve_resume=resolve_resume, train=fake_train, features=features, targets=targets)
-            helpers = SimpleNamespace(train=fake_train, resolve_resume=resolve_resume)
+            helpers = SimpleNamespace(train=fake_train, resolve_resume=resolve_resume,
+                                      make_model=lambda *args: None)
             with patch("importlib.reload", return_value=helpers), redirect_stdout(io.StringIO()):
                 exec(training, scope)
                 total = scope["TOTAL_EPOCHS"]
@@ -167,7 +168,8 @@ class SurrogateTests(unittest.TestCase):
             old_scope["config"]["training"]["output"] = Path(tmp) / "existing-kernel-run"
             old_scope["ROOT"] = Path(tmp) / "old-kernel"
             old_scope["INITIAL_WEIGHTS"] = Path(tmp) / "weights.pt"
-            helpers = SimpleNamespace(train=fake_train, resolve_resume=resolve_resume)
+            helpers = SimpleNamespace(train=fake_train, resolve_resume=resolve_resume,
+                                      make_model=lambda *args: None)
             with patch("importlib.reload", return_value=helpers), redirect_stdout(io.StringIO()):
                 exec(training, old_scope)
             self.assertFalse(calls[-1][1]["resume"])
@@ -236,10 +238,10 @@ class SurrogateTests(unittest.TestCase):
         del config["training"]["batch_size"]
         with self.assertRaisesRegex(ValueError, r"training.batch_size is required"):
             validate_config(config)
-        with self.assertRaisesRegex(ValueError, r"model.block_hidden_sizes\[0\]"):
-            validate_model_options({"block_hidden_sizes": [0]})
-        with self.assertRaisesRegex(ValueError, r"model.block_hidden_sizes\[0\]"):
-            RecurrentSurrogate(["Si"], [8], block_hidden_sizes=[0])
+        with self.assertRaisesRegex(ValueError, r"model.decoder_hidden_sizes\[0\]"):
+            validate_model_options({"decoder_hidden_sizes": [0]})
+        with self.assertRaisesRegex(ValueError, r"model.decoder_hidden_sizes\[0\]"):
+            RecurrentSurrogate(["Si"], [8], decoder_hidden_sizes=[0])
 
     def test_staged_schedule_boundaries_and_validation(self):
         schedule = load_config(ROOT / "examples/ibeamnet/surrogate.toml")["training"]["schedule"]
@@ -261,6 +263,11 @@ class SurrogateTests(unittest.TestCase):
     def test_default_architecture_matches_configuration(self):
         config = load_config(ROOT / "examples/ibeamnet/surrogate.toml")
         default = RecurrentSurrogate(["Si", "O"], [8])
+        self.assertEqual(default.gru.input_size, 512)
+        self.assertEqual(default.fusion[0].in_features, 2 * 128)
+        self.assertEqual(default.contribution[0].in_features, 512 + default.hidden_size)
+        self.assertFalse(any("setup" in name or "film" in name
+                             for name in default.state_dict()))
         configured = RecurrentSurrogate(["Si", "O"], [8], **config["model"])
         self.assertEqual({k: tuple(v.shape) for k, v in default.state_dict().items()},
                          {k: tuple(v.shape) for k, v in configured.state_dict().items()})
@@ -278,7 +285,7 @@ class SurrogateTests(unittest.TestCase):
         from ibeamlab.export import validate_onnx_contract
         network = RecurrentSurrogate(["Si", "O"], [8], hidden_size=8, embedding_size=8,
             contribution_size=8, decoder_hidden_sizes=[8, 8], refiner_channels=0,
-            setup_embedding_size=4, block_hidden_sizes=[8]).eval()
+            block_hidden_sizes=[8]).eval()
         setup = ibl.ExperimentalSetup([ibl.Measurement("RBS", ibl.Beam("H", 2000))])
         metadata = ibl.ModelMetadata(ibl.ForwardModelMetadata(setup, ibl.LayerInputSchema(['Si', 'O']), ibl.SpectraSchema([ibl.SpectrumSpec('RBS', 8)]), input_transform=ibl.TransformPipeline([ibl.MultiplyScale([1e-05])])))
         for opset in (17, 18):
@@ -317,9 +324,9 @@ class SurrogateTests(unittest.TestCase):
                         ibl.ForwardModel(invalid)
 
     def test_padding_and_gradients(self):
-        model = RecurrentSurrogate(["Si", "O"], [8, 11], hidden_size=8,
-            embedding_size=8, contribution_size=8, decoder_hidden_sizes=[16, 16], refiner_channels=2, refiner_kernel=3,
-            setup_embedding_size=4, block_hidden_sizes=[8])
+        model = RecurrentSurrogate(["Si", "O"], [8, 11], hidden_size=8, embedding_size=8,
+            contribution_size=8, decoder_hidden_sizes=[16, 16], refiner_channels=2, refiner_kernel=3,
+            block_hidden_sizes=[8])
         x = torch.tensor([[[.15, .35], [.12, .08]]], requires_grad=True)
         y = model(x)
         self.assertEqual(tuple(y.shape), (1, 19))
@@ -343,7 +350,7 @@ class SurrogateTests(unittest.TestCase):
             config["export"].update(output=root / "packages", verify_native=NATIVE, pileup={})
             config["model"] = dict(hidden_size=8, embedding_size=8, contribution_size=8,
                 decoder_hidden_sizes=[16, 16], refiner_channels=2, refiner_kernel=3,
-                setup_embedding_size=4, block_hidden_sizes=[8])
+                block_hidden_sizes=[8])
             config["spectra"] = [dict(measurement=label, channels=channels, count_scale=scale,
                 loss_weight=1., exposure_scale=True, rebin=True)
                 for label, channels, scale in (("RBS", 8, 100.), ("NRA", 11, 25.))]

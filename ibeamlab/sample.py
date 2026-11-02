@@ -1,4 +1,4 @@
-"""Python-first descriptions of samples and experimental setups.
+"""Physical descriptions of samples and experimental setups for the Python API.
 
 Units are keV for beam values and resolution, seconds for times, and
 ``1e15 atoms/cm2`` for layer thickness.

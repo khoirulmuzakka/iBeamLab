@@ -29,7 +29,6 @@ rebin = true
 [model]
 hidden_size = 256
 embedding_size = 128
-setup_embedding_size = 32
 block_hidden_sizes = [512, 512]
 contribution_size = 512
 decoder_hidden_sizes = [512, 512]

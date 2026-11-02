@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
-project(iBeamLab VERSION 0.1.0 LANGUAGES CXX)
+project(iBeamLab VERSION 0.1.0
+    DESCRIPTION "A unified framework for ion-beam simulation and analysis, ML model training, and deployment in Python and C++"
+    HOMEPAGE_URL "https://github.com/khoirulmuzakka/ibeamlab"
+    LANGUAGES CXX)
 
 if(POLICY CMP0144)
     cmake_policy(SET CMP0144 NEW)

@@ -66,7 +66,7 @@ class PythonSimulator final : public simulation::Simulator {
 void bind_fitting(pybind11::module_ &);
 
 PYBIND11_MODULE(_ibeamlab, m) {
-    m.doc() = "Native iBeamLab execution engine. Use the ibeamlab facade for Python descriptions, simulation, generation and inference. Units are keV, seconds, degrees and 1e15 atoms/cm2.";
+    m.doc() = "iBeamLab: A unified framework for ion-beam simulation and analysis, ML model training, and deployment in Python and C++. C++ bindings for the Python API. The ibeamlab Python API provides physical descriptions and workflow helpers. Units are keV, seconds, degrees and 1e15 atoms/cm2.";
     py::class_<core::Isotope>(m, "Isotope", R"ibdoc(Native isotope identity and atomic fraction.
 
 Attributes

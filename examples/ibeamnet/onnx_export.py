@@ -13,20 +13,11 @@ class _Step(nn.Module):
         self.fusion = network.fusion
         self.gru = network.gru
         self.contribution = network.contribution
-        # Fixed setup conditioning is constant at deployment: calculate once,
-        # rather than evaluating its MLP for every layer at inference.
-        with torch.no_grad():
-            setup = network.setup_encoder(torch.ones(1, 1))
-            gamma, beta = network.setup_to_film(setup).chunk(2, 1)
-        self.register_buffer("setup", setup)
-        self.register_buffer("gamma", torch.tanh(gamma) + 1)
-        self.register_buffer("beta", beta)
 
     def forward(self, layer, contributions, hidden):
         mask = layer.ne(0).any(dim=1, keepdim=True).to(layer.dtype)
-        encoded = self.layer_encoder(layer) * self.gamma + self.beta
-        fused = self.fusion(torch.cat((encoded, self.setup.expand(layer.shape[0], -1),
-                                      self.state_projection(hidden)), 1))
+        encoded = self.layer_encoder(layer)
+        fused = self.fusion(torch.cat((encoded, self.state_projection(hidden)), 1))
         next_hidden = self.gru(fused, hidden)
         contribution = self.contribution(torch.cat((fused, next_hidden), 1))
         return contributions + contribution * mask, hidden * (1 - mask) + next_hidden * mask
@@ -36,11 +27,9 @@ class _Decode(nn.Module):
     def __init__(self, network):
         super().__init__()
         self.heads = network.heads
-        with torch.no_grad():
-            self.register_buffer("context", network.setup_context(torch.ones(1, 1)))
 
     def forward(self, contributions, hidden):
-        latent = torch.cat((contributions, hidden, self.context.expand(hidden.shape[0], -1)), 1)
+        latent = torch.cat((contributions, hidden), 1)
         return torch.cat([head(latent) for head in self.heads], 1)
 
 

@@ -1,80 +1,92 @@
-# iBeamLab: Ion-beam simulation, ML training, and deployment in Python and C++
+# iBeamLab: A unified framework for ion-beam simulation and analysis, ML model training, and deployment in Python and C++
 
 <div align="center">
   <img src="logo/ibeamlab_logo.png" alt="iBeamLab logo" width="600" />
-  <p><strong>From layered samples to simulation, training, and deployed inference.</strong></p>
+  <p><strong>Simulate spectra. Estimate elemental depth profiles. Develop and deploy ML models.</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10 or newer" />
     <img src="https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white" alt="C++20" />
-    <img src="https://img.shields.io/badge/Training-PyTorch-EE4C2C?logo=pytorch&logoColor=white" alt="PyTorch training" />
+    <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10 or newer" />
+    <img src="https://img.shields.io/badge/Training-PyTorch-EE4C2C?logo=pytorch&logoColor=white" alt="PyTorch training examples" />
     <img src="https://img.shields.io/badge/Inference-ONNX_Runtime-005CED?logo=onnx&logoColor=white" alt="ONNX Runtime inference" />
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="MIT license" /></a>
   </p>
 </div>
 
-iBeamLab provides a unified workflow from ion-beam simulation to machine-learning
-inference in external applications. Python provides the main interface; a C++20
-library handles simulation backends, dataset storage, spectrum processing, and
-inference.
+iBeamLab brings **simulation, elemental depth profile estimation, and machine
+learning** into one framework for ion-beam analysis. It provides a **C++20 library
+and a Python API**, with shared physical descriptions, datasets, and model packages.
+Use C++ to integrate analysis into an application, Python to explore experiments
+and develop models, or both within the same workflow.
 
-1. **🔬 Simulate and generate data.** Describe layered samples and experimental
-   setups, then generate reproducible, sharded datasets using SIMNRA.
-2. **🧠 Train a model.** Train a forward surrogate with the supplied example,
-   or build your own forward or inverse architecture using the framework's
-   datasets and scientific metadata.
-3. **📦 Package and deploy.** Export an ONNX graph and its scientific contract
-   into one model package, then use that same file in Python or C++ applications.
-
-**Train once, deploy in either language.** A package carries the graph, units,
-input/output schema, reference experimental setup, and preprocessing and
-postprocessing pipelines. Applications supply physical inputs and receive labelled
-spectra or elemental depth profiles without recreating the training architecture.
-Exported inference requires neither PyTorch nor SIMNRA.
-
-Multiple measurements can share a sample while using different beam energies and
-detectors. Each forward output spectrum can have its own postprocessing pipeline;
-each inverse input spectrum can have its own preprocessing pipeline. CPU and CUDA
-inference share the same API.
-
-Experimental fitting uses batched forward-surrogate or simulator predictions with
-ARRDE, explicit measured-data readers, and physical parameter constraints. The
-current training example is a **forward surrogate**; inverse inference and package
-contracts are available for custom models.
-
-## 🧭 Start with your task
-
-| Goal | Starting point |
+| Capability | What you can do |
 | --- | --- |
-| Define a sample and simulate spectra | Simulation example below; [Python guide](docs/python.md) |
-| Generate multilayer training data | [DataGeneration guide](examples/DataGeneration/README.md), [configuration](examples/DataGeneration/multilayer-generation.toml), and [script](examples/DataGeneration/generate_multilayer.py) |
-| Fit measured spectra | [Fitting guide](docs/fitting.md) and [example](examples/Fitting/fit_spectrum.py) |
-| Train a sample-to-spectra surrogate | [iBeamNet example](examples/ibeamnet/README.md) and [training notebook](examples/ibeamnet/train/train.ipynb) |
-| Deploy a forward or inverse model | Deployment examples below; [Python inference guide](docs/python.md) |
-| Define a custom model's scientific contract | [Dataset and model format](docs/model-format.md); [C++ contracts](docs/cpp.md) |
-| Build and integrate the C++ library | [Build guide](docs/building.md) |
-| Run tests or configure CI | [Testing guide](docs/testing.md) |
+| **Simulation** | Describe layered samples and experimental setups, and calculate spectra through an external simulator backend. SIMNRA is currently supported on Windows; the backend interface allows additional simulators. |
+| **Fitting and EDP estimation** | Fit measured spectra to estimate elemental depth profiles and experimental parameters using physical simulators or forward ML surrogates. |
+| **Machine learning** | Generate reproducible datasets, develop and train forward or inverse models, and package them for inference in external C++ and Python applications. |
 
-## 🛠️ Install and build
+## Shared data, C++ and Python APIs
 
-Use Python 3.10 or newer, CMake 3.24 or newer, and a C++20 compiler. On Windows,
-install Visual Studio Build Tools with the C++ workload. Run commands from the
-repository root in your chosen Python environment.
+C++ and Python use the same descriptions of samples, isotopes, experiments,
+parameters, and spectra. Multiple measurements can share a sample while using
+different beam energies, detector geometries, and acquisition settings.
 
-For an installed Python package:
+Both APIs support simulation, fitting, dataset generation, spectrum processing,
+and model inference. The training examples use PyTorch.
+
+The same `.ibm` model package works in C++ and Python. It includes the ONNX model,
+physical input/output definitions, and processing settings. External applications
+can run inference without the training code, PyTorch, or SIMNRA, using an
+ONNX-enabled iBeamLab build with compatible runtime dependencies.
+
+## Install and build
+
+Build from the repository root with CMake 3.24 or newer and a C++20 compiler.
+Python usage requires Python 3.10 or newer. On Windows, install Visual Studio
+Build Tools with the C++ workload.
+
+### C++ library
+
+A minimal build and test run needs neither SIMNRA nor ONNX Runtime:
+
+```console
+cmake -S . -B build/minimal -DCMAKE_BUILD_TYPE=Release
+cmake --build build/minimal --config Release --parallel
+ctest --test-dir build/minimal -C Release --output-on-failure
+cmake --install build/minimal --config Release --prefix install
+```
+
+Point your application's `CMAKE_PREFIX_PATH` to the installation prefix, then link
+against the exported target:
+
+```cmake
+find_package(ibeamlab CONFIG REQUIRED)
+target_link_libraries(my_application PRIVATE ibeamlab::ibeamlab)
+```
+
+Public headers are under [cpp/include/ibeamlab](cpp/include/ibeamlab). See the
+[build guide](docs/building.md) for optional backends and dependencies.
+
+### Python package
 
 ```console
 python -m pip install .
 ```
 
-For training and plotting, use `python -m pip install ".[training,plot]"`.
-Install `jupyterlab` or a compatible notebook environment for interactive training.
+For training and plotting:
+
+```console
+python -m pip install ".[training,plot]"
+```
+
+Install JupyterLab or another notebook environment for interactive training.
 
 SIMNRA and ONNX inference are optional build features, disabled by default.
-Installing Python `onnxruntime` alone does not enable inference in the C++
-extension. See the [build guide](docs/building.md) for SDK configuration and
-CPU/CUDA runtime dependencies.
+Installing the Python `onnxruntime` package alone does not enable ONNX inference
+in the compiled library. Both language interfaces use the configured C++ runtime.
 
-For the Windows source-tree workflow with SIMNRA installed:
+### Windows source-tree workflow
+
+With SIMNRA installed:
 
 ```powershell
 python -m pip install numpy pybind11 pywin32 tqdm
@@ -82,174 +94,146 @@ python -m pip install numpy pybind11 pywin32 tqdm
 python examples/DataGeneration/generate_multilayer.py --extension-dir build/local/Release/bin --validate-only
 ```
 
-The script builds and tests the library and extension in
+The script builds and tests the library and Python extension in
 `build/local/Release`. It enables SIMNRA, and enables ONNX inference when
 `ONNXRUNTIME_ROOT` points to an SDK. For a CUDA SDK, also set
-`IBEAMLAB_ONNX_PROVIDER=CUDA`; see the build guide for details.
+`IBEAMLAB_ONNX_PROVIDER=CUDA`. See the [build guide](docs/building.md) for runtime
+dependencies. For interactive source-tree Python usage, add the build's `bin`
+directory to `PYTHONPATH`; restart the kernel after replacing the extension.
 
-For interactive source-tree Python use, add the build's `bin` directory to
-`PYTHONPATH`. Restart Python or notebook kernels after replacing the extension.
+## Simulation
 
-## 🔬 Define and simulate an experiment
+Describe a sample as layers ordered from the surface toward the substrate.
+Species use atomic fractions and either natural isotope compositions or explicit
+isotope mixtures. Each measurement has its own beam, detector geometry,
+calibration, resolution, and acquisition settings.
 
-Layers are ordered from the surface toward the substrate. Composition entries
-are atomic fractions and must sum to one. Each measurement has its own beam and
-detector settings.
+A small Python experiment using the synthetic backend:
 
 ```python
 import ibeamlab as ibl
 
 experiment = ibl.Experiment(
-    ibl.Sample([
-        ibl.Layer(100, {"Si": 0.5, "O": 0.5}),
-    ]),
+    ibl.Sample([ibl.Layer(100, {"Si": 0.5, "O": 0.5})]),
     ibl.ExperimentalSetup([
         ibl.Measurement("RBS", ibl.Beam("H", 2000)),
     ]),
 )
-
 result = ibl.DummySimulator(channels=5000).simulate(experiment)
 counts = result["RBS"].counts
 ```
 
-The dummy backend produces synthetic spectra for checking workflows. For physical
-simulation on Windows, associate each measurement with a SIMNRA reference project:
+`DummySimulator` checks workflows; it is not a physical simulator. For physical
+simulation with SIMNRA, associate measurements with reference `.xnra` projects.
+Reference projects retain backend-specific settings, including cross-section
+choices; their geometry must agree with the experiment.
 
-```python
-method = ibl.SimnraMethod("RBS", "reference.xnra", "H")
-with ibl.SimnraSimulator([method], workers=4) as simulator:
-    result = simulator.simulate(experiment)
-```
+C++ backends implement
+[`simulation::Simulator`](cpp/include/ibeamlab/simulation/simulator.h), allowing
+additional simulators to participate in generation and fitting workflows.
+See the [SIMNRA guide](docs/simnra.md) and [C++ guide](docs/cpp.md).
 
-Reference projects preserve measurement-specific geometry and cross-section
-choices. The experiment and reference must describe compatible conditions.
-See [SIMNRA configuration and validation](docs/simnra.md).
+## Fitting and elemental depth profiles
 
-## 🗃️ Generate and read training data
+Estimate a layered sample's elemental depth profile by comparing measured spectra
+with predictions from a simulator or forward surrogate. Declare measured data,
+fit parameters, physical bounds, composition constraints, and selected channel
+regions through `MeasuredData` and `FitProblem`, then run `fit`.
 
-The [multilayer example](examples/DataGeneration/README.md) supports predefined
-compounds, one randomly selected element set shared across layers, and independently
-selected element sets for each layer. Configure their fractions, element counts,
-thickness ranges, samples per layer system, pure samples, seeds, and detector
-references in its TOML file.
+Text/CSV readers support explicit file layouts, missing-channel masks, and
+optional variances. Native ARRDE evaluates populations in batches and retains
+buffers as population sizes change. Multiple measurements can constrain a shared
+sample while retaining their individual experimental settings.
+
+Fitting is available through the C++ library and Python API. See the
+[fitting guide](docs/fitting.md), [Python example](examples/Fitting/fit_spectrum.py),
+and [C++ fitting interfaces](cpp/include/ibeamlab/fitting).
+
+## Machine learning: generate, develop, package, deploy
+
+### Generate data
+
+Parameter studies connect physical sample/setup parameters to a simulation
+backend and write reproducible, sharded datasets. Store parameter definitions,
+reference experiments, provenance, and simulation outcomes alongside the spectra.
+C++ readers and Python streaming APIs support bounded-memory access.
+
+The [multilayer generation example](examples/DataGeneration/README.md) supports
+predefined element subsets, random element sets shared across layers, and
+independent element sets per layer. Configure sampling budgets, layer counts,
+composition fractions, thickness ranges, seeds, and detector references:
 
 ```powershell
-python examples/DataGeneration/generate_multilayer.py --extension-dir build/local/Release/bin --validate-only
 python examples/DataGeneration/generate_multilayer.py --extension-dir build/local/Release/bin
 ```
 
-Use `--backend dummy` for synthetic generation. Progress is reported separately
-for each layer system. Output includes configuration records and sharded datasets;
-destinations must be new to prevent accidental overwrites.
+Use `--validate-only` to check configuration or `--backend dummy` for synthetic
+workflow checks. Output directories must be new. The
+[C++ generation example](cpp/examples/generate.cpp) demonstrates the library API.
 
-For a small parameter study directly in Python:
+### Develop and train models
 
-```python
-plan = ibl.GenerationPlan(experiment, [
-    ibl.vary.layer_thickness(layer=0, bounds=(50, 150)),
-])
-rows = plan.sample_uniform(100, seed=42)
-summary = plan.generate(rows, ibl.DummySimulator(), "datasets/example")
+Use the datasets and scientific metadata to develop your own forward
+(sample-to-spectra) or inverse (spectra-to-profile) model.
 
-dataset = ibl.open_dataset(summary.path)
-for batch in dataset.iter_batches(32):
-    pass  # Process records in bounded batches.
-```
+The supplied [iBeamNet example](examples/ibeamnet/README.md) demonstrates a
+recurrent forward surrogate trained on elemental areal densities. Its shared
+recurrence supports variable layer counts for a fixed experiment, with independent
+detector outputs. Start with the [training notebook](examples/ibeamnet/train/train.ipynb).
+It includes a staged learning-rate schedule, validation history, best-model
+checkpointing, and resumable training.
 
-Use streaming iteration for large collections. Convenience properties such as
-`dataset.parameters` and `dataset.spectra("RBS")` materialize arrays in memory.
+This is one model-development example. The framework's metadata, export, and
+inference contracts support custom architectures. Inverse inference and packaging
+are available; the supplied training example is currently forward-only.
 
-## 🧠 Train a forward surrogate
+### Package and deploy
 
-The [iBeamNet example](examples/ibeamnet/README.md) implements a recurrent forward
-surrogate that predicts detector spectra from elemental areal densities. Each
-layer contributes one value per element: thickness multiplied by atomic fraction.
-There is no redundant total-thickness input column.
+A format-1 `.ibm` model package contains a standalone ONNX graph and its scientific
+metadata: physical schemas, units, element and detector ordering, isotope
+assumptions, reference setup, numerical transforms, and physical processing.
+Numerical training transforms are distinguished from inference preparation such
+as rebinning, exposure scaling, and pileup. Detector pipelines are independent.
 
-The network shares its layer recurrence across the sample and supports any
-positive number of layers with a fixed experimental setup. Training layer counts
-do not impose a deployment limit. Multiple detector heads predict their own
-spectra, with independent scaling and postprocessing.
-
-Start with [train/train.ipynb](examples/ibeamnet/train/train.ipynb), or edit
-[surrogate.toml](examples/ibeamnet/surrogate.toml) and run:
-
-```powershell
-python examples/ibeamnet/run.py prepare --extension-dir build/local/Release/bin
-python examples/ibeamnet/run.py train
-python examples/ibeamnet/run.py export --extension-dir build/local/Release/bin
-```
-
-Preparation streams completed datasets into disk-backed arrays. Training uses an
-explicit staged learning-rate schedule, keeps the best validation checkpoint,
-and supports resuming optimizer and random states. The default schedule is
-25 epochs at `5e-4`, 90 at `1e-4`, then 50 at `1e-5`.
-
-Export creates one `forward.ibm` with dynamic batch and layer axes, and verifies
-predictions against PyTorch. Native verification requires an ONNX-enabled build.
-The architecture lives in the example; iBeamLab's package and inference APIs
-support custom model types independently of it.
-
-## 📦 Deploy in Python or C++
-
-All current dataset and model packages use **format 1**. Model files use the
-`.ibm` extension and contain a standalone ONNX graph plus scientific metadata.
-The same package is consumed by both language interfaces.
-
-For a forward package:
+Load a forward package in Python:
 
 ```python
 forward = ibl.load_model("forward.ibm")
 prediction = forward.predict(experiment)
 counts = prediction["RBS"].counts
-
-# Layer-input packages also accept physical elemental areal densities:
-# prediction = forward.predict_areal_density(ad)
-# ad: contiguous float32 [layers, elements], in packaged element order.
 ```
 
-For an inverse package created by your model exporter:
+Load the same package in C++:
 
-```python
-inverse = ibl.load_model("inverse.ibm")
-measurement = ibl.InverseInput(
-    setup=experiment.setup,
-    spectra={"RBS": measured_counts},
-)
-profile = inverse.predict(measurement)
-densities = profile.values  # [layer, element], in physical areal-density units.
+```cpp
+#include <ibeamlab/inference/models.h>
+
+ibeamlab::inference::ForwardModel forward(
+    ibeamlab::model::Package::open("forward.ibm"));
+ibeamlab::simulation::Result prediction;
+forward.predict(experiment, prediction);  // experiment: core::Experiment
 ```
 
-Here `measured_counts` contains your measured spectrum. Inverse metadata declares
-the maximum output layer count and ordered elements. Forward layer-input metadata
-does not impose a maximum layer count. Both model types apply their declared
-scientific processing pipelines.
+Both interfaces provide forward and inverse inference with CPU or CUDA execution,
+according to the configured build and runtime. Forward layer-input contracts do
+not impose a maximum layer count; inverse metadata declares the maximum output
+layer count. Model accuracy outside its training distribution must be evaluated
+for the application.
 
-CPU inference is the default. To select a CUDA-enabled build explicitly:
+C++ inference supports caller-owned output buffers and reusable workspaces.
+Batched prediction executes a population in one graph call. Use a separate model
+instance per concurrent worker. See the [C++ guide](docs/cpp.md) and
+[Python guide](docs/python.md) for batch APIs, inverse inference, provider settings,
+and allocation behavior; see the [model format](docs/model-format.md) for the
+package contract.
 
-```python
-options = ibl.InferenceOptions(execution_provider="cuda", device_id=0)
-forward = ibl.load_model("forward.ibm", options=options)
-```
-
-C++ applications install the library and use its exported CMake target:
-
-```cmake
-find_package(ibeamlab CONFIG REQUIRED)
-target_link_libraries(my_application PRIVATE ibeamlab::ibeamlab)
-```
-
-The C++ inference API supports reusable caller-owned results and workspaces.
-Use one model instance per worker. See the [C++ guide](docs/cpp.md) for package
-loading, physical inputs, and allocation-conscious inference, and the
-[build guide](docs/building.md) for runtime deployment.
-
-## 📐 Units and ordering
+## Units and ordering
 
 | Quantity | Convention |
 | --- | --- |
 | Beam energy, energy spread, detector resolution | keV |
 | Layer thickness and elemental areal density | `1e15 atoms/cm2` |
+| Detector angles | degrees |
 | Acquisition times | seconds |
 | Composition and isotope fractions | Unitless fractions |
 | Layers | Surface to depth |
@@ -258,39 +242,19 @@ loading, physical inputs, and allocation-conscious inference, and the
 Areal thickness is an atomic inventory per unit area. Converting it to geometric
 thickness requires a material number density.
 
-## Experimental fitting
-
-Fit measured spectra with a forward surrogate or simulator using `MeasuredData`,
-`FitProblem` and `fit`. Native ARRDE evaluates populations in batches and retains
-buffers for changing population sizes. Text/CSV readers preserve missing-channel
-masks. See [the fitting guide](docs/fitting.md) and
-[the fitting example](examples/Fitting/fit_spectrum.py).
-
-
-## 🧩 Repository and documentation
+## Repository and documentation
 
 | Path | Contents |
 | --- | --- |
-| `CMakeLists.txt`, `pyproject.toml` | Shared build entry point and Python packaging |
+| `CMakeLists.txt`, `pyproject.toml` | Build entry point and Python packaging |
 | `cpp/` | C++ library, public headers, compiled bindings, examples, and tests |
-| `ibeamlab/` | Python framework API, metadata, datasets, and export utilities |
-| `examples/DataGeneration/` | Configurable multilayer generation workflow |
-| `examples/Fitting/` | Measured-spectrum fitting with a packaged forward model |
-| `examples/ibeamnet/` | Forward surrogate training, notebook, and deployment example |
+| `ibeamlab/` | Python API, metadata, datasets, and export utilities |
+| `examples/DataGeneration/` | Multilayer dataset generation |
+| `examples/Fitting/` | Measured-spectrum fitting example |
+| `examples/ibeamnet/` | Forward surrogate development, training, and deployment example |
+| `docs/` | [Building](docs/building.md), [Python](docs/python.md), [C++](docs/cpp.md), [fitting](docs/fitting.md), [testing](docs/testing.md), and [formats](docs/model-format.md) |
 | `tests/`, `.github/workflows/` | Python tests and automated build/integration checks |
-| `docs/` | [Building](docs/building.md), [Python](docs/python.md), [C++](docs/cpp.md), [testing](docs/testing.md), and [file formats](docs/model-format.md) |
 | `xnra/` | SIMNRA reference projects |
 | `old/` | Archived reference implementation |
-
-For a minimal C++ build and test run:
-
-```console
-cmake -S . -B build/minimal -DCMAKE_BUILD_TYPE=Release
-cmake --build build/minimal --config Release --parallel
-ctest --test-dir build/minimal -C Release --output-on-failure
-```
-
-The minimal build needs neither SIMNRA nor ONNX Runtime. Optional integration
-tests are enabled with their corresponding build features; see the testing guide.
 
 Released under the [MIT license](LICENSE).
