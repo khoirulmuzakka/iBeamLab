@@ -65,8 +65,7 @@ class InferenceOptions:
 def available_execution_providers() -> list[str]:
     """Return provider names exposed by this native runtime.
 
-    Returns a list containing supported cpu/cuda names, or an empty list when
-    ONNX support is disabled. Enumeration does not guarantee device initialization.
+    Returns cpu and optionally cuda for a GPU runtime. Enumeration does not guarantee device initialization.
     """
     ...
 

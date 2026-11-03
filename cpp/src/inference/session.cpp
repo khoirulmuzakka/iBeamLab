@@ -1,5 +1,4 @@
 #include "session.h"
-#ifdef IBEAMLAB_HAS_ONNX
 #include <array>
 #include <limits>
 #include <onnxruntime_cxx_api.h>
@@ -130,19 +129,6 @@ void Session::run(std::span<const float> input, std::span<float> output, std::si
             throw std::runtime_error("model returned nonfinite output");
 }
 } // namespace ibeamlab::inference::detail
-#else
-namespace ibeamlab::inference::detail {
-struct Session::Impl {};
-Session::Session(const model::Package &, InferenceOptions tuning) : options_(tuning) {
-    tuning.validate();
-    throw std::runtime_error("ONNX inference not enabled in this build");
-}
-Session::~Session() = default;
-void Session::run(std::span<const float>, std::span<float>, std::size_t, std::size_t) {
-    throw std::runtime_error("ONNX inference unavailable");
-}
-} // namespace ibeamlab::inference::detail
-#endif
 
 namespace ibeamlab::inference::detail {
 const InferenceOptions &Session::options() const { return options_; }

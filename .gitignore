@@ -1,3 +1,5 @@
+/.dependencies/
+/dist/
 # CMake and native build trees
 /build/
 /build-*/

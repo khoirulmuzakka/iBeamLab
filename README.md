@@ -82,7 +82,8 @@ python -m pip install ".[training,plot]"
 
 Install JupyterLab or another notebook environment for interactive training.
 
-SIMNRA and ONNX inference are optional build features, disabled by default.
+ONNX Runtime inference and Minion fitting are required in every build.
+SIMNRA remains an optional Windows backend.
 Installing the Python `onnxruntime` package alone does not enable ONNX inference
 in the compiled library. Both language interfaces use the configured C++ runtime.
 
@@ -93,14 +94,14 @@ With SIMNRA installed:
 ```powershell
 python -m pip install numpy pybind11 pywin32 tqdm
 .\compile.bat --release
-python examples/DataGeneration/generate_multilayer.py --extension-dir build/local/Release/bin --validate-only
+python examples/DataGeneration/generate_multilayer.py --extension-dir build/cpu/Release/bin --validate-only
 ```
 
-The script builds and tests the library and Python extension in
-`build/local/Release`. It enables SIMNRA, and enables ONNX inference when
-`ONNXRUNTIME_ROOT` points to an SDK. For a CUDA SDK, also set
-`IBEAMLAB_ONNX_PROVIDER=CUDA`. See the [build guide](docs/building.md) for runtime
-dependencies. For interactive source-tree Python usage, add the build's `bin`
+The script prepares cached dependencies, builds and tests the CPU library and
+Python extension in `build/cpu/Release`, and installs to `dist/cpu/Release`.
+Use `compile.bat --release --gpu` for a separate CUDA build. Native ONNX
+inference is always included; SIMNRA is enabled by this Windows script.
+See the [build guide](docs/building.md) for runtime dependencies. For interactive source-tree Python usage, add the build's `bin`
 directory to `PYTHONPATH`; restart the kernel after replacing the extension.
 
 ## Simulation
@@ -169,7 +170,7 @@ independent element sets per layer. Configure sampling budgets, layer counts,
 composition fractions, thickness ranges, seeds, and detector references:
 
 ```powershell
-python examples/DataGeneration/generate_multilayer.py --extension-dir build/local/Release/bin
+python examples/DataGeneration/generate_multilayer.py --extension-dir build/cpu/Release/bin
 ```
 
 Use `--validate-only` to check configuration or `--backend dummy` for synthetic

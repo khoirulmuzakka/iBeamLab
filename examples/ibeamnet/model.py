@@ -51,37 +51,30 @@ class RecurrentSurrogate(nn.Module):
     Every element is represented by its scaled areal density, not a separate
     thickness/fraction pair. All-zero AD layers preserve recurrent state and
     contribute nothing. Contributions are summed without extra density weights.
-    The fixed experiment is learned through ordinary network weights. Fusion
-    combines encoded layer AD with the projected previous hidden state; no
-    setup inputs, setup embeddings or constant-input conditioning are used.
+    A learned AD embedding feeds the GRU alongside the previous hidden state.
+    Contributions use current AD and the updated hidden state. The fixed
+    experiment is learned through ordinary network weights.
     """
-    def __init__(self, elements, spectra_channels, *, hidden_size=256, embedding_size=128,
+    def __init__(self, elements, spectra_channels, *, hidden_size=256, ad_embedding_size=64,
                  contribution_size=512, decoder_hidden_sizes=(512, 512), refiner_channels=32,
-                 refiner_kernel=8, block_hidden_sizes=(512, 512)):
+                 refiner_kernel=8):
         super().__init__()
         if not elements or len(set(elements)) != len(elements):
             raise ValueError("elements must be nonempty and unique")
         if not spectra_channels or any(c < 1 for c in spectra_channels):
             raise ValueError("each detector must have a positive channel count")
-        validate_model_options(dict(hidden_size=hidden_size, embedding_size=embedding_size,
+        validate_model_options(dict(hidden_size=hidden_size, ad_embedding_size=ad_embedding_size,
             contribution_size=contribution_size, decoder_hidden_sizes=decoder_hidden_sizes,
-            refiner_channels=refiner_channels, refiner_kernel=refiner_kernel,
-            block_hidden_sizes=block_hidden_sizes))
+            refiner_channels=refiner_channels, refiner_kernel=refiner_kernel))
         # Preserve spectrum length, matching the reference's even-to-odd rounding.
         refiner_kernel = refiner_kernel if refiner_kernel % 2 else refiner_kernel + 1
         self.elements = tuple(elements)
         self.spectra_channels = tuple(spectra_channels)
         self.hidden_size, self.contribution_size = hidden_size, contribution_size
-        self.layer_encoder = nn.Sequential(nn.Linear(len(elements), embedding_size), nn.LeakyReLU())
-        self.state_projection = nn.Sequential(nn.Linear(hidden_size, embedding_size), nn.LeakyReLU())
-        tower, previous = [], 2 * embedding_size
-        for width in block_hidden_sizes:
-            tower.extend((nn.Linear(previous, width), nn.LeakyReLU()))
-            previous = width
-        self.fusion = nn.Sequential(*tower)
-        self.gru = nn.GRUCell(previous, hidden_size)
-        self.contribution = nn.Sequential(nn.Linear(previous + hidden_size, max(contribution_size, embedding_size)),
-            nn.LeakyReLU(), nn.Linear(max(contribution_size, embedding_size), contribution_size))
+        self.ad_embedding = nn.Sequential(nn.Linear(len(elements), ad_embedding_size), nn.LeakyReLU())
+        self.gru = nn.GRUCell(ad_embedding_size, hidden_size)
+        self.contribution = nn.Sequential(nn.Linear(len(elements) + hidden_size, contribution_size),
+            nn.LeakyReLU(), nn.Linear(contribution_size, contribution_size))
         self.heads = nn.ModuleList(SpectrumHead(hidden_size + contribution_size, channels,
             decoder_hidden_sizes, refiner_channels, refiner_kernel) for channels in spectra_channels)
 
@@ -93,10 +86,8 @@ class RecurrentSurrogate(nn.Module):
         total = inputs.new_zeros((inputs.shape[0], self.contribution_size))
         for layer in inputs.unbind(1):
             active = layer.ne(0).any(dim=1, keepdim=True).to(inputs.dtype)
-            encoded = self.layer_encoder(layer)
-            fused = self.fusion(torch.cat((encoded, self.state_projection(hidden)), dim=1))
-            next_hidden = self.gru(fused, hidden)
-            total = total + self.contribution(torch.cat((fused, next_hidden), dim=1)) * active
+            next_hidden = self.gru(self.ad_embedding(layer), hidden)
+            total = total + self.contribution(torch.cat((layer, next_hidden), dim=1)) * active
             hidden = hidden * (1 - active) + next_hidden * active
         latent = torch.cat((total, hidden), dim=1)
         return torch.cat([head(latent) for head in self.heads], dim=1)

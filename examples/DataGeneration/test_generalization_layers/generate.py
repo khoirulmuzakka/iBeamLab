@@ -76,7 +76,7 @@ def add_poisson(expected, noisy, *, seed, layers, shard_size):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--extension-dir", type=Path, default=ROOT / "build/local/Release/bin")
+    parser.add_argument("--extension-dir", type=Path, default=ROOT / "build/cpu/Release/bin")
     parser.add_argument("--configuration", type=Path, default=HERE.parent / "multilayer-generation.toml")
     parser.add_argument("--output", type=Path, default=HERE)
     parser.add_argument("--layers", type=int, nargs="+", default=[10, 13, 16, 20])

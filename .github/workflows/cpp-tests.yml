@@ -2,9 +2,9 @@ name: C++ unit and integration tests
 
 on:
   push:
-    paths: ['CMakeLists.txt', 'cmake/**', 'tools/build_minion.py', '.github/actions/**', 'docs/**', 'README.md', 'cpp/**', 'ibeamlab/**', 'tests/**', 'examples/**', 'pyproject.toml', 'xnra/**', '.github/workflows/cpp-tests.yml']
+    paths: ['CMakeLists.txt', 'compile.bat', 'package_gpu_runtime.bat', 'cmake/**', 'tools/*.py', '.github/actions/**', 'docs/**', 'README.md', 'cpp/**', 'ibeamlab/**', 'tests/**', 'examples/**', 'pyproject.toml', 'xnra/**', '.github/workflows/cpp-tests.yml']
   pull_request:
-    paths: ['CMakeLists.txt', 'cmake/**', 'tools/build_minion.py', '.github/actions/**', 'docs/**', 'README.md', 'cpp/**', 'ibeamlab/**', 'tests/**', 'examples/**', 'pyproject.toml', 'xnra/**', '.github/workflows/cpp-tests.yml']
+    paths: ['CMakeLists.txt', 'compile.bat', 'package_gpu_runtime.bat', 'cmake/**', 'tools/*.py', '.github/actions/**', 'docs/**', 'README.md', 'cpp/**', 'ibeamlab/**', 'tests/**', 'examples/**', 'pyproject.toml', 'xnra/**', '.github/workflows/cpp-tests.yml']
   workflow_dispatch:
 
 permissions:
@@ -24,8 +24,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install ONNX Runtime SDK
+        uses: ./.github/actions/setup-onnx
       - name: Install Minion dependency
         uses: ./.github/actions/setup-minion
+      - name: Test dependency and packaging tools
+        run: python tests/test_build_tools.py
       - name: Build wheel from the repository root
         run: python -m pip wheel . --no-deps --wheel-dir wheelhouse
       - name: Install wheel
@@ -60,10 +64,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install ONNX Runtime SDK
+        uses: ./.github/actions/setup-onnx
       - name: Install Minion dependency
         uses: ./.github/actions/setup-minion
       - name: Install test dependencies
-        run: python -m pip install "numpy>=1.24,<3" "pybind11>=2.12,<4" "tqdm>=4.66,<5"
+        run: python -m pip install "numpy>=1.24,<3" "pybind11>=2.12,<4" "tqdm>=4.66,<5" "onnx>=1.16,<2" "onnxruntime>=1.17,<2" "torch>=2,<3"
       - name: Configure
         run: >-
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -71,7 +77,7 @@ jobs:
           -DIBEAMLAB_BUILD_TESTS=ON -DIBEAMLAB_BUILD_PYTHON=ON
           -DPython_ROOT_DIR="${{ env.pythonLocation }}"
           -DIBEAMLAB_BUILD_BENCHMARKS=ON -DIBEAMLAB_BUILD_EXAMPLES=ON
-          -DIBEAMLAB_ENABLE_ONNX=OFF -DIBEAMLAB_ENABLE_SIMNRA=OFF
+          -DIBEAMLAB_ENABLE_SIMNRA=OFF
       - name: Build
         id: build
         run: cmake --build build --config Release --parallel 2
@@ -100,6 +106,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Install ONNX Runtime SDK
+        uses: ./.github/actions/setup-onnx
       - name: Install Minion dependency
         uses: ./.github/actions/setup-minion
       - name: Configure
@@ -134,25 +142,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install ONNX Runtime SDK
+        uses: ./.github/actions/setup-onnx
       - name: Install Minion dependency
         uses: ./.github/actions/setup-minion
       - name: Install training and export test dependencies
         run: python -m pip install "numpy>=1.24,<3" "pybind11>=2.12,<4" "tqdm>=4.66,<5" "onnx>=1.16,<2" "onnxruntime>=1.17,<2" "torch>=2,<3"
-      - name: Fetch matching ONNX Runtime SDK
-        shell: pwsh
-        run: |
-          $sdkArchive = Join-Path $env:RUNNER_TEMP 'ibeamlab-ort.zip'
-          $sdkRoot = Join-Path $env:RUNNER_TEMP 'ibeamlab-ort'
-          Invoke-WebRequest https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.22.1/microsoft.ml.onnxruntime.1.22.1.nupkg -OutFile $sdkArchive
-          Expand-Archive -LiteralPath $sdkArchive -DestinationPath $sdkRoot
-          "ONNXRUNTIME_ROOT=$sdkRoot" >> $env:GITHUB_ENV
       # Compile the Windows COM adapter; integration selection excludes licensed tests.
       - name: Configure
         run: >-
           cmake -S . -B build -DBUILD_SHARED_LIBS=${{ matrix.shared }}
           -DIBEAMLAB_BUILD_TESTS=ON -DIBEAMLAB_BUILD_PYTHON=ON
           -DPython_ROOT_DIR="${{ env.pythonLocation }}"
-          -DIBEAMLAB_ENABLE_ONNX=ON -DIBEAMLAB_ENABLE_SIMNRA=ON
+          -DIBEAMLAB_ENABLE_SIMNRA=ON
           -DIBEAMLAB_BUILD_BENCHMARKS=ON
           -DONNXRUNTIME_ROOT="${{ env.ONNXRUNTIME_ROOT }}"
       - name: Build

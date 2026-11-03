@@ -83,8 +83,7 @@ A forward model evaluates the valid population in one batch. Scoring does not
 allocate a population-sized residual array. Buffers grow when a previous capacity
 is exceeded; ONNX Runtime and simulator internals have their own allocation needs.
 
-Native ARRDE and DE use the installed Minion library, enabled by default through
-`IBEAMLAB_ENABLE_MINION=ON`. CMake finds the package rather than embedding selected
+Native ARRDE and DE use the required installed Minion library. CMake finds the package rather than embedding selected
 algorithm sources. Disable it to use the objective with an external optimizer. A custom Python optimizer is callable as
 `optimizer(objective, options)`; it evaluates candidates and returns None, and
 `fit` returns the best solution the objective actually evaluated.

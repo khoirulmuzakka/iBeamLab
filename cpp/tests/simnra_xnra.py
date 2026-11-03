@@ -43,9 +43,12 @@ def load_reference(path, ibl, isotope_masses=None, effective_fractions=None):
         grouped = {}
         for element in item.findall('layerelements/layerelement'):
             name = text(element, 'name')
+            name = {'D': '2H', 'T': '3H'}.get(name, name)
             fraction = float(text(element, 'concentration'))
             match = re.fullmatch(r'(\d+)([A-Za-z]+)', name)
             symbol = match.group(2) if match else name
+            # SIMNRA spells hydrogen isotopes D/T (including 2D in XNRA).
+            symbol = {'D': 'H', 'T': 'H'}.get(symbol, symbol)
             entry = grouped.setdefault(symbol, {'fraction': 0., 'isotopes': []})
             entry['fraction'] += fraction
             if match:
@@ -157,6 +160,7 @@ def recalculate_reference(path, first_layer_scale=1.0, fast=False, geometry=None
         for li in range(1, int(get(target, 'NumberOfLayers'))+1):
             for ei in range(1, int(get(target, 'NumberOfElements', li))+1):
                 symbol = get(target, 'ElementName', li, ei).strip()
+                symbol = {'D': 'H', 'T': 'H'}.get(symbol, symbol)
                 effective_fractions[li, symbol] = get(target, 'ElementConcentration', li, ei)
                 for ii in range(1, int(get(target, 'NumberOfIsotopes', li, ei))+1):
                     mass = get(target, 'IsotopeMass', li, ei, ii)

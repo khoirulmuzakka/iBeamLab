@@ -50,8 +50,8 @@ cmake.args = [
   "-DIBEAMLAB_BUILD_EXAMPLES=OFF",
 ]
 wheel.packages = ["ibeamlab"]
-sdist.include = ["licenses/**", "tools/build_minion.py", "CMakeLists.txt", "README.md", "cmake/**", "docs/**", "cpp/CMakeLists.txt", "cpp/src/**", "cpp/include/**", "cpp/python/**", "ibeamlab/**", "tests/**", "examples/**"]
-sdist.exclude = ["old/**", "build*/**", "cpp/build*/**", "xnra/**"]
+sdist.include = ["licenses/**", "tools/*.py", "compile.bat", "package_gpu_runtime.bat", "CMakeLists.txt", "README.md", "cmake/**", "docs/**", "cpp/CMakeLists.txt", "cpp/src/**", "cpp/include/**", "cpp/python/**", "ibeamlab/**", "tests/**", "examples/**"]
+sdist.exclude = [".dependencies/**", "dist/**", "old/**", "build*/**", "cpp/build*/**", "xnra/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

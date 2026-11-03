@@ -1,0 +1,20 @@
+name: Install ONNX Runtime SDK
+description: Install the required CPU C/C++ SDK for Windows or Linux runners.
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      run: |
+        $sdkRoot = Join-Path $env:RUNNER_TEMP 'ibeamlab-ort'
+        if ($IsWindows) {
+          $archive = Join-Path $env:RUNNER_TEMP 'ibeamlab-ort.zip'
+          Invoke-WebRequest https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.25.1/microsoft.ml.onnxruntime.1.25.1.nupkg -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $sdkRoot
+        } else {
+          $archive = Join-Path $env:RUNNER_TEMP 'ibeamlab-ort.tgz'
+          Invoke-WebRequest https://github.com/microsoft/onnxruntime/releases/download/v1.25.1/onnxruntime-linux-x64-1.25.1.tgz -OutFile $archive
+          New-Item -ItemType Directory -Path $sdkRoot -Force | Out-Null
+          tar -xzf $archive -C $sdkRoot --strip-components=1
+          if ($LASTEXITCODE -ne 0) { throw 'ONNX Runtime SDK extraction failed' }
+        }
+        "ONNXRUNTIME_ROOT=$sdkRoot" >> $env:GITHUB_ENV

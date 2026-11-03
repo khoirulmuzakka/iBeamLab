@@ -1,0 +1,260 @@
+{
+  "format": "ibeamlab.forward-export",
+  "format_version": 1,
+  "architecture": "RecurrentSurrogate",
+  "ad_input_factor": 0.0001,
+  "package": "forward.ibm",
+  "training_layer_counts": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "native_verified": true,
+  "checkpoint_sha256": "a289b61b3e361e4c418d893c395d1440eecc244ba342cc169c647856e5349633",
+  "pileup": {
+    "RBS": {
+      "enabled": true,
+      "targets_pileup_free": true,
+      "tau_seconds": 4e-07
+    }
+  },
+  "graph_parity_tolerance": {
+    "rtol": 0.0002,
+    "atol": 1e-05
+  },
+  "checks": [
+    {
+      "layers": 1,
+      "batch": 1,
+      "onnx_max_absolute_error": 0.0004425048828125
+    },
+    {
+      "layers": 1,
+      "batch": 3,
+      "onnx_max_absolute_error": 0.0003814697265625
+    },
+    {
+      "layers": 2,
+      "batch": 1,
+      "onnx_max_absolute_error": 0.0003509521484375
+    },
+    {
+      "layers": 2,
+      "batch": 3,
+      "onnx_max_absolute_error": 0.0006256103515625
+    },
+    {
+      "layers": 8,
+      "batch": 1,
+      "onnx_max_absolute_error": 0.0002593994140625
+    },
+    {
+      "layers": 8,
+      "batch": 3,
+      "onnx_max_absolute_error": 0.0003204345703125
+    },
+    {
+      "layers": 11,
+      "batch": 1,
+      "onnx_max_absolute_error": 0.0005645751953125
+    },
+    {
+      "layers": 11,
+      "batch": 3,
+      "onnx_max_absolute_error": 0.001190185546875
+    },
+    {
+      "layers": 17,
+      "batch": 1,
+      "onnx_max_absolute_error": 0.0002899169921875
+    },
+    {
+      "layers": 17,
+      "batch": 3,
+      "onnx_max_absolute_error": 0.000518798828125
+    }
+  ],
+  "isotope_compositions": [
+    {
+      "element": "Li",
+      "isotopes": [
+        {
+          "mass_number": 6,
+          "fraction": 0.075
+        },
+        {
+          "mass_number": 7,
+          "fraction": 0.925
+        }
+      ]
+    },
+    {
+      "element": "Ni",
+      "isotopes": [
+        {
+          "mass_number": 58,
+          "fraction": 0.68077
+        },
+        {
+          "mass_number": 60,
+          "fraction": 0.26223
+        },
+        {
+          "mass_number": 61,
+          "fraction": 0.0114
+        },
+        {
+          "mass_number": 62,
+          "fraction": 0.03634
+        },
+        {
+          "mass_number": 64,
+          "fraction": 0.00926
+        }
+      ]
+    },
+    {
+      "element": "Mn",
+      "isotopes": [
+        {
+          "mass_number": 55,
+          "fraction": 1.0
+        }
+      ]
+    },
+    {
+      "element": "Co",
+      "isotopes": [
+        {
+          "mass_number": 59,
+          "fraction": 1.0
+        }
+      ]
+    },
+    {
+      "element": "O",
+      "isotopes": [
+        {
+          "mass_number": 16,
+          "fraction": 0.99762
+        },
+        {
+          "mass_number": 17,
+          "fraction": 0.00038
+        },
+        {
+          "mass_number": 18,
+          "fraction": 0.002
+        }
+      ]
+    },
+    {
+      "element": "C",
+      "isotopes": [
+        {
+          "mass_number": 12,
+          "fraction": 0.989
+        },
+        {
+          "mass_number": 13,
+          "fraction": 0.011
+        }
+      ]
+    },
+    {
+      "element": "F",
+      "isotopes": [
+        {
+          "mass_number": 19,
+          "fraction": 1.0
+        }
+      ]
+    },
+    {
+      "element": "P",
+      "isotopes": [
+        {
+          "mass_number": 31,
+          "fraction": 1.0
+        }
+      ]
+    },
+    {
+      "element": "Cu",
+      "isotopes": [
+        {
+          "mass_number": 63,
+          "fraction": 0.6917
+        },
+        {
+          "mass_number": 65,
+          "fraction": 0.3083
+        }
+      ]
+    },
+    {
+      "element": "Al",
+      "isotopes": [
+        {
+          "mass_number": 27,
+          "fraction": 1.0
+        }
+      ]
+    },
+    {
+      "element": "Si",
+      "isotopes": [
+        {
+          "mass_number": 28,
+          "fraction": 0.9223
+        },
+        {
+          "mass_number": 29,
+          "fraction": 0.0467
+        },
+        {
+          "mass_number": 30,
+          "fraction": 0.031
+        }
+      ]
+    },
+    {
+      "element": "Na",
+      "isotopes": [
+        {
+          "mass_number": 23,
+          "fraction": 1.0
+        }
+      ]
+    },
+    {
+      "element": "Fe",
+      "isotopes": [
+        {
+          "mass_number": 54,
+          "fraction": 0.058
+        },
+        {
+          "mass_number": 56,
+          "fraction": 0.9172
+        },
+        {
+          "mass_number": 57,
+          "fraction": 0.022
+        },
+        {
+          "mass_number": 58,
+          "fraction": 0.0028
+        }
+      ]
+    }
+  ],
+  "metadata_updated_from_sha256": "dbe8bf1e3c9f823694acac728ddde6983307d3b90a505f66c4e3be1fef42e0d4",
+  "graph_sha256": "5076c058d7d50a163fdbfb6883dc4b25ff511444dfc1b038318a02abf3554760",
+  "package_sha256": "8a4836c0d2faed3d47ed3750d189d2edf5503181b4349561f3c3cef1d0d44334"
+}

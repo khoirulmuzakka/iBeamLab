@@ -2,7 +2,7 @@
 
 Run from the repository root after compiling the Python extension::
 
-    python examples/Fitting/fit_spectrum.py data.txt model.ibm --extension-dir build/local/Release/bin
+    python examples/Fitting/fit_spectrum.py data.txt model.ibm --extension-dir build/cpu/Release/bin
 
 The example starts from the package's explicit reference setup and sample
 assumption. Adjust those descriptions and bounds for the actual experiment.

@@ -8,10 +8,10 @@ experimental fitting, PyTorch training, format 1 model export and forward/invers
 ## Build and dependencies
 
 See [building.md](building.md) for installation and optional ONNX/SIMNRA builds.
-For a source-tree build, add its bin directory (for example, build/local/bin)
+For a source-tree build, add its bin directory (for example, build/cpu/Release/bin)
 to PYTHONPATH. The extension and PyTorch are loaded only when used.
 When using `compile.bat Release`, the extension directory is
-`build/local/Release/bin`.
+`build/cpu/Release/bin`.
 
 ## Measurements and simulation
 

@@ -28,8 +28,7 @@ rebin = true
 
 [model]
 hidden_size = 256
-embedding_size = 128
-block_hidden_sizes = [512, 512]
+ad_embedding_size = 64
 contribution_size = 512
 decoder_hidden_sizes = [512, 512]
 refiner_channels = 32

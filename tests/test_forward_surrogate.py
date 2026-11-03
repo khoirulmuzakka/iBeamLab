@@ -263,9 +263,11 @@ class SurrogateTests(unittest.TestCase):
     def test_default_architecture_matches_configuration(self):
         config = load_config(ROOT / "examples/ibeamnet/surrogate.toml")
         default = RecurrentSurrogate(["Si", "O"], [8])
-        self.assertEqual(default.gru.input_size, 512)
-        self.assertEqual(default.fusion[0].in_features, 2 * 128)
-        self.assertEqual(default.contribution[0].in_features, 512 + default.hidden_size)
+        self.assertEqual(default.gru.input_size, 64)
+        self.assertEqual(default.ad_embedding[0].in_features, 2)
+        self.assertEqual(default.ad_embedding[0].out_features, 64)
+        self.assertFalse(hasattr(default, "fusion"))
+        self.assertEqual(default.contribution[0].in_features, 2 + default.hidden_size)
         self.assertFalse(any("setup" in name or "film" in name
                              for name in default.state_dict()))
         configured = RecurrentSurrogate(["Si", "O"], [8], **config["model"])
@@ -278,14 +280,35 @@ class SurrogateTests(unittest.TestCase):
         direct = RecurrentSurrogate(["Si", "O"], [8], decoder_hidden_sizes=[], refiner_channels=0)
         self.assertEqual(len(direct.heads[0].decoder), 1)
 
+    def test_export_native_check_fails_before_loading_data(self):
+        with patch.object(ibl, "available_execution_providers", return_value=[]), \
+             patch("examples.ibeamnet.deployment.load_cache") as cache:
+            with self.assertRaisesRegex(ibl.InferenceError, "verify_native=False"):
+                export({"export": {"verify_native": True}})
+            cache.assert_not_called()
+
+    def test_notebook_export_refreshes_cached_fitting(self):
+        import json
+        import ibeamlab.fitting as fitting
+        import ibeamlab.sample as sample
+        notebook = json.loads((ROOT / "examples/ibeamnet/train/train.ipynb").read_bytes())
+        cell = next("".join(c.get("source", [])) for c in notebook["cells"]
+                    if "ibl = reload(ibl)" in "".join(c.get("source", [])))
+        refresh = cell[cell.index("# Refresh only deployment wrappers"):cell.index("RUN_EXPORT =")]
+        # Reproduce an older module already resident in a notebook kernel.
+        del fitting.LinkedParameter
+        namespace = {"ibl": ibl}
+        exec("from importlib import import_module, reload\n" + refresh, namespace)
+        self.assertIs(ibl.LinkedParameter, fitting.LinkedParameter)
+        self.assertIs(ibl.Sample, sample.Sample)
+
     def test_dynamic_export_callback_and_schema_validation(self):
         import onnx
         import onnxruntime as ort
         from examples.ibeamnet.onnx_export import export_graph
         from ibeamlab.export import validate_onnx_contract
-        network = RecurrentSurrogate(["Si", "O"], [8], hidden_size=8, embedding_size=8,
-            contribution_size=8, decoder_hidden_sizes=[8, 8], refiner_channels=0,
-            block_hidden_sizes=[8]).eval()
+        network = RecurrentSurrogate(["Si", "O"], [8], hidden_size=8, ad_embedding_size=4,
+            contribution_size=8, decoder_hidden_sizes=[8, 8], refiner_channels=0).eval()
         setup = ibl.ExperimentalSetup([ibl.Measurement("RBS", ibl.Beam("H", 2000))])
         metadata = ibl.ModelMetadata(ibl.ForwardModelMetadata(setup, ibl.LayerInputSchema(['Si', 'O']), ibl.SpectraSchema([ibl.SpectrumSpec('RBS', 8)]), input_transform=ibl.TransformPipeline([ibl.MultiplyScale([1e-05])])))
         for opset in (17, 18):
@@ -324,9 +347,8 @@ class SurrogateTests(unittest.TestCase):
                         ibl.ForwardModel(invalid)
 
     def test_padding_and_gradients(self):
-        model = RecurrentSurrogate(["Si", "O"], [8, 11], hidden_size=8, embedding_size=8,
-            contribution_size=8, decoder_hidden_sizes=[16, 16], refiner_channels=2, refiner_kernel=3,
-            block_hidden_sizes=[8])
+        model = RecurrentSurrogate(["Si", "O"], [8, 11], hidden_size=8, ad_embedding_size=4,
+            contribution_size=8, decoder_hidden_sizes=[16, 16], refiner_channels=2, refiner_kernel=3)
         x = torch.tensor([[[.15, .35], [.12, .08]]], requires_grad=True)
         y = model(x)
         self.assertEqual(tuple(y.shape), (1, 19))
@@ -348,9 +370,8 @@ class SurrogateTests(unittest.TestCase):
             config["training"].update(output=root / "run", device="cpu", batch_size=8,
                                      schedule=[{"epochs": 2, "learning_rate": .001}])
             config["export"].update(output=root / "packages", verify_native=NATIVE, pileup={})
-            config["model"] = dict(hidden_size=8, embedding_size=8, contribution_size=8,
-                decoder_hidden_sizes=[16, 16], refiner_channels=2, refiner_kernel=3,
-                block_hidden_sizes=[8])
+            config["model"] = dict(hidden_size=8, ad_embedding_size=4, contribution_size=8,
+                decoder_hidden_sizes=[16, 16], refiner_channels=2, refiner_kernel=3)
             config["spectra"] = [dict(measurement=label, channels=channels, count_scale=scale,
                 loss_weight=1., exposure_scale=True, rebin=True)
                 for label, channels, scale in (("RBS", 8, 100.), ("NRA", 11, 25.))]

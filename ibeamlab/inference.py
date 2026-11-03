@@ -103,7 +103,7 @@ def available_execution_providers() -> list[str]:
     Returns
     -------
     list[str]
-        Supported names such as "cpu" and "cuda". Empty when ONNX support is disabled.
+        Supported names: "cpu" and, with a GPU runtime, "cuda".
 
     Raises
     ------

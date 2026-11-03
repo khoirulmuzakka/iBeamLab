@@ -35,16 +35,15 @@ Ordinary hosted CI verifies CPU and unavailable-CUDA behavior without requiring 
 
 `core` can be disabled with `IBEAMLAB_CORE_BUILD_TESTS=OFF`. Python, allocation,
 and licensed suites are registered when their corresponding build options are
-enabled. ONNX-disabled package tests still run serialization/validation checks
-and verify that inference reports its unavailability.
+enabled. Every build includes ONNX Runtime inference and Minion fitting.
 
 ## Run locally
 
 ```console
-cmake -S . -B build/local -DIBEAMLAB_BUILD_TESTS=ON
-cmake --build build/local --config Release --parallel
-ctest --test-dir build/local -C Release -L unit --no-tests=error --output-on-failure
-ctest --test-dir build/local -C Release -L integration -LE licensed --no-tests=error --output-on-failure
+cmake -S . -B build/cpu/Release -DIBEAMLAB_BUILD_TESTS=ON
+cmake --build build/cpu/Release --config Release --parallel
+ctest --test-dir build/cpu/Release -C Release -L unit --no-tests=error --output-on-failure
+ctest --test-dir build/cpu/Release -C Release -L integration -LE licensed --no-tests=error --output-on-failure
 ```
 
 Enable `IBEAMLAB_BUILD_PYTHON=ON` for Python integration and install NumPy/pybind11
@@ -66,7 +65,7 @@ XNRA references, or CI configuration.
 It can also be run manually.
 
 - Windows and Ubuntu, static and shared: unit tests, integration tests including
-  Python and installed consumers, and allocation checks. ONNX/SIMNRA are disabled.
+  Python and installed consumers, and allocation checks. ONNX is required; SIMNRA is disabled.
 - Windows and Ubuntu: build a Python wheel from the repository root, install it,
   and run `python -I tests/installed_package.py` to prevent source imports from
   masking installation or shared-library loading problems.
@@ -111,7 +110,7 @@ batch results after warmup, in addition to the single-prediction paths.
 Benchmark a layer-input package with the public physical population API:
 
 ```console
-python cpp/benchmarks/surrogate_inference.py forward.ibm --extension-dir build/local/Release/bin --provider cuda --population 128 --layers 8 --report build/population-throughput.json
+python cpp/benchmarks/surrogate_inference.py forward.ibm --extension-dir build/cpu/Release/bin --provider cuda --population 128 --layers 8 --report build/population-throughput.json
 ```
 
 Use `--provider cpu` for CPU. This compares one population call with repeated
@@ -122,7 +121,7 @@ The manual benchmark exercises the actual sampled generation path, including
 dataset writing, with separate cold warmup and timed intervals:
 
 ```console
-python cpp/benchmarks/simnra_generation.py --extension-dir build/local/Release/bin --workers 64 --samples 256 --layers 1 --report build/local/Release/simnra-throughput.json
+python cpp/benchmarks/simnra_generation.py --extension-dir build/cpu/Release/bin --workers 64 --samples 256 --layers 1 --report build/cpu/Release/simnra-throughput.json
 ```
 
 It uses temporary datasets and compares a serial standard-mode run with bounded
@@ -144,7 +143,7 @@ intercept allocations inside a shared DLL. The shared benchmark reports that
 scope explicitly. Use a static Release build to audit the library itself:
 
 ```console
-cmake -S . -B build/allocation-audit -DBUILD_SHARED_LIBS=OFF -DIBEAMLAB_BUILD_BENCHMARKS=ON -DIBEAMLAB_BUILD_TESTS=OFF -DIBEAMLAB_ENABLE_MINION=OFF
+cmake -S . -B build/allocation-audit -DBUILD_SHARED_LIBS=OFF -DIBEAMLAB_BUILD_BENCHMARKS=ON -DIBEAMLAB_BUILD_TESTS=OFF
 cmake --build build/allocation-audit --config Release --target ibeamlab_benchmark --parallel
 ```
 

@@ -2,17 +2,11 @@
 #include <ibeamlab/fitting/optimizer.h>
 #include <limits>
 #include <stdexcept>
-#ifdef IBEAMLAB_HAS_MINION
 #include <arrde.h>
 #include <de.h>
-#endif
 namespace ibeamlab::fitting {
 bool arrde_available() noexcept {
-#ifdef IBEAMLAB_HAS_MINION
     return true;
-#else
-    return false;
-#endif
 }
 Result fit(Objective &objective, Options options, ProgressCallback callback) {
     if (options.algorithm != "ARRDE" && options.algorithm != "DE")
@@ -52,7 +46,6 @@ Result fit(Objective &objective, Options options, ProgressCallback callback) {
         return finish("fixed", "All parameters are fixed");
     if (objective.progress().evaluations >= options.max_evaluations)
         return finish("max_evaluations_reached", "Evaluation budget exhausted");
-#ifdef IBEAMLAB_HAS_MINION
     std::vector<std::pair<double, double>> bounds;
     for (const auto &b : objective.bounds())
         bounds.emplace_back(b.minimum, b.maximum);
@@ -97,10 +90,6 @@ Result fit(Objective &objective, Options options, ProgressCallback callback) {
         (history.empty() || history.back().evaluations != objective.progress().evaluations))
         history.push_back(objective.progress());
     return finish(minion::terminationStatusToString(result.status), result.message);
-#else
-    throw std::runtime_error(
-        "Minion is unavailable; configure IBEAMLAB_ENABLE_MINION=ON or use an external optimizer");
-#endif
 }
 Result fit_pipeline(Objective &objective, std::span<const Options> stages,
                     ProgressCallback callback) {

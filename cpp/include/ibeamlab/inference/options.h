@@ -22,7 +22,7 @@ struct IBEAMLAB_API InferenceOptions {
     void validate() const;
 };
 /** @brief Provider names usable by this build/runtime, without creating a session.
- * Returns "cpu" and optionally "cuda"; an empty result means ONNX is disabled.
+ * Returns "cpu" and optionally "cuda" for a GPU runtime.
  * A listed provider still requires working device drivers and dependent libraries.
  */
 IBEAMLAB_API std::vector<std::string> available_execution_providers();

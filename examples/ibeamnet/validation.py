@@ -85,12 +85,12 @@ def validate_model_options(options):
         raise ValueError("model must be a mapping")
     for key, value in options.items():
         path = f"model.{key}"
-        if key in {"block_hidden_sizes", "decoder_hidden_sizes"}:
+        if key == "decoder_hidden_sizes":
             if not isinstance(value, (list, tuple)):
                 raise ValueError(f"{path} must be a sequence of positive integers")
             for index, width in enumerate(value):
                 integer(width, f"{path}[{index}]")
-        elif key in {"hidden_size", "embedding_size", "contribution_size", "refiner_channels",
+        elif key in {"hidden_size", "ad_embedding_size", "contribution_size", "refiner_channels",
                      "refiner_kernel"}:
             integer(value, path, minimum=0 if key == "refiner_channels" else 1)
         else:

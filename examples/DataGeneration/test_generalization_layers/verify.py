@@ -66,6 +66,6 @@ def verify(folder, extension):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=HERE)
-    parser.add_argument("--extension-dir", type=Path, default=ROOT / "build/local/Release/bin")
+    parser.add_argument("--extension-dir", type=Path, default=ROOT / "build/cpu/Release/bin")
     args = parser.parse_args()
     verify(args.output, args.extension_dir)

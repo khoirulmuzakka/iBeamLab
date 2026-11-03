@@ -8,18 +8,14 @@ from torch import nn
 class _Step(nn.Module):
     def __init__(self, network):
         super().__init__()
-        self.layer_encoder = network.layer_encoder
-        self.state_projection = network.state_projection
-        self.fusion = network.fusion
+        self.ad_embedding = network.ad_embedding
         self.gru = network.gru
         self.contribution = network.contribution
 
     def forward(self, layer, contributions, hidden):
         mask = layer.ne(0).any(dim=1, keepdim=True).to(layer.dtype)
-        encoded = self.layer_encoder(layer)
-        fused = self.fusion(torch.cat((encoded, self.state_projection(hidden)), 1))
-        next_hidden = self.gru(fused, hidden)
-        contribution = self.contribution(torch.cat((fused, next_hidden), 1))
+        next_hidden = self.gru(self.ad_embedding(layer), hidden)
+        contribution = self.contribution(torch.cat((layer, next_hidden), 1))
         return contributions + contribution * mask, hidden * (1 - mask) + next_hidden * mask
 
 

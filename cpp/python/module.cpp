@@ -1347,8 +1347,7 @@ These settings do not change the model scientific contract.)ibdoc")
 Does not initialize a device; raises ValueError for invalid scalar options.)ibdoc");
     m.def("available_execution_providers", &inference::available_execution_providers, R"ibdoc(Return provider names exposed by this native runtime.
 
-Returns a list containing supported cpu/cuda names, or an empty list when
-ONNX support is disabled. Enumeration does not guarantee device initialization.)ibdoc");
+Returns cpu and optionally cuda for a GPU runtime. Enumeration does not guarantee device initialization.)ibdoc");
     py::enum_<inference::PredictionDomain>(m, "PredictionDomain", R"ibdoc(Choose requested-measurement or reference-condition inference.
 
 Notes

@@ -147,6 +147,13 @@ def export(config, checkpoint=None):
     """
     import onnx
     import onnxruntime as ort
+    if config["export"]["verify_native"] and not ibl.available_execution_providers():
+        from ibeamlab._engine import engine
+        raise ibl.InferenceError(
+            f"Native export verification requires an ONNX-enabled extension; loaded {engine().__file__}. "
+            "Set verify_native=False to export with Python ONNX Runtime parity checks, "
+            "or load an ONNX-enabled build in a fresh kernel."
+        )
     cache = Path(config["data"]["cache"])
     manifest = load_cache(config)
     checkpoint = Path(checkpoint or config["training"]["output"] / "best.pt")

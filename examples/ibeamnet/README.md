@@ -9,17 +9,16 @@ It trains one set of weights across the selected layer counts.
 The shared GRU processes elemental areal densities from the surface inward.
 Independent detector heads decode spectra and refine them locally. The fixed
 experimental setup is learned through the network weights; no setup-conditioning
-branches are used. Fusion combines encoded AD with projected recurrent state.
+branches are used. Current elemental AD passes through a learned linear embedding and LeakyReLU
+before entering `GRUCell`, with the
+previous hidden state passed separately. Each contribution head receives
+current AD concatenated with the updated hidden state.
 All-zero AD padding preserves state and contributes nothing. Contributions
 are summed without additional density weighting; outputs are nonnegative.
 An empty stack retains the reference's learned baseline output.
-The layer recurrence retains learned feature fusion without setup conditioning.
-
-Model defaults are hidden size 256, layer
-embedding 128, contribution size 512, recurrent block widths
-`[512, 512]`, decoder widths `[512, 512]`, and 32 refiner channels. The configured
-refiner kernel is 8, rounded up internally to 9 as in the reference. Both hidden
-layer lists remain configurable.
+Model defaults are AD embedding size 64, hidden size 256, contribution size 512,
+decoder widths `[512, 512]`, and 32 refiner channels. The configured
+refiner kernel is 8, rounded up internally to 9 as in the reference. Decoder widths remain configurable. Earlier architectures require a new training run.
 
 ## Run
 
@@ -47,9 +46,9 @@ Install the training dependencies in your active Python environment:
 
 ```powershell
 python -m pip install torch onnx onnxruntime numpy tqdm
-python examples/ibeamnet/run.py prepare --extension-dir build/local/Release/bin
+python examples/ibeamnet/run.py prepare --extension-dir build/cpu/Release/bin
 python examples/ibeamnet/run.py train
-python examples/ibeamnet/run.py export --extension-dir build/local/Release/bin
+python examples/ibeamnet/run.py export --extension-dir build/cpu/Release/bin
 ```
 
 For the CLI commands, edit `surrogate.toml` first; notebook users edit the cells.
@@ -241,7 +240,7 @@ for differing layer counts. Detector postprocessing remains independent.
 To compare a stored sample with a package prediction:
 
 ```powershell
-python examples/ibeamnet/predict.py examples/ibeamnet/packages/forward.ibm examples/DataGeneration/datasets/iba_multilayer_13el/layers_01 --extension-dir build/local/Release/bin --sample-index 0 --output prediction.npz
+python examples/ibeamnet/predict.py examples/ibeamnet/packages/forward.ibm examples/DataGeneration/datasets/iba_multilayer_13el/layers_01 --extension-dir build/cpu/Release/bin --sample-index 0 --output prediction.npz
 ```
 
 The NPZ contains `prediction_<label>` and `reference_<label>` arrays. Original

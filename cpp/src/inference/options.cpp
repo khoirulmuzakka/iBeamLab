@@ -1,9 +1,7 @@
 #include <ibeamlab/inference/options.h>
 #include <stdexcept>
 #include <algorithm>
-#ifdef IBEAMLAB_HAS_ONNX
 #include <onnxruntime_cxx_api.h>
-#endif
 
 namespace ibeamlab::inference {
 void InferenceOptions::validate() const {
@@ -15,14 +13,12 @@ void InferenceOptions::validate() const {
 }
 std::vector<std::string> available_execution_providers() {
     std::vector<std::string> result;
-#ifdef IBEAMLAB_HAS_ONNX
     const auto providers = Ort::GetAvailableProviders();
     if (std::find(providers.begin(), providers.end(), "CPUExecutionProvider") != providers.end())
         result.emplace_back("cpu");
 #ifdef IBEAMLAB_HAS_CUDA
     if (std::find(providers.begin(), providers.end(), "CUDAExecutionProvider") != providers.end())
         result.emplace_back("cuda");
-#endif
 #endif
     return result;
 }

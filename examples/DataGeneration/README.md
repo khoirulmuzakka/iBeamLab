@@ -29,9 +29,9 @@ Run a small synthetic example without SIMNRA:
 python examples/DataGeneration/generate_multilayer.py --backend dummy --maximum-layers 2 --mixed-samples 8 --pure-samples 2 --output examples/DataGeneration/datasets/smoke
 ```
 
-For source-tree development, append `--extension-dir build/local/bin` instead of
+For source-tree development, append `--extension-dir build/cpu/Release/bin` instead of
 installing a wheel. For `compile.bat Release`, use
-`--extension-dir build/local/Release/bin`. `--help` lists all options. A custom TOML file can be passed
+`--extension-dir build/cpu/Release/bin`. `--help` lists all options. A custom TOML file can be passed
 as the first argument. Relative paths inside TOML resolve against its directory;
 the command-line `--output` resolves against the working directory.
 
