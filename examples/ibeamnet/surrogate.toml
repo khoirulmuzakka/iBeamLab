@@ -36,7 +36,7 @@ refiner_channels = 32
 refiner_kernel = 8
 
 [training]
-output = "runs/forward"
+output = "runs/forward_ad_embedding"
 device = "auto"
 batch_size = 512
 # End-of-epoch losses use fixed seeded subsets and frozen weights.

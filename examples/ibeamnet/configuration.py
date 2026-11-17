@@ -15,5 +15,7 @@ def load_config(path):
     config["source_configuration"] = str(path)
     for section, key in (("data", "source"), ("data", "cache"),
                          ("training", "output"), ("export", "output")):
-        config[section][key] = (path.parent / config[section][key]).resolve()
+        value = config[section][key]
+        config[section][key] = ([(path.parent / p).resolve() for p in value]
+                                if isinstance(value, list) else (path.parent / value).resolve())
     return config

@@ -31,10 +31,23 @@ def verify(folder, extension):
         minimum_channels, maximum_channels = sys.maxsize, 0
         minimum = np.full(3, np.inf)
         maximum = np.full(3, -np.inf)
+        policy = resolved.get("thickness_sampling")
+        if policy:
+            columns = [i for i, p in enumerate(expected.metadata.parameters)
+                       if isinstance(p.target, native.LayerThickness)]
+            assert len(columns) == layers
+            weights = policy["growth_ratio"] ** np.arange(layers, dtype=float)
+            layer_limits = policy["total_upper_envelope"] * weights / weights.sum()
+            total_thickness_min, total_thickness_max = np.inf, 0.
         for x, y in zip(expected, noisy, strict=True):
             assert x.sample_index == y.sample_index and x.sample_id == y.sample_id
             parameters = np.asarray(x.parameters)
             np.testing.assert_array_equal(parameters, y.parameters)
+            if policy:
+                thicknesses = parameters[columns]
+                assert np.all(thicknesses >= 0) and np.all(thicknesses <= layer_limits + 1e-8)
+                total_thickness_min = min(total_thickness_min, float(thicknesses.sum()))
+                total_thickness_max = max(total_thickness_max, float(thicknesses.sum()))
             setup = parameters[-3:]
             assert np.all(setup >= lower) and np.all(setup <= upper)
             minimum = np.minimum(minimum, setup)
@@ -58,6 +71,9 @@ def verify(folder, extension):
         report[str(layers)] = dict(samples=rows, channels=[minimum_channels, maximum_channels],
             setup_minimum=minimum.tolist(), setup_maximum=maximum.tolist(),
             poisson_total_residual_z=z, poisson_mean_squared_standardized_residual=pearson)
+        if policy:
+            report[str(layers)].update(total_thickness_range=[total_thickness_min, total_thickness_max],
+                total_upper_envelope=policy["total_upper_envelope"])
         print(layers, report[str(layers)], flush=True)
     (folder / "verification.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
@@ -65,7 +81,7 @@ def verify(folder, extension):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=HERE)
+    parser.add_argument("--output", type=Path, default=HERE / "generation_training_rules_1000")
     parser.add_argument("--extension-dir", type=Path, default=ROOT / "build/cpu/Release/bin")
     args = parser.parse_args()
     verify(args.output, args.extension_dir)

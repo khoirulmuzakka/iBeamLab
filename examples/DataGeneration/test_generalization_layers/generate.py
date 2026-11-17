@@ -1,8 +1,9 @@
 """Generate pileup-enabled RBS generalization cases with independent Poisson observations."""
 import argparse
-from dataclasses import replace
+from dataclasses import replace, asdict
 from pathlib import Path
 import json
+import math
 import sys
 import xml.etree.ElementTree as ET
 
@@ -17,13 +18,23 @@ def write_json(path, value):
     temporary.replace(path)
 
 
-def make_case(base, layers, samples, workers, seed):
-    """Keep the original composition mixture and total thickness cap for every case."""
+def make_case(base, layers, samples, workers, seed, *,
+              particles_sr_range=(1e10, 1e12), calibration_linear_range=(1., 3.),
+              calibration_offset_range=(-10., 10.), thickness_envelope_range=(50000., 500000.),
+              maximum_layers=None):
+    """Use the training sampler and one shared layer-dependent thickness policy."""
     import numpy as np
     import ibeamlab as ibl
     reference = ROOT / "xnra/Ref_RBS_LiCOFNaAlSiPSTiMnFeCoNiCuH.xnra"
     measurement = next(m for m in base.setup.measurements if m.label == "RBS")
-    configuration = replace(base, maximum_layers=layers, mixed_samples=samples,
+    measurement = replace(measurement,
+        detector=replace(measurement.detector,
+            calibration_linear=sum(calibration_linear_range) / 2,
+            calibration_offset=sum(calibration_offset_range) / 2),
+        acquisition=replace(measurement.acquisition, particles_sr=sum(particles_sr_range) / 2))
+    configuration = replace(base, maximum_layers=maximum_layers or max(base.maximum_layers, layers),
+        thickness=replace(base.thickness, minimum_total=thickness_envelope_range[0],
+                          maximum_total=thickness_envelope_range[1]), mixed_samples=samples,
         pure_samples=0, seed=seed, workers=workers, backend="simnra",
         setup=ibl.ExperimentalSetup([measurement]),
         methods=(ibl.SimnraMethod("RBS", reference, measurement.beam.particle),))
@@ -34,12 +45,10 @@ def make_case(base, layers, samples, workers, seed):
         raise ValueError("SIMNRA reference must enable pileup")
     plan = configuration.plan(layers)
     rows, batch = configuration.rows(layers)
-    exposure = measurement.acquisition.particles_sr
-    linear = measurement.detector.calibration_linear
     additional = (
-        ibl.vary.particles_sr("RBS", bounds=(.9 * exposure, 1.1 * exposure)),
-        ibl.vary.calibration_linear("RBS", bounds=(.95 * linear, 1.05 * linear)),
-        ibl.vary.calibration_offset("RBS", bounds=(-10, 10)),
+        ibl.vary.particles_sr("RBS", bounds=particles_sr_range),
+        ibl.vary.calibration_linear("RBS", bounds=calibration_linear_range),
+        ibl.vary.calibration_offset("RBS", bounds=calibration_offset_range),
     )
     rng = np.random.default_rng(np.random.SeedSequence([seed, layers, 2001]))
     setup_rows = np.column_stack([rng.uniform(*p.bounds, samples) for p in additional])
@@ -78,16 +87,29 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--extension-dir", type=Path, default=ROOT / "build/cpu/Release/bin")
     parser.add_argument("--configuration", type=Path, default=HERE.parent / "multilayer-generation.toml")
-    parser.add_argument("--output", type=Path, default=HERE)
-    parser.add_argument("--layers", type=int, nargs="+", default=[10, 13, 16, 20])
-    parser.add_argument("--samples", type=int, default=10000)
+    parser.add_argument("--output", type=Path, default=HERE / "generation_training_rules_1000")
+    parser.add_argument("--layers", type=int, nargs="+", default=[1, 2, 3, 4, 5, 6, 7, 8, 10, 13, 16, 20])
+    parser.add_argument("--samples", type=int, default=1000)
     parser.add_argument("--workers", type=int, default=64)
     parser.add_argument("--seed", type=int, default=31)
+    parser.add_argument("--particles-sr-range", type=float, nargs=2, default=(1e10, 1e12))
+    parser.add_argument("--calibration-linear-range", type=float, nargs=2, default=(1., 3.))
+    parser.add_argument("--calibration-offset-range", type=float, nargs=2, default=(-10., 10.))
+    parser.add_argument("--thickness-envelope-range", type=float, nargs=2, default=(50000., 500000.))
     parser.add_argument("--validate-only", action="store_true")
     args = parser.parse_args()
+    setup_ranges = dict(particles_sr_range=tuple(args.particles_sr_range),
+        calibration_linear_range=tuple(args.calibration_linear_range),
+        calibration_offset_range=tuple(args.calibration_offset_range),
+        thickness_envelope_range=tuple(args.thickness_envelope_range))
+    for name, bounds in setup_ranges.items():
+        if (not all(math.isfinite(v) for v in bounds) or bounds[0] >= bounds[1]
+                or (name != "calibration_offset_range" and bounds[0] <= 0)):
+            parser.error(f"invalid {name}: require finite increasing bounds and positive exposure/gain")
     if (args.samples < 1 or not 1 <= args.workers <= 256 or any(v < 1 for v in args.layers)
             or len(set(args.layers)) != len(args.layers) or args.seed < 0):
         parser.error("samples/layers must be positive and layer counts unique; seed >= 0; workers in 1..256")
+    setup_ranges["maximum_layers"] = max(args.layers)
     sys.path.insert(0, str(args.extension_dir.resolve()))
     import ibeamlab as ibl
     from ibeamlab._engine import engine
@@ -96,7 +118,7 @@ def main():
     base = load_configuration(args.configuration)
     if args.validate_only:
         for layers in args.layers:
-            make_case(base, layers, args.samples, args.workers, args.seed)
+            make_case(base, layers, args.samples, args.workers, args.seed, **setup_ranges)
             print(f"Validated {layers} layers, {args.samples:,} samples; pileup reference enabled")
         return
     for layers in args.layers:
@@ -111,7 +133,7 @@ def main():
         simulator = None
         try:
             for layers in args.layers:
-                cfg, plan, rows, batch = make_case(base, layers, args.samples, args.workers, args.seed)
+                cfg, plan, rows, batch = make_case(base, layers, args.samples, args.workers, args.seed, **setup_ranges)
                 folder = args.output / f"layers_{layers:02d}"
                 expected, noisy = folder / "expected", folder / "noisy"
                 print(f"{layers} layers: {args.samples:,} RBS spectra; {args.workers} workers; "
@@ -120,6 +142,8 @@ def main():
                 folder.mkdir(exist_ok=False)
                 resolved = cfg.resolved()
                 resolved.update(output=str(folder.resolve()), layer_count=layers, total_samples=args.samples,
+                    thickness_sampling=dict(**asdict(cfg.thickness),
+                        total_upper_envelope=cfg.thickness.maximum_for(layers, cfg.maximum_layers)),
                     noise="Poisson after SIMNRA pileup", noise_stream=[args.seed, layers, 2002],
                     varied_parameters=[dict(name=p.name, bounds=p.bounds, unit=p.unit)
                                        for p in plan.parameters[-3:]],

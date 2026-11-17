@@ -8,7 +8,7 @@ import numpy as np
 from tqdm import tqdm
 import ibeamlab as ibl
 from ibeamlab._engine import engine
-from .validation import validate_data_config
+from .validation import validate_data_config, dataset_roots
 from .splits import cap_split_indices
 
 
@@ -130,11 +130,18 @@ def prepare(config):
     cache = Path(settings["cache"])
     sources, datasets, elements, reference_setup = [], [], None, None
     offset = 0
-    for layer_count in settings["layer_counts"]:
-        path = Path(settings["source"]) / f"layers_{layer_count:02d}"
-        if not (path / "manifest.ibd").is_file():
+    paths = [(root / f"layers_{count:02d}", count)
+             for root in dataset_roots(settings["source"]) for count in settings["layer_counts"]]
+    for path, layer_count in paths:
+        if (path / "manifest.ibd").is_file():
+            dataset = ibl.open_dataset(path)
+            metadata_file = path / "manifest.ibd"
+        elif (path / "dataset.toml").is_file():
+            from .archived_dataset import ArchivedDataset
+            dataset = ArchivedDataset(path)
+            metadata_file = path / "dataset.toml"
+        else:
             raise ValueError(f"{path} is missing or incomplete; wait for generation to finish")
-        dataset = ibl.open_dataset(path)
         metadata = dataset.metadata
         if len(metadata.reference.sample.layers) != layer_count:
             raise ValueError(f"wrong layer count in {path}")
@@ -173,7 +180,7 @@ def prepare(config):
             "start": offset, "records": count, "columns": columns.tolist(), "parameters": parameters,
             "reference": {"sample": asdict(metadata.reference.sample), "setup": asdict(metadata.reference.setup)},
             "provenance": metadata.provenance,
-            "manifest_sha256": digest(path / "manifest.ibd")})
+            "manifest_sha256": digest(metadata_file)})
         datasets.append(dataset)
         offset += count
     # Reject enrichment conflicts before allocating or writing cache arrays.

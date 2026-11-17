@@ -166,3 +166,5 @@ old/*
 /examples/ibeamnet/**/logs/
 /examples/ibeamnet/**/tensorboard/
 /examples/ibeamnet/**/wandb/
+
+/examples/DataGeneration/test_generalization_layers/generation_*/

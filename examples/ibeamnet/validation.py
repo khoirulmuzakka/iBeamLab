@@ -122,11 +122,23 @@ def validate_spectra(spectra):
                 raise ValueError(f"{path}.{key} must be boolean")
 
 
+def dataset_roots(value):
+    """Normalize one dataset root or an ordered list, rejecting duplicates."""
+    values = value if isinstance(value, (list, tuple)) else [value]
+    if not values or any(not isinstance(p, (str, Path)) or not str(p).strip() for p in values):
+        raise ValueError("data.source must be a nonempty path or list of paths")
+    roots = [Path(p).resolve() for p in values]
+    if len(set(roots)) != len(roots):
+        raise ValueError("data.source contains duplicate dataset roots")
+    return roots
+
+
 def validate_data_config(config):
     """Validate preparation/cache settings without requiring training/export controls."""
     if required(config, "format", "config") != "ibeamlab.surrogate" or required(config, "format_version", "config") != 1:
         raise ValueError("expected ibeamlab.surrogate format_version=1")
-    for section, key in (("data", "source"), ("data", "cache")):
+    dataset_roots(required(required(config, "data", "config"), "source", "data"))
+    for section, key in (("data", "cache"),):
         value = required(required(config, section, "config"), key, section)
         if not isinstance(value, (str, Path)) or not str(value).strip():
             raise ValueError(f"{section}.{key} must be a nonempty path")
@@ -206,14 +218,17 @@ def validate_cache_contract(manifest, config):
     for key, expected in (("ad_input_factor", config["preprocessing"]["ad_input_factor"]),):
         if manifest.get(key) != expected:
             raise ValueError(f"cache.{key} differs from configuration; prepare a new cache")
-    if sorted(s["layer_count"] for s in manifest["sources"]) != sorted(config["data"]["layer_counts"]):
+    roots = dataset_roots(config["data"]["source"])
+    if sorted(s["layer_count"] for s in manifest["sources"]) != sorted(config["data"]["layer_counts"] * len(roots)):
         raise ValueError("cache layer counts differ from configuration; choose a new cache directory")
     if manifest["split_seed"] != config["data"]["seed"]:
         raise ValueError("cache split seed differs from configuration; choose a new cache directory")
-    for source in manifest["sources"]:
-        expected = Path(config["data"]["source"]) / f"layers_{source['layer_count']:02d}"
-        if Path(source["path"]).resolve() != expected.resolve():
-            raise ValueError("cache belongs to a different dataset root")
+    expected = {(root / f"layers_{count:02d}").resolve()
+                for root in roots for count in config["data"]["layer_counts"]}
+    recorded_paths = [Path(source["path"]).resolve() for source in manifest["sources"]]
+    if len(recorded_paths) != len(set(recorded_paths)) or set(recorded_paths) != expected:
+        raise ValueError("cache belongs to different dataset roots; choose a new cache directory")
+
 
 
 def validate_checkpoint_contract(state, manifest, *, cache_sha256=None, model_options=None,

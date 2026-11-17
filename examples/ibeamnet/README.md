@@ -1,24 +1,59 @@
 # Recurrent forward surrogate example
 
 Predict labelled detector spectra from layer thicknesses and elemental
-concentrations. The example's `RecurrentSurrogate` architecture uses
-scaled elemental areal densities, a shared layer GRU,
-summed latent contributions, a spectrum decoder and residual spectral refiner.
-It trains one set of weights across the selected layer counts.
+concentrations. `RecurrentSurrogate` uses scaled elemental areal densities,
+a shared layer GRU, summed latent contributions, independent detector decoders
+and residual spectral refiners.
 
-The shared GRU processes elemental areal densities from the surface inward.
-Independent detector heads decode spectra and refine them locally. The fixed
-experimental setup is learned through the network weights; no setup-conditioning
-branches are used. Current elemental AD passes through a learned linear embedding and LeakyReLU
-before entering `GRUCell`, with the
-previous hidden state passed separately. Each contribution head receives
-current AD concatenated with the updated hidden state.
-All-zero AD padding preserves state and contributes nothing. Contributions
-are summed without additional density weighting; outputs are nonnegative.
-An empty stack retains the reference's learned baseline output.
-Model defaults are AD embedding size 64, hidden size 256, contribution size 512,
-decoder widths `[512, 512]`, and 32 refiner channels. The configured
-refiner kernel is 8, rounded up internally to 9 as in the reference. Decoder widths remain configurable. Earlier architectures require a new training run.
+The GRU processes the sample from the surface inward. Current elemental AD
+passes through a linear embedding and LeakyReLU, then enters the GRU alongside
+the previous hidden state. Contributions use raw AD concatenated with the
+updated hidden state. All-zero layers preserve state and add no contribution,
+including interior padding. There are no setup-conditioning branches.
+
+Class defaults are embedding size 64, hidden size 256, contribution size 512,
+decoder widths `[512, 512]` and 32 refiner channels. The configured refiner kernel
+8 is rounded up to 9. The notebook uses embedding/hidden sizes 256/256 and retains
+its decoder settings. It selects `runs/forward_ad_embedding_combined` for the combined datasets
+and initializes from the previous GRU checkpoint. MLP training results are kept in their separate run directories.
+
+## Batched GRU execution
+
+AD embeddings, input gate projections and the contribution MLP are batched
+across layers. Only masked hidden-state updates remain sequential. Parameter
+names and equations match PyTorch GRUCell, so the original GRU checkpoints load
+unchanged. The streaming ONNX exporter uses the same GRU and zero-layer masking.
+PyTorch speed improvements do not imply native ONNX speed improvements.
+
+For a small synthetic forward comparison against the original per-layer path:
+
+```console
+python -m examples.ibeamnet.benchmark_forward
+```
+
+The benchmark reads only notebook model options and cache JSON, measures CPU
+and available CUDA execution, and saves timings under `artifacts/forward-speed.json`.
+It reports the encoder separately from complete spectrum prediction, using
+identical weights, float32, warmup and synchronized CUDA timing.
+
+## Combining dataset sources
+
+`data.source` accepts one root or a list of roots. The notebook includes
+`examples/DataGeneration/datasets/iba_multilayer_13el` and
+`old/examples/datasets/iba_multilayer_13el`. Each selected layer count is read
+from each root; duplicate roots and incompatible fixed setups are rejected.
+
+Archived `dataset.toml`/`IBEAMDS1` shards are read through a memory-mapped adapter
+in this example, without archived bindings or conversion of the source files.
+Their detector geometry is read from the recorded XNRA reference. Current
+`manifest.ibd` datasets continue to use the native reader. Spectrum widths are
+selected across all sources and shorter spectra are zero-padded in the cache.
+
+The notebook uses `cache-combined` and `runs/forward_ad_embedding_combined`,
+initializing a new run from `runs/forward_ad_embedding/last.pt` when available.
+Changing the dataset changes the cache identity, so this is a weights-only
+initialization; subsequent runs resume the combined run normally. Existing
+caches, checkpoints and generated datasets are left intact.
 
 ## Run
 

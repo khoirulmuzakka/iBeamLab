@@ -5,6 +5,9 @@ import csv
 import hashlib
 import json
 import time
+import os
+import struct
+import tempfile
 
 import numpy as np
 import ibeamlab as ibl
@@ -38,13 +41,86 @@ def chi_square(observed, expected, predicted, *, minimum_expected=1.):
                 noise_chi2_per_bin=oracle / bins, model_error_per_bin=discrepancy / bins)
 
 
+# Keep temporary manifest views alive for all streaming cursors in this session.
+_LEGACY_VIEWS = {}
+
+
+def dataset_reader(path):
+    """Read pre-geometry datasets through a temporary, checksummed manifest view.
+
+    Geometry is ignored for this comparison. Legacy references receive a valid
+    placeholder here; prediction uses the package's geometry. Source files stay
+    untouched and spectrum shards are hard-linked, never copied into memory.
+    """
+    path = Path(path).resolve()
+    try:
+        return engine().DatasetReader(path)
+    except RuntimeError as error:
+        if "explicit detector geometry is required" not in str(error):
+            raise
+    if path not in _LEGACY_VIEWS:
+        envelope = (path / "manifest.ibd").read_bytes()
+        payload = envelope[24:]
+        def checksum(data):
+            value = 14695981039346656037
+            for byte in data:
+                value = ((value ^ byte) * 1099511628211) & ((1 << 64) - 1)
+            return value
+        if (envelope[:8] != b"IBDATA01" or
+                struct.unpack_from("<QQ", envelope, 8) != (len(payload), checksum(payload))):
+            raise ValueError(f"invalid dataset manifest: {path}")
+        offset = 0
+        def integer():
+            nonlocal offset
+            value, = struct.unpack_from("<Q", payload, offset)
+            offset += 8
+            return value
+        def text():
+            nonlocal offset
+            size = integer()
+            offset += size
+        for _ in range(integer()):
+            offset += 32
+            for _ in range(integer()):
+                text()
+                offset += 8
+                isotopes = integer()
+                offset += 24 * isotopes
+        setup_start = offset
+        measurements = integer()
+        if not 0 < measurements <= 1024:
+            raise ValueError("unsupported legacy setup")
+        tag = b"ibeamlab.setup.geometry"
+        parts = [payload[:setup_start], struct.pack("<Q", len(tag)), tag,
+                 struct.pack("<QQ", 1, measurements)]
+        for _ in range(measurements):
+            start = offset
+            text()  # label
+            text()  # beam particle
+            offset += 6 * 8  # beam energy/spread, calibration and resolution
+            text()  # detector info
+            parts.extend((payload[start:offset], struct.pack("<ddd", 0, 0, 180)))
+            parts.append(payload[offset:offset + 24])  # acquisition
+            offset += 24
+        parts.append(payload[offset:])
+        updated = b"".join(parts)
+        view = tempfile.TemporaryDirectory(prefix=".comparison-", dir=path.parent)
+        target = Path(view.name)
+        (target / "manifest.ibd").write_bytes(
+            b"IBDATA01" + struct.pack("<QQ", len(updated), checksum(updated)) + updated)
+        for shard in path.glob("shard-*.ibd"):
+            os.link(shard, target / shard.name)
+        _LEGACY_VIEWS[path] = view
+    return engine().DatasetReader(Path(_LEGACY_VIEWS[path].name))
+
+
 def case_information(root, layers):
     """Scan stored channel lengths in native code without loading a spectral matrix."""
     native = engine()
     result = {}
     for count in layers:
         path = Path(root) / f"layers_{count:02d}"
-        expected, noisy = native.DatasetReader(path / "expected"), native.DatasetReader(path / "noisy")
+        expected, noisy = dataset_reader(path / "expected"), dataset_reader(path / "noisy")
         if expected.metadata.accepted != noisy.metadata.accepted or expected.metadata.failed or noisy.metadata.failed:
             raise ValueError(f"incomplete or failed records in {path}")
         if len(expected.metadata.reference.sample.layers) != count:
@@ -78,7 +154,10 @@ def load_surrogate(package_path, cases, options):
     pipeline = next((p for p in forward.output_preparation if p.measurement == "RBS"), None)
     if pipeline is None or [type(s).__name__ for s in pipeline.steps] != ["Rebin", "ExposureScale", "Pileup"]:
         raise ValueError("export RBS output_preparation as Rebin -> ExposureScale -> Pileup")
-    bare_channels = max((item["maximum_channels"] + 2) // 2 for item in cases.values())
+    # Primary reaction spectra can extend well above the beam energy. The upper
+    # half of a recorded spectrum is not necessarily pileup-only: halving this
+    # grid silently crops primary counts before pileup, especially at small gain.
+    bare_channels = max(item["maximum_channels"] for item in cases.values())
     original = pipeline.steps
     pipeline.steps = [ibl.Rebin(bare_channels, require_full_coverage=False), *original[1:]]
     forward.output_preparation = [pipeline]
@@ -93,7 +172,7 @@ def load_surrogate(package_path, cases, options):
 
 def record_pairs(path):
     native = engine()
-    a, b = native.DatasetReader(path / "expected"), native.DatasetReader(path / "noisy")
+    a, b = dataset_reader(path / "expected"), dataset_reader(path / "noisy")
     for x, y in zip(a, b, strict=True):
         if x.sample_index != y.sample_index or x.sample_id != y.sample_id or x.parameters != y.parameters:
             raise ValueError("expected/noisy row identity or parameter mismatch")
@@ -111,8 +190,19 @@ def reconstruct(reference, parameters, values):
 
 def predict_pairs(model, path, pairs):
     """One ONNX call for this batch, with independently processed measurements."""
-    metadata = engine().DatasetReader(path / "expected").metadata
+    metadata = dataset_reader(path / "expected").metadata
     experiments = [reconstruct(metadata.reference, metadata.parameters, x.parameters) for x, _ in pairs]
+    geometries = {m.label: m.detector.geometry.to_core()
+                  for m in model.metadata.model.reference_setup.measurements}
+    for experiment in experiments:
+        setup = experiment.setup
+        measurements = setup.measurements
+        for measurement in measurements:
+            detector = measurement.detector
+            detector.geometry = geometries[measurement.label]
+            measurement.detector = detector
+        setup.measurements = measurements
+        experiment.setup = setup
     predictions = model.predict_batch(experiments)
     for (x, y), experiment, prediction in zip(pairs, experiments, predictions, strict=True):
         expected = np.asarray(x.result.spectra[0].counts_array)
@@ -191,3 +281,4 @@ def select_examples(model, cases, frame, *, quantiles=(0, .1, .25, .5, .75, .9, 
                        for record, expected, observed, predicted, measurement in predict_pairs(model, case["path"], pairs)}
         result[layers] = [(q, row, predictions[int(row.sample_index)]) for q, row in zip(quantiles, chosen, strict=True)]
     return result
+

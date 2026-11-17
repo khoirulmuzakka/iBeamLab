@@ -45,13 +45,34 @@ class LocalSpectrumRefiner(nn.Module):
         return spectra + self.out_conv(residual).squeeze(1)
 
 
+class ProjectedGRUCell(nn.GRUCell):
+    """Standard GRUCell weights, with input projections batched across layers.
+
+    State-dict names and gate equations match PyTorch GRUCell. The inherited
+    forward supports the streaming ONNX exporter; forward_projected accepts
+    precomputed input gates and preserves masked hidden states.
+    """
+    def project_inputs(self, embedded):
+        return F.linear(embedded, self.weight_ih, self.bias_ih)
+
+    def forward_projected(self, projected, hidden, active):
+        ir, iz, inn = projected.chunk(3, dim=-1)
+        hr, hz, hn = F.linear(hidden, self.weight_hh, self.bias_hh).chunk(3, dim=-1)
+        reset = torch.sigmoid(ir + hr)
+        update = torch.sigmoid(iz + hz)
+        candidate = torch.tanh(inn + reset * hn)
+        next_hidden = candidate + update * (hidden - candidate)
+        return torch.where(active, next_hidden, hidden)
+
+
 class RecurrentSurrogate(nn.Module):
     """Shared layer recurrence with independent detector heads for this example.
 
     Every element is represented by its scaled areal density, not a separate
     thickness/fraction pair. All-zero AD layers preserve recurrent state and
     contribute nothing. Contributions are summed without extra density weights.
-    A learned AD embedding feeds the GRU alongside the previous hidden state.
+    AD embeddings, GRU input projections and contributions are batched across
+    layers. Masked hidden-state updates preserve the original GRU equations.
     Contributions use current AD and the updated hidden state. The fixed
     experiment is learned through ordinary network weights.
     """
@@ -72,7 +93,7 @@ class RecurrentSurrogate(nn.Module):
         self.spectra_channels = tuple(spectra_channels)
         self.hidden_size, self.contribution_size = hidden_size, contribution_size
         self.ad_embedding = nn.Sequential(nn.Linear(len(elements), ad_embedding_size), nn.LeakyReLU())
-        self.gru = nn.GRUCell(ad_embedding_size, hidden_size)
+        self.gru = ProjectedGRUCell(ad_embedding_size, hidden_size)
         self.contribution = nn.Sequential(nn.Linear(len(elements) + hidden_size, contribution_size),
             nn.LeakyReLU(), nn.Linear(contribution_size, contribution_size))
         self.heads = nn.ModuleList(SpectrumHead(hidden_size + contribution_size, channels,
@@ -82,15 +103,24 @@ class RecurrentSurrogate(nn.Module):
         if not torch.jit.is_tracing() and not torch.onnx.is_in_onnx_export():
             if inputs.ndim != 3 or inputs.shape[1] < 1 or inputs.shape[2] != len(self.elements):
                 raise ValueError("inputs must be [batch,layers,elements]")
-        hidden = inputs.new_zeros((inputs.shape[0], self.hidden_size))
-        total = inputs.new_zeros((inputs.shape[0], self.contribution_size))
-        for layer in inputs.unbind(1):
-            active = layer.ne(0).any(dim=1, keepdim=True).to(inputs.dtype)
-            next_hidden = self.gru(self.ad_embedding(layer), hidden)
-            total = total + self.contribution(torch.cat((layer, next_hidden), dim=1)) * active
-            hidden = hidden * (1 - active) + next_hidden * active
-        latent = torch.cat((total, hidden), dim=1)
+        latent = self.encode_layers(inputs)
         return torch.cat([head(latent) for head in self.heads], dim=1)
+
+    def encode_layers(self, inputs):
+        """Encode the ordered stack into accumulated contributions and final state."""
+        hidden = inputs.new_zeros((inputs.shape[0], self.hidden_size))
+        active = inputs.ne(0).any(dim=-1, keepdim=True)
+        projected = self.gru.project_inputs(self.ad_embedding(inputs))
+        states = []
+        for gates, mask in zip(projected.unbind(1), active.unbind(1)):
+            hidden = self.gru.forward_projected(gates, hidden, mask)
+            states.append(hidden)
+        # Contributions depend on the resulting states, not on each other.
+        # Evaluate their MLP as one batched operation over all layers.
+        contributions = self.contribution(torch.cat((inputs, torch.stack(states, dim=1)), dim=-1))
+        total = (contributions * active.to(inputs.dtype)).sum(dim=1)
+        return torch.cat((total, hidden), dim=1)
+
 
 
 class SpectrumLoss(nn.Module):

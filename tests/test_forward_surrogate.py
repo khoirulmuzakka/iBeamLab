@@ -264,6 +264,7 @@ class SurrogateTests(unittest.TestCase):
         config = load_config(ROOT / "examples/ibeamnet/surrogate.toml")
         default = RecurrentSurrogate(["Si", "O"], [8])
         self.assertEqual(default.gru.input_size, 64)
+        self.assertEqual(default.gru.hidden_size, 256)
         self.assertEqual(default.ad_embedding[0].in_features, 2)
         self.assertEqual(default.ad_embedding[0].out_features, 64)
         self.assertFalse(hasattr(default, "fusion"))
@@ -286,6 +287,44 @@ class SurrogateTests(unittest.TestCase):
             with self.assertRaisesRegex(ibl.InferenceError, "verify_native=False"):
                 export({"export": {"verify_native": True}})
             cache.assert_not_called()
+
+    def test_notebook_inspection_restores_run_manifest(self):
+        import json
+        notebook = json.loads((ROOT / "examples/ibeamnet/train/train.ipynb").read_bytes())
+        cell = next("".join(c.get("source", [])) for c in notebook["cells"]
+                    if 'state = load_checkpoint(RUN / "best.pt")' in "".join(c.get("source", [])))
+        setup = cell[:cell.index('history = json.loads')]
+        with tempfile.TemporaryDirectory() as temporary:
+            run = Path(temporary)
+            cache = run / "actual-cache"
+            (run / "run.json").write_text(json.dumps({"cache": str(cache)}), encoding="utf-8")
+            namespace = dict(RUN=run, Path=Path, json=json,
+                             config={"data": {"cache": "other-cache"}})
+            sentinel = {"records": 42}
+            with patch("examples.ibeamnet.data.load_manifest", return_value=sentinel) as load:
+                exec(setup, namespace)
+            load.assert_called_once_with(cache)
+            self.assertIs(namespace["manifest"], sentinel)
+            self.assertEqual(namespace["CACHE"], cache)
+
+    def test_notebook_export_restores_run_manifest(self):
+        import json
+        notebook = json.loads((ROOT / "examples/ibeamnet/train/train.ipynb").read_bytes())
+        cell = next("".join(c.get("source", [])) for c in notebook["cells"]
+                    if "export_metadata = deployment_workflow" in "".join(c.get("source", [])))
+        setup = cell[cell.index("# Restore the selected run's cache"):cell.index("# Inspect the same four-stage")]
+        with tempfile.TemporaryDirectory() as temporary:
+            run = Path(temporary)
+            cache = run / "actual-cache"
+            (run / "run.json").write_text(json.dumps({"cache": str(cache)}), encoding="utf-8")
+            namespace = dict(RUN=run, Path=Path, json=json,
+                             config={"data": {"cache": "other-cache"}})
+            manifest = {"records": 42}
+            with patch("examples.ibeamnet.data.load_manifest", return_value=manifest) as load:
+                exec(setup, namespace)
+            load.assert_called_once_with(cache)
+            self.assertIs(namespace["manifest"], manifest)
+            self.assertEqual(namespace["config"]["data"]["cache"], cache)
 
     def test_notebook_export_refreshes_cached_fitting(self):
         import json
@@ -346,6 +385,30 @@ class SurrogateTests(unittest.TestCase):
                     with self.assertRaisesRegex(ibl.InferenceError, "dynamic batch and layer"):
                         ibl.ForwardModel(invalid)
 
+    def test_batched_gru_preserves_weights_predictions_and_gradients(self):
+        from examples.ibeamnet.benchmark_forward import reference_forward
+        optimized = RecurrentSurrogate(["Si", "O"], [8], hidden_size=8,
+            ad_embedding_size=4, contribution_size=8, decoder_hidden_sizes=[8],
+            refiner_channels=0).double()
+        original = deepcopy(optimized)
+        original.gru = torch.nn.GRUCell(4, 8).double()
+        original.load_state_dict(optimized.state_dict(), strict=True)
+        values = torch.rand(3, 5, 2, dtype=torch.float64)
+        values[:, 1] = 0
+        values[0, 3:] = 0
+        values[2] = 0
+        x = values.clone().requires_grad_()
+        y = values.clone().requires_grad_()
+        actual, expected = optimized(x), reference_forward(original, y)
+        torch.testing.assert_close(actual, expected, rtol=1e-10, atol=1e-12)
+        actual.square().sum().backward()
+        expected.square().sum().backward()
+        torch.testing.assert_close(x.grad, y.grad, rtol=1e-8, atol=1e-11)
+        for (name, parameter), (old_name, old_parameter) in zip(
+                optimized.named_parameters(), original.named_parameters()):
+            self.assertEqual(name, old_name)
+            torch.testing.assert_close(parameter.grad, old_parameter.grad, rtol=1e-8, atol=1e-11)
+
     def test_padding_and_gradients(self):
         model = RecurrentSurrogate(["Si", "O"], [8, 11], hidden_size=8, ad_embedding_size=4,
             contribution_size=8, decoder_hidden_sizes=[16, 16], refiner_channels=2, refiner_kernel=3)
@@ -360,6 +423,126 @@ class SurrogateTests(unittest.TestCase):
         loss(y, torch.ones_like(y)).backward()
         self.assertTrue(all(p.grad is not None and torch.isfinite(p.grad).all() for p in model.parameters()))
         self.assertTrue(torch.isfinite(x.grad).all() and x.grad.abs().sum() > 0)
+
+    def archived_fixture(self, root):
+        import struct
+        folder = root / "layers_01"
+        folder.mkdir(parents=True)
+        reference = root / "reference.xnra"
+        reference.write_text("<xnra><sample><spectra><spectrum><geometry><incidenceangle>0</incidenceangle>"
+            "<exitangle>30</exitangle><scatteringangle>150</scatteringangle>"
+            "</geometry></spectrum></spectra></sample></xnra>", encoding="utf-8")
+        metadata = f"""format = 'ibeamlab.dataset'
+format_version = 1
+complete = true
+requested = 3
+accepted = 3
+failed = 0
+invalid = 0
+parameter_names = ['thickness', 'Si']
+spectrum_labels = ['RBS']
+spectrum_lengths = [3]
+shards = ['part-000000.ibd']
+[[generation.sample.layers]]
+thickness = 100.0
+[[generation.sample.layers.species]]
+element = 'Si'
+concentration = 1.0
+isotopes = []
+[[generation.setup.detectors]]
+label = 'RBS'
+particle = 'H'
+beam_energy = 2000.0
+beam_spread = 0.0
+calibration_linear = 1.0
+calibration_offset = 0.0
+calibration_quadratic = 0.0
+resolution = 0.0
+particles_sr = 1000.0
+real_time = 10.0
+live_time = 8.0
+[[generation.methods]]
+label = 'RBS'
+reference_file = '{reference.as_posix()}'
+[[generation.parameters]]
+name = 'thickness'
+unit = '1e15 atoms/cm2'
+open = true
+[generation.parameters.target]
+type = 'layer_thickness'
+layer = 0
+[[generation.parameters]]
+name = 'Si'
+unit = 'fraction'
+open = true
+[generation.parameters.target]
+type = 'species_concentration'
+layer = 0
+element = 'Si'
+"""
+        (folder / "dataset.toml").write_text(metadata, encoding="utf-8")
+        def string(value):
+            data = value.encode()
+            return struct.pack("<I", len(data)) + data
+        with (folder / "part-000000.ibd").open("wb") as stream:
+            stream.write(b"IBEAMDS1")
+            for row in range(3):
+                stream.write(struct.pack("<Q", row) + string(str(row)))
+                stream.write(struct.pack("<I2dI", 2, 100. + row, 1., 1))
+                stream.write(string("RBS") + struct.pack("<Q", row+1))
+                stream.write(np.arange(1, row+2, dtype="<f4").tobytes())
+        return folder
+
+    def test_archived_source_streaming_and_truncation(self):
+        from examples.ibeamnet.archived_dataset import ArchivedDataset
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = self.archived_fixture(Path(temporary))
+            dataset = ArchivedDataset(folder)
+            records = list(dataset)
+            self.assertEqual(len(records), 3)
+            np.testing.assert_array_equal(records[2].result["RBS"].counts, [1, 2, 3])
+            self.assertEqual(records[0].result["RBS"].counts.dtype, np.float32)
+            self.assertFalse(records[0].parameters.flags.writeable)
+            self.assertEqual(dataset.metadata.reference.setup.measurements[0].detector.geometry.scattering_angle, 150)
+            shard = folder / "part-000000.ibd"
+            # Release mapped arrays before replacing the fixture on Windows.
+            del records
+            data = shard.read_bytes()
+            shard.write_bytes(data[:-1])
+            with self.assertRaisesRegex(ValueError, "Truncated"):
+                list(dataset)
+
+    def test_configuration_resolves_multiple_source_paths(self):
+        text = (ROOT / "examples/ibeamnet/surrogate.toml").read_text(encoding="utf-8-sig")
+        text = text.replace('source = "../DataGeneration/datasets/iba_multilayer_13el"',
+                            'source = ["first", "second"]')
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "config.toml"
+            path.write_text(text, encoding="utf-8")
+            config = load_config(path)
+            self.assertEqual(config["data"]["source"], [(path.parent / "first").resolve(), (path.parent / "second").resolve()])
+
+    def test_combined_dataset_roots_and_cache_validation(self):
+        from examples.ibeamnet.workflow import load_cache
+        from examples.ibeamnet.validation import dataset_roots
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sources = [root / "first", root / "second"]
+            for source in sources:
+                self.archived_fixture(source)
+            config = load_config(ROOT / "examples/ibeamnet/surrogate.toml")
+            config["data"].update(source=sources, cache=root / "cache", layer_counts=[1])
+            config["spectra"] = [dict(measurement="RBS", count_scale=100., loss_weight=1., exposure_scale=True, rebin=True)]
+            manifest = prepare(config)
+            self.assertEqual(manifest["records"], 6)
+            self.assertEqual([s["start"] for s in manifest["sources"]], [0, 3])
+            self.assertEqual(manifest["spectra"][0]["channels"], 3)
+            self.assertEqual(load_cache(config)["records"], 6)
+            with self.assertRaisesRegex(ValueError, "duplicate"):
+                dataset_roots([sources[0], sources[0]])
+            config["data"]["source"][1] = root / "different"
+            with self.assertRaisesRegex(ValueError, "dataset roots"):
+                load_cache(config)
 
     def test_full_workflow(self):
         with tempfile.TemporaryDirectory() as directory:
